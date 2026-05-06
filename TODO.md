@@ -49,11 +49,17 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] Config loader (env vars + `dotenvy`) — `crates/zerovpn-core/src/config.rs`
 - [x] Tracing/logging init (JSON to stdout) — inline in `crates/zerovpn-api/src/main.rs`
 
-### End-to-end smoke
-- [~] `docker compose up -d` brings up api + db + redis + caddy + frontend; all healthy _(images building)_
-- [ ] Visit `https://localhost/api/v1/ping` → `{ "pong": true }`
-- [ ] Visit `https://localhost` → frontend loads
-- [ ] Visit `https://localhost/health` → `{ "status": "ok" }`
+### End-to-end smoke ✅ ALL PASSING
+- [x] `docker compose up -d` brings up api + db + redis + caddy + frontend + worker + dnsmasq + mailhog; all healthy
+- [x] `curl http://localhost/api/v1/ping` → `{"pong":true,"ts_ms":...}`
+- [x] `curl http://localhost/` → React SPA HTML
+- [x] `curl http://localhost/healthz` → `ok` (Caddy)
+- [x] api `/health` returns 200
+- [x] worker is publishing ZMQ heartbeats
+- [x] api ZMQ SUB receiving heartbeats every 5s (verified via `docker logs api`)
+- [x] `make migrate` applies all 15 tables
+- [x] `./scripts/smoke-test.sh` → 11 passed, 0 failed
+- [x] `cargo test --workspace` → 11 unit tests pass
 
 ### Auth (basic)
 - [ ] Argon2id password hashing — `crates/zerovpn-auth/src/password.rs`
@@ -160,6 +166,16 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 
 ---
 
-## Completed (this phase)
+## Completed (Phase 1A — 2026-05-07)
 
-_Items move here as they're finished, then roll into CHANGELOG.md at phase milestone._
+All Phase 1A foundation items above are done. Phase 1A milestone cut at commit `f39001b` + boot-verification commit. Highlights rolled into [CHANGELOG.md](CHANGELOG.md) under `[0.1.0] — 2026-05-07`.
+
+**Phase 1A summary:**
+- 14-crate Cargo workspace, all compiling on Rust 1.95
+- 11 unit tests passing (auth password, kek, api_token; wg ip_alloc; dns hostname; wire roundtrip)
+- Initial schema migration with 11 logical tables + 3 partitions
+- Docker Compose stack booting all 8 services healthy
+- Frontend skeleton with router, query, motion-animated landing page
+- Smoke test 11/11 ✅
+- ZeroMQ end-to-end: worker PUB → api SUB → log
+- Two git commits, AGPL-3.0 LICENSE, AGENTIC CHANGELOG, CI workflow stub

@@ -2,6 +2,35 @@
 
 All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
 
+## [0.1.0] — 2026-05-07 — Phase 1A Foundation
+
+**Stack boots end-to-end via `docker compose up -d`. All 11 smoke-test checks pass; all 11 Rust unit tests pass; database migrations applied; ZeroMQ heartbeats flowing worker → api.**
+
+### Smoke test results (verified)
+```
+✓ caddy /healthz returns 200
+✓ caddy /healthz body == ok
+✓ api /health returns 200
+✓ api /api/v1/ping pong=true
+✓ frontend /healthz returns 200
+✓ frontend / returns HTML
+✓ db is healthy
+✓ worker is up
+✓ api is up
+✓ worker is publishing heartbeats
+✓ api connected ZMQ subscriber
+11 passed, 0 failed
+```
+
+### Image sizes
+- `zerovpn-api`: 67.4 MB (distroless cc-debian12 + Rust release binary, includes both `zerovpn-api` and `zerovpn-cli` bins)
+- `zerovpn-worker`: 51.1 MB
+- `zerovpn-frontend`: 93 MB (nginx-alpine + built React SPA)
+- Bundle: 161.88 KB gzip main chunk
+
+### Database
+- 15 tables present in Postgres 18 after `make migrate`: `users`, `servers`, `devices`, `sessions`, `verification_tokens`, `audit_logs`, `api_tokens`, `failed_logins`, `bandwidth_samples` (partitioned), `bandwidth_aggregates`, `app_settings`, plus 3 monthly partitions of `bandwidth_samples` (2026-05/06/07) and the `_sqlx_migrations` tracking table.
+
 ## [Unreleased]
 
 ### Added — Phase 1A foundation (2026-05-07)
