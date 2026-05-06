@@ -1,0 +1,25 @@
+[package]
+name = "zerovpn-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zerovpn-cli"
+path = "src/main.rs"
+
+[dependencies]
+zerovpn-core = { workspace = true }
+zerovpn-db = { workspace = true }
+zerovpn-auth = { workspace = true }
+
+clap = { workspace = true }
+inquire = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }

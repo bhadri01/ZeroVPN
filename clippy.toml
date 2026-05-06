@@ -1,0 +1,5 @@
+avoid-breaking-exported-api = false
+disallowed-types = []
+disallowed-methods = [
+    { path = "std::env::var", reason = "use the config crate instead" },
+]

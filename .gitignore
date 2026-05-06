@@ -1,0 +1,60 @@
+# Rust
+/target
+**/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Node / web
+node_modules/
+web/dist/
+web/dev-dist/
+web/.vite/
+*.log
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+secrets/
+*.pem
+*.key
+*.crt
+
+# Docker
+docker-compose.override.yml
+
+# WireGuard
+wg_keys/
+*.conf
+!example.conf
+!**/*.conf.example
+
+# Build artifacts
+web/src/wasm/wire/*.wasm
+web/src/wasm/wire/*.js
+web/src/wasm/wire/*.d.ts
+web/src/wasm/topology/*.wasm
+web/src/wasm/topology/*.js
+web/src/wasm/topology/*.d.ts
+
+# OS
+Thumbs.db
+
+# CI / coverage
+coverage/
+*.lcov
+.coverage
+
+# pnpm
+.pnpm-store/
+
+# Misc
+tmp/
+*.tmp

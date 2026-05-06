@@ -1,0 +1,21 @@
+[package]
+name = "zerovpn-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+zerovpn-core = { workspace = true }
+argon2 = { workspace = true }
+totp-rs = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+aes-gcm = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+base64 = "0.22"

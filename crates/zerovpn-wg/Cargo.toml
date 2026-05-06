@@ -1,0 +1,22 @@
+[package]
+name = "zerovpn-wg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+zerovpn-core = { workspace = true }
+zerovpn-obfs = { workspace = true }
+defguard_wireguard_rs = { workspace = true }
+ipnetwork = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+fixedbitset = { workspace = true }
+parking_lot = "0.12"
+rand = { workspace = true }
+askama = { workspace = true }
+qrcode = { workspace = true }
+base64 = "0.22"

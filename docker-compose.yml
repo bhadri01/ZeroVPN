@@ -1,0 +1,160 @@
+name: zerovpn
+
+# Reusable bits
+x-restart: &default-restart
+  restart: unless-stopped
+
+x-logging: &default-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2.11-alpine
+    <<: [*default-restart, *default-logging]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - web
+    depends_on:
+      - api
+      - frontend
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    <<: [*default-restart, *default-logging]
+    networks:
+      - web
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.api
+    <<: [*default-restart, *default-logging]
+    env_file: .env
+    environment:
+      ZEROVPN_BIND_ADDRESS: 0.0.0.0:8080
+    networks:
+      - web
+      - backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      worker:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/zerovpn-api", "--help"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 256m
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.worker
+    <<: [*default-restart, *default-logging]
+    env_file: .env
+    networks:
+      - backend
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 192m
+
+  db:
+    image: postgres:18-alpine
+    <<: [*default-restart, *default-logging]
+    environment:
+      POSTGRES_DB: zerovpn
+      POSTGRES_USER: zerovpn
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./secrets/db_password.txt:/run/secrets/db_password:ro
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zerovpn -d zerovpn"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - max_connections=50
+      - -c
+      - random_page_cost=1.1
+    mem_limit: 320m
+
+  redis:
+    image: redis:8-alpine
+    <<: [*default-restart, *default-logging]
+    command:
+      - redis-server
+      - --maxmemory
+      - 64mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    networks:
+      - backend
+    mem_limit: 96m
+
+  dnsmasq:
+    image: 4km3/dnsmasq:2.92-r0
+    <<: [*default-restart, *default-logging]
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - dnsmasq_conf:/etc/dnsmasq.d
+    networks:
+      - backend
+    mem_limit: 32m
+    command:
+      - --keep-in-foreground
+      - --log-facility=-
+      - --addn-hosts=/etc/dnsmasq.d/zerovpn-peers.conf
+      - --no-resolv
+      - --server=1.1.1.1
+      - --server=1.0.0.1
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pg_data:
+  dnsmasq_conf:
+
+networks:
+  web:
+  backend:
+    internal: false

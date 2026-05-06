@@ -1,0 +1,17 @@
+[package]
+name = "zerovpn-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+ipnetwork = { workspace = true }
+figment = { workspace = true }
+url = { workspace = true }
+compact_str = { workspace = true }

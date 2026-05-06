@@ -1,0 +1,40 @@
+{
+    # Use the staging directory in dev to avoid LE rate limits if you happen
+    # to point a real domain. Override via the CADDY_GLOBAL_OPTIONS env var.
+    auto_https off
+    admin off
+}
+
+:80, :443 {
+    encode zstd gzip
+
+    @api path /api/* /ws/*
+    handle @api {
+        reverse_proxy api:8080
+    }
+
+    handle /grafana/* {
+        reverse_proxy grafana:3000
+    }
+
+    handle /healthz {
+        respond "ok" 200
+    }
+
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+
+    log {
+        output stdout
+        format console
+    }
+}

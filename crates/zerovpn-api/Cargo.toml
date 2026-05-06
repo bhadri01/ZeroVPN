@@ -1,0 +1,45 @@
+[package]
+name = "zerovpn-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zerovpn-api"
+path = "src/main.rs"
+
+[dependencies]
+zerovpn-core = { workspace = true }
+zerovpn-db = { workspace = true }
+zerovpn-events = { workspace = true }
+zerovpn-wire = { workspace = true }
+zerovpn-auth = { workspace = true }
+zerovpn-mail = { workspace = true }
+zerovpn-wg = { workspace = true }
+zerovpn-dns = { workspace = true }
+
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tower-sessions = { workspace = true }
+tower-sessions-sqlx-store = { workspace = true }
+tower_governor = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+utoipa = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+moka = { workspace = true }
+dotenvy = { workspace = true }
+figment = { workspace = true }
+governor = { workspace = true }

@@ -1,0 +1,78 @@
+# Changelog
+
+All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [SemVer](https://semver.org/).
+
+## [Unreleased]
+
+### Added — Phase 1A foundation (2026-05-07)
+
+**Project bootstrap**
+- Project scaffold at `/Users/black/Developer/Projects/ZeroVPN`: README, this CHANGELOG, TODO, Makefile, `.gitignore`, `.editorconfig`, `.env.example`, `scripts/init-secrets.sh`.
+- Rust toolchain pinned to **1.95.0** via `rust-toolchain.toml`. `rustfmt.toml` (max_width 100, edition 2024) and `clippy.toml` committed.
+
+**Cargo workspace** (14 crates)
+- `zerovpn-core` — domain types (`UserId`, `DeviceId`, `ServerId`, `SessionId`, `ApiTokenId` v7-UUIDs), `Error`/`Result`, `Config` loader via figment.
+- `zerovpn-db` — sqlx pool init + migration runner (calls `sqlx::migrate!("../../migrations")`).
+- `zerovpn-wg` — WG keypair generation (Curve25519-clamped 32-byte keys, base64), `IpAllocator` (in-memory bitmap, race-safe via parking_lot::Mutex, gateway+broadcast pre-marked, with passing unit tests for allocate/release/exhaust), `.conf` rendering with optional AmneziaWG params (askama template), QR SVG via `qrcode` crate.
+- `zerovpn-obfs` — randomized AmneziaWG parameter generation (Jc/Jmin/Jmax/S1/S2/H1–H4) within recommended ranges.
+- `zerovpn-auth` — Argon2id password hash/verify (m=64MB t=3 p=4) with passing roundtrip test. TOTP, API tokens, KEK encryption stubbed for 1B.
+- `zerovpn-stats` — module structure for poller/aggregator/retention; bodies in 1B.
+- `zerovpn-events` — ZeroMQ PUB/SUB over pure-Rust `zeromq` 0.6 crate (no libzmq C dep). `Publisher::bind`, `Subscriber::connect+recv`. Two-frame envelope: topic prefix + MessagePack body.
+- `zerovpn-wire` — shared wire schema. Single `Event` enum (Heartbeat, StatsDelta, HandshakeChange, PeerStatusChanged, DnsUpdated, ServerHealth) with serde + rmp-serde encoding. `crate-type = ["cdylib", "rlib"]` so it compiles to WASM via `wasm-pack` for the frontend (feature-gated `wasm` enables `wasm-bindgen`/`serde-wasm-bindgen`/`js-sys`). Roundtrip unit test passes.
+- `zerovpn-dns` — atomic dnsmasq hosts file writer (tempfile + rename) with `address=/<name>/<ip>` format. Hostname validation `^[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?\.vpn\.local$` with 4 unit-tested cases.
+- `zerovpn-mail` — lettre 0.11 SMTP `Mailer` with rustls TLS, sync construction, async send.
+- `zerovpn-api` — minimal Axum 0.8 binary on port 8080. Routes: `GET /health`, `GET /ready` (DB ping), `GET /api/v1/ping`. Layers: CompressionLayer, CorsLayer (permissive in dev), SetRequestIdLayer (UUID), TraceLayer. Graceful shutdown on SIGTERM/SIGINT. JSON tracing-subscriber output.
+- `zerovpn-worker` — minimal binary that binds ZMQ PUB on `tcp://0.0.0.0:5555` and publishes a Heartbeat event every 5s on topic `events.heartbeat`.
+- `zerovpn-cli` — clap-based admin CLI with subcommands: `migrate`, `bootstrap-admin --email <addr>` (interactive password prompt via `inquire`, sets `must_change_password=TRUE`), `rotate-server-keys` (stub), `version`.
+- `zerovpn-topology` — WASM stub for the admin force-layout.
+
+**Workspace-wide build profile**
+- `release`: opt-level=3, lto="fat", codegen-units=1, strip=symbols, panic=abort.
+- `release-min`: inherits release with opt-level="z" for size-constrained builds.
+- `dev`: opt-level=0, debug="line-tables-only"; deps still build at opt-level=3 for snappy iteration.
+
+**Database**
+- Initial migration `migrations/00000000000001_initial.sql` with full v1 schema:
+  - Enums: `user_role`, `user_status`, `device_status (active|paused|revoked)`, `device_os`, `token_purpose`, `api_token_scope`, `failed_login_reason`, `bucket_kind`.
+  - Tables: `users` (with quota cols + `must_change_password`), `servers`, `devices` (`dns_names TEXT[]`, `allowed_ips_override`, `dns_override`), `sessions`, `verification_tokens`, `audit_logs`, `api_tokens`, `failed_logins`, `bandwidth_samples` (RANGE-partitioned monthly with three pre-created partitions for 2026-05/06/07), `bandwidth_aggregates`, `app_settings` (single-row with maintenance_mode toggle).
+  - Citext extension. `updated_at` triggers on `users` and `app_settings`.
+  - Privacy: IPs stored as INET prefixes; user agents as sha256 hashes.
+
+**Docker infrastructure**
+- `docker-compose.yml` services: caddy (2.11-alpine), frontend (custom nginx-alpine 1.28), api (custom distroless), worker (custom distroless), db (postgres 18-alpine with tuned params for 1 GB host), redis (redis 8-alpine 64m max), dnsmasq (4km3/dnsmasq:2.92-r0 with hosts-file watch). Two networks (`web`, `backend`). `mem_limit` per service to keep total under 1 GB.
+- `docker-compose.dev.yml` overrides: exposes api/worker/db/redis dev ports, adds MailHog at 8025/1025, sets `RUST_LOG=debug,zerovpn=trace`.
+- `deploy/Dockerfile.api` and `Dockerfile.worker`: cargo-chef multi-stage on Rust 1.95.0-slim, distroless `cc-debian12:nonroot` runtime.
+- `deploy/Dockerfile.web`: pnpm build via Node 24-alpine → nginx 1.28-alpine runtime; `nginx.conf` with SPA fallback, immutable cache for hashed assets, gzip, WASM mime type, healthcheck endpoint.
+- `deploy/Caddyfile`: reverse proxies `/api/*`, `/ws/*`, `/grafana/*`, fallback to frontend; security headers (HSTS, no-sniff, frame-deny, no-referrer).
+
+**Frontend**
+- Scaffolded via `npx shadcn@latest init --template vite --preset b1NrKMqoNe --name web --yes --no-monorepo`. Preset installed:
+  - React **19.2.4**, Vite **7.3.2**, TypeScript **5.9.3**, Tailwind CSS **4.2.x** (CSS-first via `@theme`), `@tailwindcss/vite`.
+  - Radix UI primitives umbrella, `class-variance-authority`, `clsx`, `tailwind-merge`, `tw-animate-css`.
+  - `@tabler/icons-react` (preset's icon choice; supersedes lucide-react in plan).
+  - Variable fonts: Figtree + Roboto.
+  - Theme provider with light/dark toggle (press `d`).
+- Switched npm → pnpm (10.33), regenerated lockfile.
+- Added runtime deps via `pnpm add`: `motion@12.38.0` (formerly Framer Motion, import from `motion/react`), `react-router@7.15.0`, `@tanstack/react-query@5.100.9`, `zustand@5.0.13`, `react-hook-form@7.75.0`, `zod@4.4.3`, `@hookform/resolvers@5.2.2`, `recharts@3.8.1`, `qrcode.react@4.2.0`, `react-force-graph-2d@1.29.1`, `sonner@2.0.7`, `@msgpack/msgpack@3.1.3`.
+- Wrote API client (`src/lib/api.ts`) with `ApiError` (without parameter properties for `erasableSyntaxOnly` compatibility), `ping()` helper, normalized error envelope `{ error: { code, message, request_id } }`.
+- TanStack Query client (`src/lib/query.ts`) with no-retry on auth/rate-limit errors.
+- React Router data router with five routes: `/`, `/login`, `/register`, `/app`, `/admin`.
+- Landing page polls `/api/v1/ping` every 5s and renders an animated status pill (Motion). Login/Register/Dashboard/Admin pages are placeholder shells linking back home.
+- Production build: `pnpm build` succeeds; main bundle **161.88 KB gzipped** (warning at >500 KB unminified — below our ≤200 KB gzipped target). Will route-split in 1B.
+- TypeScript strict + erasableSyntaxOnly + noUnusedLocals/Parameters all clean.
+
+**Tooling**
+- `Makefile` with: `help`, `setup`, `up`, `up-prod`, `down`, `logs`, `ps`, `migrate`, `bootstrap-admin EMAIL=`, `shell-api`, `shell-db`, `test`, `check`, `fmt`, `sqlx-prepare`, `wasm-build`, `clean`.
+- `scripts/init-secrets.sh`: idempotent secret generator. Replaces CHANGEME placeholders in `.env` for `ZEROVPN_SESSION_SECRET`, `ZEROVPN_KEK`, DB password, Redis password. Also writes plaintext files into `./secrets/` (mode 0600) for compose to mount.
+
+### Decisions & rationale
+
+- **Single source of truth for wire schema** lives in `zerovpn-wire`. Compiled to WASM via wasm-pack for the frontend so backend and frontend cannot drift on message types.
+- **Pure-Rust `zeromq` 0.6 crate** preferred over `tmq` (which needs libzmq C library). Smaller Docker image, simpler builds.
+- **resolver = "3"** in workspace requires Rust 1.84+; we're on 1.95 so we get edition 2024 + new feature unification.
+- **`erasableSyntaxOnly: true`** in `tsconfig.app.json` (set by shadcn preset) bans TS-only constructs like parameter properties — adapted `ApiError` accordingly. Trade-off: code is closer to plain JS at runtime, easier to debug.
+- **Partitioned `bandwidth_samples`** uses native PG RANGE partitioning monthly, not TimescaleDB. At 1000 users × 5 devices × 30s polls = ~432M rows/day deltas dropped quickly; trivial without an extension.
+- **dnsmasq hostname uniqueness** enforced in app layer for 1A. A side-table `device_dns_names` with UNIQUE constraint will replace the array column in 1B for proper SQL-level enforcement.
+- **`figment`-based config** with TOML + env-var override. Env-prefixed `ZEROVPN_` and nested keys via `__` (e.g., `ZEROVPN_SMTP__HOST=mailhog`).
+- **Frontend ESLint 9 + Prettier 3 + TypeScript 5.9** are what the shadcn preset chose; plan called for ESLint 10 + TS 6 but the preset's choices win (less drift from the upstream design system).
+- **Skipped redis password** in dev compose to keep first-boot simple; will be re-enabled in 1B alongside the actual rate-limit/cache integration.

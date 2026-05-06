@@ -1,0 +1,26 @@
+[package]
+name = "zerovpn-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zerovpn-worker"
+path = "src/main.rs"
+
+[dependencies]
+zerovpn-core = { workspace = true }
+zerovpn-db = { workspace = true }
+zerovpn-events = { workspace = true }
+zerovpn-wire = { workspace = true }
+zerovpn-stats = { workspace = true }
+zerovpn-mail = { workspace = true }
+
+tokio = { workspace = true }
+tokio-cron-scheduler = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+dotenvy = { workspace = true }
+time = { workspace = true }

@@ -1,0 +1,161 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/zerovpn-core",
+    "crates/zerovpn-db",
+    "crates/zerovpn-wg",
+    "crates/zerovpn-obfs",
+    "crates/zerovpn-auth",
+    "crates/zerovpn-stats",
+    "crates/zerovpn-events",
+    "crates/zerovpn-wire",
+    "crates/zerovpn-dns",
+    "crates/zerovpn-mail",
+    "crates/zerovpn-api",
+    "crates/zerovpn-worker",
+    "crates/zerovpn-cli",
+    "crates/zerovpn-topology",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+authors = ["ZeroVPN contributors"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/zerovpn/zerovpn"
+readme = "README.md"
+
+[workspace.dependencies]
+# Internal crates
+zerovpn-core = { path = "crates/zerovpn-core" }
+zerovpn-db = { path = "crates/zerovpn-db" }
+zerovpn-wg = { path = "crates/zerovpn-wg" }
+zerovpn-obfs = { path = "crates/zerovpn-obfs" }
+zerovpn-auth = { path = "crates/zerovpn-auth" }
+zerovpn-stats = { path = "crates/zerovpn-stats" }
+zerovpn-events = { path = "crates/zerovpn-events" }
+zerovpn-wire = { path = "crates/zerovpn-wire" }
+zerovpn-dns = { path = "crates/zerovpn-dns" }
+zerovpn-mail = { path = "crates/zerovpn-mail" }
+zerovpn-topology = { path = "crates/zerovpn-topology" }
+
+# Web framework
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "compression-br", "limit", "request-id", "set-header", "timeout"] }
+tower-sessions = "0.15"
+tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
+tower_governor = "0.8"
+
+# Async runtime
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "signal", "fs", "time", "sync", "io-util", "process", "net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+
+# Database
+sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "macros", "migrate", "uuid", "time", "ipnetwork", "json"] }
+
+# Background jobs
+apalis = "0.7"
+apalis-sql = { version = "0.7", features = ["postgres"] }
+
+# Auth / crypto
+argon2 = "0.5.3"
+totp-rs = { version = "5.7", features = ["gen_secret", "qr"] }
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+aes-gcm = "0.10"
+
+# Validation / serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rmp-serde = "1.3"
+garde = { version = "0.22", features = ["derive", "email", "pattern", "url"] }
+
+# Errors
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging / metrics / observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
+
+# OpenAPI
+utoipa = { version = "5.5", features = ["axum_extras", "uuid", "time"] }
+
+# Rate limiting / caching
+governor = "0.10"
+moka = { version = "0.12", features = ["future"] }
+
+# IDs / time / encoding
+uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+ipnetwork = { version = "0.21", features = ["serde"] }
+url = { version = "2.5", features = ["serde"] }
+
+# HTTP client
+reqwest = { version = "0.13", default-features = false, features = ["rustls-tls", "json", "gzip"] }
+
+# Email
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder"] }
+askama = "0.16"
+
+# QR / images
+qrcode = "0.14"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+inquire = "0.7"
+dotenvy = "0.15"
+
+# Config
+figment = { version = "0.10", features = ["env", "toml"] }
+
+# WG
+defguard_wireguard_rs = "0.9"
+boringtun = "0.7"
+
+# ZeroMQ (pure Rust)
+zeromq = { version = "0.6", default-features = false, features = ["tokio-runtime", "tcp-transport"] }
+
+# Concurrent data structures
+dashmap = "6.1"
+ahash = "0.8"
+arraydeque = "0.5"
+compact_str = { version = "0.8", features = ["serde"] }
+fixedbitset = "0.5"
+smallvec = { version = "1.13", features = ["serde", "union"] }
+
+# Cron / scheduling
+tokio-cron-scheduler = "0.15"
+
+# Atomic helpers
+arc-swap = "1.7"
+
+# Lazy
+once_cell = "1.20"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+debug = false
+
+[profile.release-min]
+inherits = "release"
+opt-level = "z"
+
+[profile.dev]
+opt-level = 0
+incremental = true
+debug = "line-tables-only"
+
+# Speed up dev builds while linking against optimized deps
+[profile.dev.package."*"]
+opt-level = 3

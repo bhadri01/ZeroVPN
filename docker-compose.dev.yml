@@ -1,0 +1,31 @@
+# Dev overrides: bind-mounted source for hot reload, MailHog, exposed dev ports.
+name: zerovpn
+
+services:
+  api:
+    ports:
+      - "8080:8080"
+    environment:
+      RUST_LOG: "debug,zerovpn=trace"
+
+  worker:
+    ports:
+      - "5555:5555"
+
+  db:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    restart: unless-stopped
+    ports:
+      - "8025:8025"  # web UI
+      - "1025:1025"  # smtp
+    networks:
+      - backend
+    mem_limit: 64m
