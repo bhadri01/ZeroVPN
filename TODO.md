@@ -49,6 +49,9 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] Config loader (env vars + `dotenvy`) — `crates/zerovpn-core/src/config.rs`
 - [x] Tracing/logging init (JSON to stdout) — inline in `crates/zerovpn-api/src/main.rs`
 
+### Known issues (Phase 1A → 1B)
+- Frontend container shows "unhealthy" in `docker ps` despite serving HTML correctly. Image's healthcheck uses `127.0.0.1` but the running container caches the older `localhost` form despite `--force-recreate`. Functionally fine (smoke test passes); Caddy doesn't gate on this. Investigate compose image-pinning and either prune+rebuild or switch healthcheck to a curl-via-explicit-IP-ENV pattern in 1B.
+
 ### End-to-end smoke ✅ ALL PASSING
 - [x] `docker compose up -d` brings up api + db + redis + caddy + frontend + worker + dnsmasq + mailhog; all healthy
 - [x] `curl http://localhost/api/v1/ping` → `{"pong":true,"ts_ms":...}`
