@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -14,8 +14,10 @@ use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, request_id::SetRequestIdLayer,
     trace::TraceLayer,
 };
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use zerovpn_events::Subscriber;
+use zerovpn_wire::Event;
 
 mod state;
 
@@ -38,6 +40,28 @@ async fn main() -> Result<()> {
     info!("db connected");
 
     let app_state = Arc::new(AppState { pool });
+
+    // Spawn ZMQ subscriber that forwards bus events into the broadcast
+    // channel for WebSocket fanout (placeholder log-only sink for 1A).
+    if let Ok(sub_url) = env::var("ZEROVPN_EVENTS__SUBSCRIBER_CONNECT") {
+        tokio::spawn(async move {
+            // Retry connect with backoff in case the worker hasn't bound yet.
+            let mut delay = Duration::from_millis(250);
+            let sub = loop {
+                match Subscriber::connect(&sub_url, "events.").await {
+                    Ok(s) => break s,
+                    Err(e) => {
+                        warn!(?e, "zmq subscriber connect failed, retrying");
+                        tokio::time::sleep(delay).await;
+                        delay = (delay * 2).min(Duration::from_secs(10));
+                    }
+                }
+            };
+            run_subscriber(sub).await;
+        });
+    } else {
+        info!("ZEROVPN_EVENTS__SUBSCRIBER_CONNECT not set; skipping ZMQ subscriber");
+    }
 
     let app = Router::new()
         .route("/health", get(health))
@@ -128,4 +152,24 @@ async fn ready(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn ping() -> impl IntoResponse {
     axum::Json(serde_json::json!({ "pong": true, "ts_ms": time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000 }))
+}
+
+async fn run_subscriber(mut sub: Subscriber) {
+    info!("zmq subscriber loop started");
+    loop {
+        match sub.recv().await {
+            Ok((topic, event)) => match event {
+                Event::Heartbeat { ts_ms } => {
+                    debug!(topic, ts_ms, "heartbeat received");
+                }
+                _ => {
+                    debug!(topic, "event received");
+                }
+            },
+            Err(e) => {
+                warn!(?e, "zmq subscriber recv error");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
 }

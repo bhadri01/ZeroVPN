@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 ARG RUST_VERSION=1.95.0
 
-FROM lukemathwalker/cargo-chef:0.1.77-rust-${RUST_VERSION}-slim AS chef
+FROM lukemathwalker/cargo-chef:0.1.77-rust-${RUST_VERSION}-bookworm AS chef
 WORKDIR /app
 
 FROM chef AS planner

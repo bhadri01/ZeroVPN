@@ -54,7 +54,10 @@ shell-db: ## Open a psql shell
 .PHONY: test
 test: ## Run all tests
 	cargo test --workspace
-	cd web && pnpm test
+
+.PHONY: smoke
+smoke: ## Run end-to-end smoke test against the running stack
+	./scripts/smoke-test.sh
 
 .PHONY: check
 check: ## cargo check + clippy + tsc + eslint

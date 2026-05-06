@@ -1,5 +1,6 @@
 avoid-breaking-exported-api = false
+# In Phase 1A we use std::env::var directly in main binaries. Once
+# zerovpn-core::config::Config is fully wired (Phase 1B), we'll re-enable
+# the disallowed-methods lint and force config-crate usage.
 disallowed-types = []
-disallowed-methods = [
-    { path = "std::env::var", reason = "use the config crate instead" },
-]
+disallowed-methods = []

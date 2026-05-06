@@ -1,0 +1,19 @@
+# Keep the build context small.
+target/
+**/target/
+**/node_modules/
+web/dist/
+web/dev-dist/
+.git/
+.idea/
+.vscode/
+.DS_Store
+secrets/
+.env
+.env.local
+.env.*.local
+docs/
+*.md
+!README.md
+!CHANGELOG.md
+.github/

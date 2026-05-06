@@ -60,11 +60,9 @@ services:
         condition: service_started
       worker:
         condition: service_started
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/zerovpn-api", "--help"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+    # No HTTP healthcheck inside distroless (no curl/wget). Caddy upstream
+    # will fail-open quickly if api is down; we'll add a self-probe binary
+    # mode in 1B if needed.
     mem_limit: 256m
 
   worker:
@@ -87,8 +85,11 @@ services:
       POSTGRES_DB: zerovpn
       POSTGRES_USER: zerovpn
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    # Postgres 18+ images expect the volume at /var/lib/postgresql (parent),
+    # so pg_upgrade --link works without crossing mount boundaries. Data
+    # lands in /var/lib/postgresql/<major>/.
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql
       - ./secrets/db_password.txt:/run/secrets/db_password:ro
     networks:
       - backend
@@ -131,7 +132,7 @@ services:
     mem_limit: 96m
 
   dnsmasq:
-    image: 4km3/dnsmasq:2.92-r0
+    image: jpillora/dnsmasq:latest
     <<: [*default-restart, *default-logging]
     cap_add:
       - NET_ADMIN
@@ -140,13 +141,27 @@ services:
     networks:
       - backend
     mem_limit: 32m
+    # The jpillora image runs dnsmasq with default opts; we provide our own
+    # additional hosts file via the mounted volume. dnsmasq picks up changes
+    # to addn-hosts on SIGHUP. For 1A we just point it at our own dir.
+    environment:
+      HTTP_USER: zero
+      HTTP_PASS: zero  # admin UI password (we don't expose this externally)
+    entrypoint: ["/bin/sh", "-c"]
+    # Touch the peers file so dnsmasq doesn't warn on first boot, then exec
+    # dnsmasq with our config. The worker overwrites zerovpn-peers.conf
+    # whenever a device's DNS names change, and SIGHUPs dnsmasq.
     command:
-      - --keep-in-foreground
-      - --log-facility=-
-      - --addn-hosts=/etc/dnsmasq.d/zerovpn-peers.conf
-      - --no-resolv
-      - --server=1.1.1.1
-      - --server=1.0.0.1
+      - >
+        mkdir -p /etc/dnsmasq.d &&
+        touch /etc/dnsmasq.d/zerovpn-peers.conf &&
+        exec dnsmasq
+        --keep-in-foreground
+        --log-facility=-
+        --addn-hosts=/etc/dnsmasq.d/zerovpn-peers.conf
+        --no-resolv
+        --server=1.1.1.1
+        --server=1.0.0.1
 
 volumes:
   caddy_data:

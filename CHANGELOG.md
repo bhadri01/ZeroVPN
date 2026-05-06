@@ -65,6 +65,14 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 - `Makefile` with: `help`, `setup`, `up`, `up-prod`, `down`, `logs`, `ps`, `migrate`, `bootstrap-admin EMAIL=`, `shell-api`, `shell-db`, `test`, `check`, `fmt`, `sqlx-prepare`, `wasm-build`, `clean`.
 - `scripts/init-secrets.sh`: idempotent secret generator. Replaces CHANGEME placeholders in `.env` for `ZEROVPN_SESSION_SECRET`, `ZEROVPN_KEK`, DB password, Redis password. Also writes plaintext files into `./secrets/` (mode 0600) for compose to mount.
 
+### Fixed during boot
+
+- **glibc version mismatch**: cargo-chef `:slim` tag is now Debian 13 (trixie, glibc 2.41), but distroless `cc-debian12:nonroot` runtime is Debian 12 (bookworm, glibc 2.36). The api binary linked against `GLIBC_2.38` and crashed at startup. Pinned the builder to `0.1.77-rust-1.95.0-bookworm` to match the runtime. (Worker compiled fine on slim because its dependency closure didn't pull in any 2.38-only symbols, but rebuilt on bookworm anyway for parity.)
+- **Postgres 18 image volume layout**: the upstream image now expects the volume mounted at `/var/lib/postgresql` (parent dir), not `/var/lib/postgresql/data` — to support `pg_upgrade --link` without crossing mount boundaries. Updated the `db` service volume.
+- **dnsmasq missing addn-hosts file**: with `--addn-hosts=/etc/dnsmasq.d/zerovpn-peers.conf`, dnsmasq logged a warning at boot if the file didn't yet exist. Replaced the entrypoint with a tiny shell wrapper that `touch`es the file before exec-ing dnsmasq. The worker will overwrite this file as device DNS names change.
+- **dnsmasq image tag**: my placeholder `4km3/dnsmasq:2.92-r0` doesn't exist on Docker Hub. Switched to `jpillora/dnsmasq:latest` (maintained, pulls cleanly).
+- **Host port conflicts**: db/redis dev-exposed ports clash with the user's existing dev databases on 5432/6379. Moved to `55432:5432` and `56379:6379` in `docker-compose.dev.yml`.
+
 ### Decisions & rationale
 
 - **Single source of truth for wire schema** lives in `zerovpn-wire`. Compiled to WASM via wasm-pack for the frontend so backend and frontend cannot drift on message types.
