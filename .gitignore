@@ -35,6 +35,8 @@ wg_keys/
 *.conf
 !example.conf
 !**/*.conf.example
+!deploy/nginx.conf
+!deploy/*.conf
 
 # Build artifacts
 web/src/wasm/wire/*.wasm

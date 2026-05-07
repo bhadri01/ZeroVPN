@@ -5963,11 +5963,13 @@ name = "zerovpn-db"
 version = "0.1.0"
 dependencies = [
  "ipnetwork",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",
  "thiserror 2.0.18",
  "time",
+ "tokio",
  "tracing",
  "uuid",
  "zerovpn-core",

@@ -361,3 +361,92 @@ export const adminSetMaintenance = (
       maintenance_message: maintenance_message ?? null,
     }),
   })
+
+// ---------------------------------------------------------------------------
+// Webhooks (admin)
+// ---------------------------------------------------------------------------
+
+export type WebhookEventKind =
+  | "peer_connected"
+  | "peer_disconnected"
+  | "device_paused"
+  | "device_revoked"
+  | "bandwidth_threshold"
+
+export const ALL_WEBHOOK_EVENTS: WebhookEventKind[] = [
+  "peer_connected",
+  "peer_disconnected",
+  "device_paused",
+  "device_revoked",
+  "bandwidth_threshold",
+]
+
+export interface WebhookRow {
+  id: string
+  name: string
+  url: string
+  events: WebhookEventKind[]
+  active: boolean
+  last_delivery_at: string | null
+  last_status: number | null
+  failure_count: number
+  created_at: string
+}
+
+export const adminListWebhooks = () => apiFetch<WebhookRow[]>("/admin/webhooks")
+
+export const adminCreateWebhook = (body: {
+  name: string
+  url: string
+  events: WebhookEventKind[]
+  secret?: string
+}) =>
+  apiFetch<{ id: string }>("/admin/webhooks", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+
+export const adminDeleteWebhook = (id: string) =>
+  apiFetch<{ status: string }>(`/admin/webhooks/${id}`, { method: "DELETE" })
+
+// ---------------------------------------------------------------------------
+// Servers (admin)
+// ---------------------------------------------------------------------------
+
+export interface AdminServerRow {
+  id: string
+  name: string
+  region: string
+  endpoint_host: string
+  endpoint_port: number
+  public_key: string
+  cidr: string
+  dns_servers: string[]
+  mtu: number
+  is_active: boolean
+}
+
+export const adminListServers = () =>
+  apiFetch<AdminServerRow[]>("/admin/servers")
+
+export const adminPatchServer = (
+  id: string,
+  body: {
+    endpoint_host?: string
+    endpoint_port?: number
+    mtu?: number
+    dns_servers?: string[]
+  },
+) =>
+  apiFetch<{ status: string }>(`/admin/servers/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  })
+
+export const adminRotateServerKeys = (id: string) =>
+  apiFetch<{
+    status: string
+    new_public_key: string
+    wg0_conf_rewritten: boolean
+    warning: string
+  }>(`/admin/servers/${id}/rotate-keys`, { method: "POST" })

@@ -3,13 +3,14 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
+use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tracing::info;
 use uuid::Uuid;
-use zerovpn_core::models::{UserRole, UserStatus};
-use zerovpn_db::repos::{audit, users};
+use zerovpn_core::models::{Server, UserRole, UserStatus};
+use zerovpn_db::repos::{audit, servers, users};
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -334,4 +335,189 @@ pub async fn set_maintenance(
     .await?;
     info!(on = body.maintenance_mode, "maintenance mode toggled");
     Ok(Json(json!({ "status": "ok" })))
+}
+
+// --- Server admin -----------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct AdminServer {
+    pub id: Uuid,
+    pub name: String,
+    pub region: String,
+    pub endpoint_host: String,
+    pub endpoint_port: i32,
+    pub public_key: String,
+    pub cidr: String,
+    pub dns_servers: Vec<String>,
+    pub mtu: i32,
+    pub is_active: bool,
+}
+
+impl From<Server> for AdminServer {
+    fn from(s: Server) -> Self {
+        Self {
+            id: s.id,
+            name: s.name,
+            region: s.region,
+            endpoint_host: s.endpoint_host,
+            endpoint_port: s.endpoint_port,
+            public_key: s.public_key,
+            cidr: s.cidr.to_string(),
+            dns_servers: s.dns_servers.into_iter().map(|n| n.ip().to_string()).collect(),
+            mtu: s.mtu,
+            is_active: s.is_active,
+        }
+    }
+}
+
+pub async fn list_servers(
+    State(state): State<AppState>,
+    RequireAdmin(_): RequireAdmin,
+) -> ApiResult<impl IntoResponse> {
+    let rows = servers::list_active(&state.pool).await?;
+    let out: Vec<AdminServer> = rows.into_iter().map(Into::into).collect();
+    Ok(Json(out))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PatchServerBody {
+    pub endpoint_host: Option<String>,
+    pub endpoint_port: Option<i32>,
+    pub mtu: Option<i32>,
+    pub dns_servers: Option<Vec<String>>,
+}
+
+pub async fn patch_server(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchServerBody>,
+) -> ApiResult<impl IntoResponse> {
+    if let Some(port) = body.endpoint_port {
+        if !(1..=65535).contains(&port) {
+            return Err(ApiError::Validation("endpoint_port must be 1..=65535".into()));
+        }
+    }
+    if let Some(mtu) = body.mtu {
+        if !(576..=9000).contains(&mtu) {
+            return Err(ApiError::Validation("mtu must be 576..=9000".into()));
+        }
+    }
+    let dns_parsed: Option<Vec<IpNetwork>> = match body.dns_servers.as_ref() {
+        Some(list) => {
+            let mut out = Vec::with_capacity(list.len());
+            for s in list {
+                let ip: std::net::IpAddr = s
+                    .parse()
+                    .map_err(|_| ApiError::Validation(format!("invalid DNS IP: {s}")))?;
+                out.push(IpNetwork::from(ip));
+            }
+            Some(out)
+        }
+        None => None,
+    };
+    sqlx::query(
+        r#"UPDATE servers
+           SET endpoint_host = COALESCE($2, endpoint_host),
+               endpoint_port = COALESCE($3, endpoint_port),
+               mtu           = COALESCE($4, mtu),
+               dns_servers   = COALESCE($5, dns_servers)
+           WHERE id = $1"#,
+    )
+    .bind(id)
+    .bind(&body.endpoint_host)
+    .bind(body.endpoint_port)
+    .bind(body.mtu)
+    .bind(dns_parsed)
+    .execute(&state.pool)
+    .await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.server_patched",
+            target_type: Some("server"),
+            target_id: Some(id),
+            metadata: json!({
+                "endpoint_host": body.endpoint_host,
+                "endpoint_port": body.endpoint_port,
+                "mtu": body.mtu,
+                "dns_servers": body.dns_servers,
+            }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, server = %id, "server patched");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+pub async fn rotate_server_keys(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let server = servers::find_by_id(&state.pool, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    let private = zerovpn_wg::keys::generate_private_key();
+    let public = zerovpn_wg::keys::derive_public_key(&private)
+        .map_err(|e| ApiError::Internal(format!("derive public key: {e}")))?;
+
+    // 1. Rewrite wg0.conf on the shared volume — the WG container reads the
+    //    interface key from this file. The container needs to be restarted
+    //    after rotation for the new key to take effect.
+    let conf_path = std::env::var("ZEROVPN_WG__SERVER_CONFIG_PATH")
+        .unwrap_or_else(|_| "/wg/wg0.conf".to_string());
+    let listen_port = server.endpoint_port;
+    let server_address = format!("{}/{}", server.cidr.network(), server.cidr.prefix());
+    let conf = format!(
+        "# Auto-generated by zerovpn-api after key rotation.\n\
+         [Interface]\n\
+         PrivateKey = {private}\n\
+         Address = {server_address}\n\
+         ListenPort = {listen_port}\n\
+         SaveConfig = false\n\
+         PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth+ -j MASQUERADE\n\
+         PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth+ -j MASQUERADE\n",
+    );
+    let conf_write_ok = match tokio::fs::write(&conf_path, conf.as_bytes()).await {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!(?e, path = %conf_path, "wg0.conf rewrite failed during key rotation");
+            false
+        }
+    };
+
+    // 2. Persist the new public key in the DB.
+    sqlx::query("UPDATE servers SET public_key = $2 WHERE id = $1")
+        .bind(id)
+        .bind(&public)
+        .execute(&state.pool)
+        .await?;
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.server_keys_rotated",
+            target_type: Some("server"),
+            target_id: Some(id),
+            metadata: json!({
+                "new_public_key": public,
+                "wg0_conf_rewritten": conf_write_ok,
+            }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+
+    info!(actor = %actor.id, server = %id, "server keys rotated");
+    Ok(Json(json!({
+        "status": "ok",
+        "new_public_key": public,
+        "wg0_conf_rewritten": conf_write_ok,
+        "warning": "All peer .conf files reference the OLD server pubkey and must be re-downloaded. Restart the wg container to pick up the new private key.",
+    })))
 }

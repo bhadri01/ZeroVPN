@@ -60,6 +60,31 @@ pub async fn touch_last_login(pool: &PgPool, id: Uuid) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// Atomically swap the user's last-login IP prefix and return the value that
+/// was previously stored. Uses a CTE to capture the OLD value before the
+/// UPDATE replaces it, so the caller can compare without a read-then-write
+/// race.
+pub async fn swap_last_login_ip_prefix(
+    pool: &PgPool,
+    id: Uuid,
+    new_prefix: ipnetwork::IpNetwork,
+) -> sqlx::Result<Option<ipnetwork::IpNetwork>> {
+    let row: Option<(Option<ipnetwork::IpNetwork>,)> = sqlx::query_as(
+        r#"WITH old AS (
+               SELECT last_login_ip_prefix FROM users WHERE id = $1 FOR UPDATE
+           ),
+           upd AS (
+               UPDATE users SET last_login_ip_prefix = $2 WHERE id = $1
+           )
+           SELECT last_login_ip_prefix FROM old"#,
+    )
+    .bind(id)
+    .bind(new_prefix)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|r| r.0))
+}
+
 /// Increment a user's monthly bandwidth counter. Resets the counter at the
 /// start of a new month. Returns the new total + cap; caller decides whether
 /// to enforce.

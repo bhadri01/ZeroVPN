@@ -199,6 +199,15 @@ async fn main() -> Result<()> {
                     "/admin/users/{id}/quota",
                     axum::routing::put(routes::admin::set_user_quota),
                 )
+                .route("/admin/servers", get(routes::admin::list_servers))
+                .route(
+                    "/admin/servers/{id}",
+                    axum::routing::patch(routes::admin::patch_server),
+                )
+                .route(
+                    "/admin/servers/{id}/rotate-keys",
+                    post(routes::admin::rotate_server_keys),
+                )
                 .route("/auth/verify-email", post(routes::email_auth::verify_email))
                 .route("/auth/resend-verify", post(routes::email_auth::resend_verify))
                 .route(

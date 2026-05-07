@@ -1,12 +1,44 @@
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::HeaderMap,
+    response::IntoResponse,
+};
 use garde::Validate;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::net::IpAddr;
 use time::OffsetDateTime;
 use tower_sessions::Session;
 use tracing::{info, warn};
 use zerovpn_core::models::{User, UserRole, UserStatus};
 use zerovpn_db::repos::{audit, failed_logins, users};
+
+/// Best-effort client IP from the `X-Forwarded-For` header (Caddy populates
+/// this) or the `X-Real-IP` header. Returns `None` if neither is present.
+/// Reduces the IP to a /24 (IPv4) or /48 (IPv6) prefix to honor our no-logs
+/// stance — we only want to detect *change*, not pinpoint location.
+fn client_ip_prefix(headers: &HeaderMap) -> Option<ipnetwork::IpNetwork> {
+    let raw = headers
+        .get("x-forwarded-for")
+        .or_else(|| headers.get("x-real-ip"))
+        .and_then(|v| v.to_str().ok())?;
+    // X-Forwarded-For can be a comma-separated list; the leftmost is the
+    // client, the rest are proxies. We only trust the leftmost as a coarse
+    // identifier — anything beyond that is hop-by-hop.
+    let first = raw.split(',').next()?.trim();
+    let ip: IpAddr = first.parse().ok()?;
+    Some(match ip {
+        IpAddr::V4(v4) => {
+            let net = ipnetwork::Ipv4Network::new(v4, 24).ok()?.network();
+            ipnetwork::IpNetwork::V4(ipnetwork::Ipv4Network::new(net, 24).ok()?)
+        }
+        IpAddr::V6(v6) => {
+            let net = ipnetwork::Ipv6Network::new(v6, 48).ok()?.network();
+            ipnetwork::IpNetwork::V6(ipnetwork::Ipv6Network::new(net, 48).ok()?)
+        }
+    })
+}
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -99,6 +131,7 @@ pub struct PublicUser {
 pub async fn login(
     State(state): State<AppState>,
     session: Session,
+    headers: HeaderMap,
     Json(body): Json<LoginBody>,
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
@@ -213,6 +246,67 @@ pub async fn login(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     users::touch_last_login(&state.pool, user_with_secrets.id).await?;
+
+    // Suspicious-login detection: compare the /24 (or /48) prefix of the
+    // current request to the prefix of the last successful login. If the
+    // prefix differs and a previous one existed, fire an info email so the
+    // user can flag it. First-ever login establishes the baseline silently.
+    if let Some(new_prefix) = client_ip_prefix(&headers) {
+        match users::swap_last_login_ip_prefix(
+            &state.pool,
+            user_with_secrets.id,
+            new_prefix,
+        )
+        .await
+        {
+            Ok(Some(prev)) if prev != new_prefix => {
+                if let Some(mailer) = &state.mailer {
+                    use askama::Template;
+                    let when = OffsetDateTime::now_utc()
+                        .format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_else(|_| "(unknown)".into());
+                    let security_link = format!(
+                        "{}/app/security",
+                        state.public_url.trim_end_matches('/'),
+                    );
+                    let body = zerovpn_mail::templates::SuspiciousLogin {
+                        email: &user_with_secrets.email,
+                        when: &when,
+                        security_link: &security_link,
+                    }
+                    .render()
+                    .unwrap_or_default();
+                    if let Ok(to) = user_with_secrets.email.parse::<zerovpn_mail::Mailbox>()
+                    {
+                        let mailer = mailer.clone();
+                        let subj = "New sign-in to your ZeroVPN account";
+                        tokio::spawn(async move {
+                            if let Err(e) = mailer.send(to, subj, body).await {
+                                warn!(?e, "suspicious-login email send failed");
+                            }
+                        });
+                    }
+                }
+                let _ = audit::record(
+                    &state.pool,
+                    audit::AuditEntry {
+                        actor_user_id: Some(user_with_secrets.id),
+                        action: "auth.new_ip_prefix",
+                        target_type: Some("user"),
+                        target_id: Some(user_with_secrets.id),
+                        metadata: json!({
+                            "prev": prev.to_string(),
+                            "new": new_prefix.to_string(),
+                        }),
+                        ip_prefix: Some(new_prefix),
+                    },
+                )
+                .await;
+            }
+            Ok(_) => {}
+            Err(e) => warn!(?e, "swap_last_login_ip_prefix failed"),
+        }
+    }
 
     let totp_enabled = user_with_secrets.totp_enabled;
     let user: User = user_with_secrets.into();

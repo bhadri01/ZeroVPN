@@ -5,5 +5,6 @@
 
 pub mod pool;
 pub mod repos;
+pub mod webhook_dispatch;
 
 pub use pool::{PgPool, init_pool, run_migrations};

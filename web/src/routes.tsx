@@ -37,6 +37,12 @@ const AuditLogPage = lazy(() =>
 const FailedLoginsPage = lazy(() =>
   import("@/pages/admin/FailedLogins").then((m) => ({ default: m.FailedLoginsPage })),
 )
+const WebhooksPage = lazy(() =>
+  import("@/pages/admin/Webhooks").then((m) => ({ default: m.WebhooksPage })),
+)
+const ServersPage = lazy(() =>
+  import("@/pages/admin/Servers").then((m) => ({ default: m.ServersPage })),
+)
 
 function Suspended({ children }: { children: React.ReactNode }) {
   return (
@@ -156,6 +162,26 @@ export const router = createBrowserRouter([
           <AdminRoute>
             <Suspended>
               <FailedLoginsPage />
+            </Suspended>
+          </AdminRoute>
+        ),
+      },
+      {
+        path: "/admin/webhooks",
+        element: (
+          <AdminRoute>
+            <Suspended>
+              <WebhooksPage />
+            </Suspended>
+          </AdminRoute>
+        ),
+      },
+      {
+        path: "/admin/servers",
+        element: (
+          <AdminRoute>
+            <Suspended>
+              <ServersPage />
             </Suspended>
           </AdminRoute>
         ),

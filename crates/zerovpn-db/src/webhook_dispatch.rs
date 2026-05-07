@@ -1,27 +1,15 @@
-//! Webhook dispatcher.
-//!
-//! Subscribes to the in-process event bus (via the same ZMQ subscriber pattern
-//! the api uses, but on the worker side using its own SUB socket against the
-//! same publisher) and POSTs matching events to webhook URLs. For v1 we run
-//! the dispatcher as a periodic poll-and-flush rather than a long-lived ZMQ
-//! sub: every 10 seconds, scan recently-emitted state changes and deliver.
+//! Webhook fan-out helper. Shared by api (pause/revoke handlers) and worker
+//! (stats poller auto-pause + handshake transitions).
 
 use std::time::Duration;
 
 use serde_json::json;
 use tracing::{info, warn};
-use zerovpn_db::{
-    PgPool,
-    repos::webhooks::{self, WebhookEventKind, WebhookRow},
-};
 
-/// Synchronous fan-out helper: deliver an event to every active webhook
-/// subscribed to it. Called from places that already have a `pool` handle.
-pub async fn dispatch(
-    pool: &PgPool,
-    kind: WebhookEventKind,
-    payload: serde_json::Value,
-) {
+use crate::repos::webhooks::{self, WebhookEventKind, WebhookRow};
+use crate::PgPool;
+
+pub async fn dispatch(pool: &PgPool, kind: WebhookEventKind, payload: serde_json::Value) {
     let subs = match webhooks::for_event(pool, kind).await {
         Ok(v) => v,
         Err(e) => {

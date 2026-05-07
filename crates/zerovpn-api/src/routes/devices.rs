@@ -264,6 +264,13 @@ pub async fn delete(
         tracing::warn!(?e, "wg remove_peer failed (non-fatal)");
     }
 
+    zerovpn_db::webhook_dispatch::dispatch(
+        &state.pool,
+        zerovpn_db::repos::webhooks::WebhookEventKind::DeviceRevoked,
+        json!({ "device_id": id, "user_id": user.id, "device_name": device.name }),
+    )
+    .await;
+
     info!(user_id = %user.id, device_id = %id, "device revoked");
     Ok(Json(json!({ "status": "ok" })))
 }
@@ -422,6 +429,15 @@ async fn set_pause_state(
         },
     )
     .await?;
+
+    if target == DeviceStatus::Paused {
+        zerovpn_db::webhook_dispatch::dispatch(
+            &state.pool,
+            zerovpn_db::repos::webhooks::WebhookEventKind::DevicePaused,
+            json!({ "device_id": device_id, "user_id": user_id }),
+        )
+        .await;
+    }
     Ok(())
 }
 

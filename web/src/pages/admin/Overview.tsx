@@ -162,6 +162,14 @@ export function AdminOverviewPage() {
             <Link to="/admin/failed-logins" className="underline">
               Failed logins →
             </Link>
+            {" · "}
+            <Link to="/admin/webhooks" className="underline">
+              Webhooks →
+            </Link>
+            {" · "}
+            <Link to="/admin/servers" className="underline">
+              Servers →
+            </Link>
           </p>
         </section>
       </main>
