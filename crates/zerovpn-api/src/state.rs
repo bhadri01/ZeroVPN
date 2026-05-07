@@ -1,14 +1,27 @@
 use std::sync::Arc;
 
+use tokio::sync::broadcast;
 use zerovpn_db::PgPool;
 use zerovpn_wg::ip_alloc::IpAllocator;
+use zerovpn_wire::Event;
+
+use crate::routes::ws::BROADCAST_BUFFER;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
-    /// Per-server IP allocator, keyed by server UUID stringified.
-    /// Loaded on startup and updated on every device create/revoke.
+    /// Per-server IP allocator, keyed by server UUID.
     pub allocators: Arc<IpAllocators>,
+    /// Broadcast bus into which the ZMQ subscriber writes events.
+    /// WebSocket clients subscribe and filter to events that concern them.
+    pub events: broadcast::Sender<Event>,
+}
+
+impl AppState {
+    pub fn new(pool: PgPool, allocators: Arc<IpAllocators>) -> Self {
+        let (events, _) = broadcast::channel::<Event>(BROADCAST_BUFFER);
+        Self { pool, allocators, events }
+    }
 }
 
 #[derive(Default)]

@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "motion/react"
-import { useState } from "react"
+import { useCallback, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { TopologyGraph, applyEmaSmoothing } from "@/components/topology/TopologyGraph"
+import { useWebSocket } from "@/hooks/useWebSocket"
 import {
   ApiError,
   type CreatedDevice,
@@ -16,6 +18,7 @@ import {
   pauseDevice,
   unpauseDevice,
 } from "@/lib/api"
+import type { Event } from "@/lib/wire"
 import { useAuth } from "@/stores/auth"
 
 export function DashboardPage() {
@@ -27,6 +30,29 @@ export function DashboardPage() {
   const [created, setCreated] = useState<CreatedDevice | null>(null)
   const [name, setName] = useState("")
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
+  const [rates, setRates] = useState<Map<string, { rxBps: number; txBps: number }>>(
+    new Map(),
+  )
+
+  const onWsEvent = useCallback((event: Event) => {
+    if (event.type === "stats_delta") {
+      setRates((prev) =>
+        applyEmaSmoothing(prev, {
+          deviceId: event.device_id,
+          rxBps: event.rate_rx_bps,
+          txBps: event.rate_tx_bps,
+        }),
+      )
+    } else if (event.type === "peer_status_changed") {
+      void queryClient.invalidateQueries({ queryKey: ["devices"] })
+    }
+  }, [queryClient])
+
+  const ws = useWebSocket({
+    path: "/api/v1/ws",
+    onEvent: onWsEvent,
+    enabled: !!user,
+  })
 
   const addM = useMutation({
     mutationFn: () => createDevice({ name: name.trim(), os: osChoice }),
@@ -59,6 +85,10 @@ export function DashboardPage() {
     mutationFn: (id: string) => deleteDevice(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["devices"] })
+      setRates((r) => {
+        const updated = new Map(r)
+        return updated
+      })
       toast.warning("Device revoked")
     },
   })
@@ -69,6 +99,7 @@ export function DashboardPage() {
         <h1 className="text-lg font-semibold">ZeroVPN</h1>
         <div className="flex items-center gap-3">
           <span className="text-muted-foreground text-sm">{user?.email}</span>
+          <ConnectionPill state={ws.state} />
           {user?.role === "admin" && (
             <Button asChild variant="outline" size="sm">
               <Link to="/admin">Admin</Link>
@@ -89,6 +120,16 @@ export function DashboardPage() {
       </header>
 
       <main className="mx-auto max-w-4xl space-y-8 p-6">
+        <section className="space-y-2">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-xl font-semibold">Live network</h2>
+            <p className="text-muted-foreground text-xs">
+              Particles flow in the direction of traffic; speed scales with rate.
+            </p>
+          </div>
+          <TopologyGraph devices={devicesQ.data ?? []} rates={rates} />
+        </section>
+
         <section className="space-y-4">
           <h2 className="text-xl font-semibold">Add a device</h2>
           <div className="flex flex-wrap gap-2">
@@ -135,7 +176,8 @@ export function DashboardPage() {
                   />
                   <div className="flex-1 space-y-2 text-sm">
                     <p>
-                      <strong>{created.device.name}</strong> · {created.device.allocated_ip}
+                      <strong>{created.device.name}</strong> ·{" "}
+                      {created.device.allocated_ip}
                     </p>
                     <p className="text-muted-foreground text-xs">
                       Save this config now — the private key is never stored on the server.
@@ -187,57 +229,83 @@ export function DashboardPage() {
           )}
           <ul className="space-y-2">
             <AnimatePresence>
-              {devicesQ.data?.map((d) => (
-                <motion.li
-                  key={d.id}
-                  layout
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0, x: -16 }}
-                  className="flex items-center justify-between rounded-lg border p-3"
-                >
-                  <div>
-                    <p className="font-medium">{d.name}</p>
-                    <p className="text-muted-foreground text-xs">
-                      {d.os} · {d.allocated_ip} · {d.status}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    {d.status === "active" ? (
+              {devicesQ.data?.map((d) => {
+                const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
+                return (
+                  <motion.li
+                    key={d.id}
+                    layout
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0, x: -16 }}
+                    className="flex items-center justify-between rounded-lg border p-3"
+                  >
+                    <div>
+                      <p className="font-medium">{d.name}</p>
+                      <p className="text-muted-foreground text-xs">
+                        {d.os} · {d.allocated_ip} · {d.status}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-muted-foreground text-xs tabular-nums">
+                        ↑ {formatBps(live.txBps)} · ↓ {formatBps(live.rxBps)}
+                      </span>
+                      {d.status === "active" ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => pauseM.mutate(d.id)}
+                          disabled={pauseM.isPending}
+                        >
+                          Pause
+                        </Button>
+                      ) : d.status === "paused" ? (
+                        <Button
+                          size="sm"
+                          onClick={() => unpauseM.mutate(d.id)}
+                          disabled={unpauseM.isPending}
+                        >
+                          Unpause
+                        </Button>
+                      ) : null}
                       <Button
                         size="sm"
-                        variant="outline"
-                        onClick={() => pauseM.mutate(d.id)}
-                        disabled={pauseM.isPending}
+                        variant="ghost"
+                        onClick={() => {
+                          if (confirm(`Revoke ${d.name}?`)) deleteM.mutate(d.id)
+                        }}
+                        disabled={deleteM.isPending}
                       >
-                        Pause
+                        Revoke
                       </Button>
-                    ) : d.status === "paused" ? (
-                      <Button
-                        size="sm"
-                        onClick={() => unpauseM.mutate(d.id)}
-                        disabled={unpauseM.isPending}
-                      >
-                        Unpause
-                      </Button>
-                    ) : null}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        if (confirm(`Revoke ${d.name}?`)) deleteM.mutate(d.id)
-                      }}
-                      disabled={deleteM.isPending}
-                    >
-                      Revoke
-                    </Button>
-                  </div>
-                </motion.li>
-              ))}
+                    </div>
+                  </motion.li>
+                )
+              })}
             </AnimatePresence>
           </ul>
         </section>
       </main>
     </div>
   )
+}
+
+function ConnectionPill({ state }: { state: "connecting" | "open" | "closed" }) {
+  const colour =
+    state === "open"
+      ? "bg-green-500/15 text-green-700 dark:text-green-400"
+      : state === "connecting"
+        ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+        : "bg-red-500/15 text-red-700 dark:text-red-400"
+  const label = state === "open" ? "Live" : state === "connecting" ? "Connecting…" : "Offline"
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colour}`}>{label}</span>
+  )
+}
+
+function formatBps(bps: number): string {
+  if (bps < 1_000) return `${Math.round(bps)} bps`
+  if (bps < 1_000_000) return `${(bps / 1_000).toFixed(1)} kbps`
+  if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`
+  return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
 }

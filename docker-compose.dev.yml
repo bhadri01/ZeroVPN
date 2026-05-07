@@ -11,6 +11,11 @@ services:
   worker:
     ports:
       - "5555:5555"
+    environment:
+      # Faster simulator cadence in dev so the topology graph comes alive
+      # immediately after a device is added. Production drops back to 30s
+      # once the real WG poller (Phase 1B-C) replaces the simulator.
+      ZEROVPN_STATS_INTERVAL_SECS: "5"
 
   # Non-standard host ports for db/redis so we don't fight any other local
   # Postgres/Redis instances already bound to the conventional ports.

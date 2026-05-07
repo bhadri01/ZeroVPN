@@ -33,6 +33,37 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added — Phase 1B-B: live stats over WebSocket + topology graph (2026-05-07)
+
+**The dashboard now shows a live force-directed network graph: server in the center, peers radiating out, animated particles flowing along each edge in proportion to current TX/RX rate. 22/22 smoke checks pass — including a Python+websockets check that opens an authenticated WebSocket and verifies a binary stats frame arrives within 15 seconds.**
+
+**Backend**
+- `crates/zerovpn-worker/src/stats_sim.rs` — simulated stats emitter for the period before a real WG poller is wired (1B-C). Every `ZEROVPN_STATS_INTERVAL_SECS` (default 10s; dev overrides to 5s) it queries `devices status='active'`, generates bounded-random RX/TX deltas with a 30% busy-bias, and emits `Event::StatsDelta` on `stats.peer.<id>`. Heartbeat publishes alongside on a 5s clock.
+- `crates/zerovpn-worker/src/main.rs` — refactored to a one-publisher / many-producer model. Tasks send `(topic, Event)` over an mpsc::Sender; a single drainer task owns the ZMQ socket. (zeromq crate's PubSocket is `Send + !Sync`.)
+- `crates/zerovpn-api/src/state.rs` — `AppState::new` constructs a `tokio::sync::broadcast::channel<Event>` (capacity 64). Lagging consumers drop frames; live stats are recoverable on next poll.
+- `crates/zerovpn-api/src/routes/ws.rs` — `GET /api/v1/ws` upgrades to a WebSocket and pushes binary MessagePack frames to authenticated clients. `visible_to(event, user_id, role)` filters: regular users see only their own peer events; admins see everything.
+- `main.rs` ZMQ subscriber now subscribes to all topics and pumps incoming events onto the broadcast bus instead of just logging.
+
+**Database**
+- Migration `00000000000002_revoked_devices_release_ip.sql`: drops the `(server_id, allocated_ip)` unique constraint and replaces it with a partial unique index `WHERE status <> 'revoked'`. Caught when the smoke test re-used a freed IP after revoke and hit a unique violation.
+
+**Frontend**
+- `web/src/hooks/useWebSocket.ts` — reconnecting WS hook with exponential backoff (250ms → 10s), 25s heartbeat ping, MessagePack decode via `@msgpack/msgpack`. Stable callback ref so React Strict Mode double-mount doesn't double-connect.
+- `web/src/components/topology/TopologyGraph.tsx` — `react-force-graph-2d` rendering with `linkDirectionalParticles` driven by EMA-smoothed rate (1–8 particles, 0.001–0.012 speed). Server node 12px @ blue; device nodes 7px colored by status (green active / amber paused / red recently revoked). Edges colored by net flow direction (green TX, blue RX, gray idle).
+- `web/src/lib/wire.ts` — TS type mirror of `zerovpn_wire::Event`.
+- `web/src/pages/app/Dashboard.tsx` — embeds the topology graph above the device list, adds a per-row rate sparkline (`↑ Mbps · ↓ Mbps`) and a connection pill in the header that flips between "Live / Connecting… / Offline" based on WS state.
+- Bundle: 261 KB gzip main chunk (above the 200 KB target due to react-force-graph-2d + d3-force; will route-split admin and topology lazily in 1B-C).
+
+**Smoke**
+- `scripts/smoke-test.sh`: 22 checks total (was 21). Adds a Python websockets-based check using a temp script (`SMOKE_COOKIE`/`SMOKE_WS_URL` env vars; correctly handles curl's `#HttpOnly_…` cookie format).
+
+### Decisions & rationale (1B-B)
+- **Simulator first, real WG poller later (1B-C).** The frontend pipeline (topology graph + WS) is the immediately-visible value; building it against synthetic deltas lets us prove the entire wire end-to-end without a live WG kernel interface running. Drop-in replacement once the poller lands.
+- **Tokio `broadcast` channel** between ZMQ subscriber and WS handlers — well-understood, lagging consumers drop, no extra deps.
+- **Per-user filtering at the WS handler**, not at the ZMQ topic. Topics could carry user_id today but we'd lose admin-sees-all and the indirection is cheap (the broadcast channel already runs on a single Tokio task).
+- **Partial unique index** for IP recycling — recommended in the plan, finally written when the smoke test exposed the bug. Cleaner than NULL-ing the column or hard-deleting.
+- **`react-force-graph-2d` rather than a custom SVG/Canvas component** — the library's built-in `linkDirectionalParticles` props are exactly the animated-dots feature requested, and switching to a Rust-WASM force layout (per the plan) is cheap once we hit the >200-peer scale threshold.
+
 ### Added — Phase 1B-A: auth + device CRUD (2026-05-07)
 
 **Stack now supports the full v1 user flow: register → log in → add a device with QR/.conf → set DNS names → pause/unpause/revoke. 21/21 smoke checks pass.**

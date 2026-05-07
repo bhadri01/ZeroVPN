@@ -39,7 +39,7 @@ check "worker is up" bash -c "docker compose -f docker-compose.yml -f docker-com
 check "api is up" bash -c "docker compose -f docker-compose.yml -f docker-compose.dev.yml ps api --format '{{.Status}}' | grep -q '^Up'"
 
 echo "Worker → API ZMQ"
-check "worker is publishing heartbeats" bash -c "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs worker | grep -q 'heartbeat published'"
+check "worker is publishing heartbeats" bash -c "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs worker | grep -q 'events.heartbeat'"
 check "api connected ZMQ subscriber" bash -c "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs api | grep -q 'zmq subscriber'"
 
 # ---- auth + device flow -----------------------------------------------------
@@ -77,6 +77,49 @@ check "POST /devices/{id}/unpause works" curl -fsS -b "$COOKIE" -X POST "$BASE/a
 
 check "PUT /devices/{id}/dns sets names" curl -fsS -b "$COOKIE" -H 'Content-Type: application/json' \
     -X PUT -d '{"dns_names":["smoke-laptop.vpn.local"]}' "$BASE/api/v1/devices/$DEVICE_ID/dns"
+
+# ---- WebSocket / live stats -------------------------------------------------
+echo "Live stats over WebSocket"
+WS_URL="ws://${BASE#http://}/api/v1/ws"
+WS_URL="${WS_URL/https:\/\//wss:\/\/}"
+WS_PY=$(mktemp -t ws-smoke.XXXXXX.py)
+trap "rm -f $COOKIE $WS_PY" EXIT
+cat > "$WS_PY" <<'PYEOF'
+import asyncio, os, sys, http.cookies
+from websockets.asyncio.client import connect
+
+async def main():
+    cookie_path = os.environ['SMOKE_COOKIE']
+    ws_url = os.environ['SMOKE_WS_URL']
+    jar = http.cookies.SimpleCookie()
+    with open(cookie_path) as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # curl marks HttpOnly cookies with a leading "#HttpOnly_". Strip
+            # that prefix before parsing; reject any other comment lines.
+            if line.startswith('#HttpOnly_'):
+                line = line[len('#HttpOnly_'):]
+            elif line.startswith('#'):
+                continue
+            parts = line.split('\t')
+            if len(parts) >= 7:
+                jar[parts[5]] = parts[6].strip()
+    pairs = [f'{k}={m.value}' for k, m in jar.items()]
+    headers = {'Cookie': '; '.join(pairs)} if pairs else {}
+    async with connect(ws_url, additional_headers=headers) as ws:
+        try:
+            msg = await asyncio.wait_for(ws.recv(), timeout=15)
+        except asyncio.TimeoutError:
+            sys.exit(1)
+        if isinstance(msg, (bytes, bytearray)) and len(msg) > 0:
+            sys.exit(0)
+        sys.exit(1)
+
+asyncio.run(main())
+PYEOF
+check "WS receives a frame within 15s" env SMOKE_COOKIE="$COOKIE" SMOKE_WS_URL="$WS_URL" python3 "$WS_PY"
 
 check "DELETE /devices/{id} revokes" curl -fsS -b "$COOKIE" -X DELETE "$BASE/api/v1/devices/$DEVICE_ID"
 

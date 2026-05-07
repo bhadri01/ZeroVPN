@@ -111,24 +111,36 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 
 ## Phase 1B — Feature completion
 
-(See plan file for full list. Highlights below; expand as we get there.)
+### Done in 1B-A (auth + device CRUD)
+- [x] argon2id register/login/logout with email-enumeration prevention + brute-force rate limit
+- [x] Device CRUD with .conf + QR + AmneziaWG params + IP-allocation bitmap
+- [x] DNS names per peer, dnsmasq hosts file
+- [x] Pause/unpause + revoke (with DB-level IP recycling via partial unique index, added in 1B-B)
+- [x] Audit log writes for every state-changing action (UI page comes later)
+
+### Done in 1B-B (live stats + topology)
+- [x] Real-time stats path: worker → ZMQ → api broadcast bus → WS → browser MessagePack
+- [x] Network topology graph (react-force-graph-2d + animated particles)
+- [x] Connection pill on the dashboard header (live/connecting/offline)
+- [x] Per-row rate sparklines (↑ Mbps · ↓ Mbps)
+- [x] Stats simulator (real WG poller is 1B-C)
+
+### Still open (later in Phase 1B)
+- [ ] Real WG poller via defguard-wireguard-rs (replace stats_sim with `wg show dump`)
+- [ ] Live WG peer add/remove on device create/revoke (currently only DB rows)
 - [ ] 2FA (TOTP enroll/verify, recovery codes, step-up auth)
 - [ ] Email verification + password reset flows + lettre wiring
-- [ ] Real-time stats poller (30s) → ZMQ → WS → dashboard
-- [ ] Network topology graph with `react-force-graph-2d` + animated particles
 - [ ] Bandwidth aggregates (hourly/daily/monthly rollups via apalis)
-- [ ] Audit logs + admin audit page (CSV export)
-- [ ] Rate limiting (login, signup, password reset) + brute-force lockout
-- [ ] Per-peer split tunneling + custom DNS overrides
+- [ ] Admin audit-log page (CSV export); failed-logins page
+- [ ] Per-peer split tunneling + custom DNS overrides UI
 - [ ] API tokens UI
-- [ ] Failed-logins log + admin page
-- [ ] Username/email enumeration prevention
 - [ ] Soft-delete + GDPR data export
 - [ ] Retention purger cron
 - [ ] Idle session timeout
 - [ ] Bandwidth quotas per user
 - [ ] Maintenance mode toggle
 - [ ] WASM wire deserializer (compile `zerovpn-wire` to WASM, hook into frontend WS)
+- [ ] Route-split admin + topology to drop bundle back under 200 KB gzip
 
 ---
 

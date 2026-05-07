@@ -64,14 +64,16 @@ async fn main() -> Result<()> {
         .await
         .context("build ip allocators")?;
 
-    let app_state = AppState { pool, allocators };
+    let app_state = AppState::new(pool, allocators);
 
-    // Spawn the ZMQ subscriber that consumes worker events.
+    // ZMQ subscriber: consumes worker events (subscribed to all topics) and
+    // forwards them onto the in-process broadcast bus that WS handlers tap.
     if let Ok(sub_url) = env::var("ZEROVPN_EVENTS__SUBSCRIBER_CONNECT") {
+        let bus = app_state.events.clone();
         tokio::spawn(async move {
             let mut delay = Duration::from_millis(250);
             let sub = loop {
-                match Subscriber::connect(&sub_url, "events.").await {
+                match Subscriber::connect(&sub_url, "").await {
                     Ok(s) => break s,
                     Err(e) => {
                         warn!(?e, "zmq subscriber connect failed, retrying");
@@ -80,7 +82,7 @@ async fn main() -> Result<()> {
                     }
                 }
             };
-            run_subscriber(sub).await;
+            run_subscriber(sub, bus).await;
         });
     } else {
         info!("ZEROVPN_EVENTS__SUBSCRIBER_CONNECT not set; skipping ZMQ subscriber");
@@ -107,7 +109,8 @@ async fn main() -> Result<()> {
                 )
                 .route("/devices/{id}/pause", post(routes::devices::pause))
                 .route("/devices/{id}/unpause", post(routes::devices::unpause))
-                .route("/devices/{id}/dns", axum::routing::put(routes::dns::set)),
+                .route("/devices/{id}/dns", axum::routing::put(routes::dns::set))
+                .route("/ws", get(routes::ws::ws)),
         )
         .layer(session_layer)
         .with_state(app_state)
@@ -166,22 +169,31 @@ async fn shutdown_signal() {
     }
 }
 
-async fn run_subscriber(mut sub: Subscriber) {
+async fn run_subscriber(mut sub: Subscriber, bus: tokio::sync::broadcast::Sender<Event>) {
     info!("zmq subscriber loop started");
     loop {
         match sub.recv().await {
-            Ok((topic, event)) => match event {
-                Event::Heartbeat { ts_ms } => {
-                    debug!(topic, ts_ms, "heartbeat received");
-                }
-                _ => {
-                    debug!(topic, "event received");
-                }
-            },
+            Ok((topic, event)) => {
+                debug!(topic, kind = event_kind(&event), "event received");
+                // No receivers? Fine — broadcast just drops. The next WS
+                // client that connects starts seeing fresh events.
+                let _ = bus.send(event);
+            }
             Err(e) => {
                 warn!(?e, "zmq subscriber recv error");
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
+    }
+}
+
+fn event_kind(e: &Event) -> &'static str {
+    match e {
+        Event::Heartbeat { .. } => "heartbeat",
+        Event::StatsDelta { .. } => "stats_delta",
+        Event::HandshakeChange { .. } => "handshake_change",
+        Event::PeerStatusChanged { .. } => "peer_status_changed",
+        Event::DnsUpdated { .. } => "dns_updated",
+        Event::ServerHealth { .. } => "server_health",
     }
 }

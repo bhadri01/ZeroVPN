@@ -8,8 +8,16 @@
 :80, :443 {
     encode zstd gzip
 
-    @api path /api/* /ws/*
+    @api path /api/*
     handle @api {
+        reverse_proxy api:8080
+    }
+
+    # WebSocket connection at /api/v1/ws lives under the same path and is
+    # already covered by @api above; keep an explicit handler in case we
+    # add a top-level /ws later.
+    @ws path /ws/*
+    handle @ws {
         reverse_proxy api:8080
     }
 
