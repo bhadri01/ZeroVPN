@@ -1,5 +1,9 @@
+pub mod admin;
 pub mod auth;
+pub mod bandwidth;
 pub mod devices;
 pub mod dns;
 pub mod health;
+pub mod me;
+pub mod totp;
 pub mod ws;

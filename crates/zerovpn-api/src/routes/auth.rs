@@ -75,12 +75,18 @@ pub struct LoginBody {
     pub email: String,
     #[garde(length(min = 1))]
     pub password: String,
+    /// 6-digit TOTP code (or 8-char recovery code). Required when the user
+    /// has 2FA enabled; ignored otherwise.
+    #[serde(default)]
+    #[garde(skip)]
+    pub totp_code: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
     pub user: PublicUser,
     pub must_change_password: bool,
+    pub totp_required: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -169,6 +175,38 @@ pub async fn login(
         return Err(ApiError::Forbidden);
     }
 
+    // 2FA challenge if enabled.
+    if user_with_secrets.totp_enabled {
+        let code = match body.totp_code.as_deref() {
+            Some(c) if !c.is_empty() => c,
+            _ => {
+                // Correct password but missing second factor — return a
+                // hint to the client so the form can prompt for the code.
+                return Ok(Json(LoginResponse {
+                    user: PublicUser {
+                        id: user_with_secrets.id,
+                        email: user_with_secrets.email.clone(),
+                        role: user_with_secrets.role,
+                    },
+                    must_change_password: user_with_secrets.must_change_password,
+                    totp_required: true,
+                }));
+            }
+        };
+        let ok = verify_totp_or_recovery(&state, user_with_secrets.id, code).await?;
+        if !ok {
+            failed_logins::record(
+                &state.pool,
+                Some(&email),
+                None,
+                None,
+                failed_logins::FailedLoginReason::TotpFailed,
+            )
+            .await?;
+            return Err(ApiError::Unauthorized);
+        }
+    }
+
     session
         .insert(SESSION_KEY_USER_ID, user_with_secrets.id)
         .await
@@ -176,14 +214,46 @@ pub async fn login(
 
     users::touch_last_login(&state.pool, user_with_secrets.id).await?;
 
+    let totp_enabled = user_with_secrets.totp_enabled;
     let user: User = user_with_secrets.into();
     let must_change = user.must_change_password;
-    info!(user_id = %user.id, role = ?user.role, "login");
+    info!(user_id = %user.id, role = ?user.role, totp = totp_enabled, "login");
 
     Ok(Json(LoginResponse {
         user: PublicUser { id: user.id, email: user.email, role: user.role },
         must_change_password: must_change,
+        totp_required: false,
     }))
+}
+
+/// Verify a code against the stored TOTP secret OR consume a recovery code.
+/// On a successful recovery match, that code is removed from the user's set.
+async fn verify_totp_or_recovery(
+    state: &AppState,
+    user_id: uuid::Uuid,
+    code: &str,
+) -> ApiResult<bool> {
+    let (secret_encrypted, recovery_hashes) =
+        match users::get_totp_material(&state.pool, user_id).await? {
+            Some(t) => t,
+            None => return Ok(false),
+        };
+    let secret_bytes = state
+        .kek
+        .decrypt(&secret_encrypted)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let secret = String::from_utf8(secret_bytes)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if let Ok(true) = zerovpn_auth::totp::verify(&secret, code) {
+        return Ok(true);
+    }
+    if let Ok(Some(idx)) = zerovpn_auth::totp::match_recovery_code(code, &recovery_hashes) {
+        let mut remaining = recovery_hashes.clone();
+        remaining.remove(idx);
+        users::replace_recovery_codes(&state.pool, user_id, &remaining).await?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 pub async fn logout(session: Session) -> ApiResult<impl IntoResponse> {

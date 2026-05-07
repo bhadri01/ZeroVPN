@@ -12,7 +12,10 @@ use std::time::Duration;
 use rand::Rng;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-use zerovpn_db::{PgPool, repos::devices};
+use zerovpn_db::{
+    PgPool,
+    repos::{bandwidth, devices},
+};
 use zerovpn_wire::Event;
 
 /// Poll interval. Configurable via env var so smoke tests can run on a
@@ -49,7 +52,8 @@ async fn emit_round(
 ) -> Result<usize, sqlx::Error> {
     // Iterate active devices across all servers.
     let servers = zerovpn_db::repos::servers::list_active(pool).await?;
-    let now_ms = time::OffsetDateTime::now_utc().unix_timestamp() * 1000;
+    let now = time::OffsetDateTime::now_utc();
+    let now_ms = now.unix_timestamp() * 1000;
     let mut count = 0usize;
 
     for s in servers {
@@ -70,6 +74,20 @@ async fn emit_round(
                 let rate_tx = tx / secs * 8;
                 (rx, tx, rate_rx, rate_tx)
             };
+
+            // Persist the delta for historical aggregation. Best effort —
+            // a transient DB error doesn't break the live broadcast.
+            if let Err(e) = bandwidth::insert_sample(
+                pool,
+                d.id,
+                now,
+                rx_bytes as i64,
+                tx_bytes as i64,
+            )
+            .await
+            {
+                warn!(device = %d.id, ?e, "bandwidth sample insert failed");
+            }
 
             let event = Event::StatsDelta {
                 device_id: d.id,

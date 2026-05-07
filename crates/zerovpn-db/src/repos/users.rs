@@ -69,6 +69,170 @@ pub async fn count_active_admins(pool: &PgPool) -> sqlx::Result<i64> {
     Ok(row.0)
 }
 
+/// Persist enrolled TOTP material (encrypted secret + hashed recovery codes).
+pub async fn enable_totp(
+    pool: &PgPool,
+    user_id: Uuid,
+    secret_encrypted: &[u8],
+    recovery_hashes: &[String],
+) -> sqlx::Result<()> {
+    sqlx::query(
+        r#"UPDATE users
+              SET totp_enabled = TRUE,
+                  totp_secret_encrypted = $2,
+                  totp_recovery_codes_hashed = $3
+            WHERE id = $1"#,
+    )
+    .bind(user_id)
+    .bind(secret_encrypted)
+    .bind(recovery_hashes)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn disable_totp(pool: &PgPool, user_id: Uuid) -> sqlx::Result<()> {
+    sqlx::query(
+        r#"UPDATE users
+              SET totp_enabled = FALSE,
+                  totp_secret_encrypted = NULL,
+                  totp_recovery_codes_hashed = NULL
+            WHERE id = $1"#,
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_totp_material(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> sqlx::Result<Option<(Vec<u8>, Vec<String>)>> {
+    let row: Option<(Option<Vec<u8>>, Option<Vec<String>>)> = sqlx::query_as(
+        "SELECT totp_secret_encrypted, totp_recovery_codes_hashed FROM users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|(secret, codes)| match (secret, codes) {
+        (Some(s), Some(c)) => Some((s, c)),
+        _ => None,
+    }))
+}
+
+pub async fn replace_recovery_codes(
+    pool: &PgPool,
+    user_id: Uuid,
+    new_codes: &[String],
+) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET totp_recovery_codes_hashed = $2 WHERE id = $1")
+        .bind(user_id)
+        .bind(new_codes)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Soft-delete a user — null PII, revoke devices/sessions/tokens.
+pub async fn soft_delete(pool: &PgPool, user_id: Uuid) -> sqlx::Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        r#"UPDATE users
+              SET deleted_at = NOW(),
+                  status = 'deleted',
+                  email = ('deleted-' || id::TEXT || '@deleted.invalid')::CITEXT,
+                  password_hash = '!',
+                  totp_enabled = FALSE,
+                  totp_secret_encrypted = NULL,
+                  totp_recovery_codes_hashed = NULL
+            WHERE id = $1"#,
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE devices SET status = 'revoked' WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE api_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Row used by the admin user list page.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminUserRow {
+    pub id: Uuid,
+    pub email: String,
+    pub role: UserRole,
+    pub status: UserStatus,
+    pub totp_enabled: bool,
+    pub created_at: OffsetDateTime,
+    pub last_login_at: Option<OffsetDateTime>,
+    pub device_count: i64,
+}
+
+pub async fn admin_list(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+    search: Option<&str>,
+) -> sqlx::Result<Vec<AdminUserRow>> {
+    let pattern = search.map(|s| format!("%{}%", s.to_lowercase()));
+    sqlx::query_as::<_, AdminUserRow>(
+        r#"SELECT u.id, u.email::TEXT AS email, u.role, u.status, u.totp_enabled,
+                  u.created_at, u.last_login_at,
+                  (SELECT COUNT(*) FROM devices d
+                    WHERE d.user_id = u.id AND d.status <> 'revoked') AS device_count
+             FROM users u
+            WHERE u.deleted_at IS NULL
+              AND ($3::TEXT IS NULL OR LOWER(u.email::TEXT) LIKE $3)
+            ORDER BY u.created_at DESC
+            LIMIT $1 OFFSET $2"#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .bind(pattern)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn admin_count(pool: &PgPool, search: Option<&str>) -> sqlx::Result<i64> {
+    let pattern = search.map(|s| format!("%{}%", s.to_lowercase()));
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM users
+            WHERE deleted_at IS NULL
+              AND ($1::TEXT IS NULL OR LOWER(email::TEXT) LIKE $1)"#,
+    )
+    .bind(pattern)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn admin_set_status(
+    pool: &PgPool,
+    user_id: Uuid,
+    status: UserStatus,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        "UPDATE users SET status = $2 WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .bind(status)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 /// User row including the password hash. Only used by the auth crate; never
 /// returned over the API.
 #[derive(Debug, Clone, sqlx::FromRow)]

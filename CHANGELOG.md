@@ -33,6 +33,41 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added — Phase 1B-C: 2FA, bandwidth analytics, admin tools, account flow (2026-05-07)
+
+**Closes the biggest gaps that aren't WireGuard runtime: 2FA, historical bandwidth, admin pages, GDPR export + soft-delete, maintenance mode.**
+
+**Backend**
+- `crates/zerovpn-db/src/repos/bandwidth.rs` — `insert_sample`, `rollup_hourly`, `rollup_daily`, plus per-device + per-user query helpers. Idempotent rollups via `ON CONFLICT … DO UPDATE`.
+- `crates/zerovpn-worker/src/aggregator.rs` — task that runs every 5 minutes, rolls up the closed previous hour, and at 00:05 UTC rolls up the closed day.
+- `crates/zerovpn-worker/src/stats_sim.rs` — now also persists each delta into `bandwidth_samples` so the aggregator has data to roll up.
+- `crates/zerovpn-auth/src/totp.rs` — real implementation: `generate_secret_b32`, `provisioning_uri` (otpauth://), `verify` (±1 step skew), `generate_recovery_codes` (10 × 8-char base32, argon2-hashed), `match_recovery_code`. 3 unit tests.
+- `crates/zerovpn-api/src/state.rs` — `AppState` now owns an `Arc<Kek>` loaded from `ZEROVPN_KEK` at startup, used to encrypt TOTP secrets at column level.
+- `crates/zerovpn-api/src/routes/totp.rs` — `POST /auth/totp/{setup,enable,disable}`. Setup returns a fresh secret + QR + provisioning URI; enable verifies a code, encrypts the secret, persists hashed recovery codes, returns plaintext recovery codes once.
+- `crates/zerovpn-api/src/routes/auth.rs` — login now accepts an optional `totp_code`. If a user has 2FA enabled and no code is provided, returns `{ totp_required: true }` so the client can prompt; otherwise verifies TOTP **or** consumes a recovery code.
+- `crates/zerovpn-api/src/routes/bandwidth.rs` — `GET /devices/{id}/bandwidth?range=24h|7d|30d` and `GET /bandwidth?range=…` returning aggregated buckets.
+- `crates/zerovpn-api/src/routes/admin.rs` — admin endpoints behind `RequireAdmin`: `GET /admin/users` (paginated, searchable; includes per-user device count + TOTP state), `PUT /admin/users/{id}/status`, `GET /admin/audit`, `GET /admin/failed-logins`, `GET/PUT /admin/maintenance`.
+- `crates/zerovpn-api/src/routes/me.rs` — `GET /me/data-export` returns a JSON dump of the user's account row, devices, and audit-log entries they originated. `DELETE /me/account` soft-deletes (nulls PII, revokes devices/sessions/tokens) inside a transaction, releases the IP allocator entries, flushes the session.
+- `crates/zerovpn-db/src/repos/users.rs` — `enable_totp`, `disable_totp`, `get_totp_material`, `replace_recovery_codes`, `soft_delete` (transactional cascade), `admin_list/count/set_status`.
+
+**Frontend**
+- `web/src/components/charts/BandwidthChart.tsx` — Recharts area chart with RX (blue gradient) and TX (green gradient), hover tooltip with formatted bytes, time-axis tick formatting.
+- `web/src/pages/app/Dashboard.tsx` — Adds the bandwidth section under the topology graph with a 24h/7d/30d range selector. Quick links to Security and Account pages.
+- `web/src/pages/app/Security.tsx` — Full 2FA enrollment wizard: setup button, animated QR card, manual-entry secret, code verification, and the one-time recovery codes display with Copy + "I've saved them" UX. Also a collapsed "Disable 2FA" form.
+- `web/src/pages/app/Account.tsx` — Data export download (saves `zerovpn-data-export-YYYY-MM-DD.json`) + delete-account flow with email-typed confirmation.
+- `web/src/pages/public/Login.tsx` — Two-step login: if backend returns `totp_required`, show a code input step; cancel button to return to credentials.
+- `web/src/pages/admin/Overview.tsx` — Admin user list with email search, status pills, suspend/unsuspend actions (disabled for self), maintenance-mode toggle card, links to audit + failed-logins pages.
+- `web/src/pages/admin/AuditLog.tsx` — Recent 200 audit entries with timestamp, actor (8-char prefix), action, target, JSON metadata.
+- `web/src/pages/admin/FailedLogins.tsx` — Recent 200 failed-login attempts with email, reason, timestamp.
+- `web/src/lib/api.ts` — endpoints for bandwidth, TOTP setup/enable/disable, data export, account delete, admin list/status, audit, failed-logins, maintenance get/set.
+
+**Decisions & rationale (1B-C)**
+- **TOTP recovery codes are 8 base32-style chars** generated from random bytes, then argon2-hashed at rest. On match the consumed code is removed from the DB array. Trade-off: argon2 verification is slow (~30ms per code × up to 10 codes) — acceptable on a recovery-only path.
+- **Soft-delete in a single transaction** that nulls PII (`email = 'deleted-{id}@deleted.invalid'`, `password_hash = '!'`, TOTP material wiped), revokes devices/sessions/tokens. The row stays for 30 days for admin recovery, then a future purger removes it.
+- **Hourly rollups every 5 minutes** keeps the aggregate fresh without being a tight loop. `ON CONFLICT (device_id, bucket, bucket_start) DO UPDATE` makes re-runs idempotent — useful when the worker restarts mid-window.
+- **Maintenance mode flag in `app_settings`** rather than env var — admins can toggle it without redeploying. Read-only enforcement at the API layer is a Phase 1B-D task; for now the admin page reflects the state.
+- **Admin self-protection**: `set_user_status` rejects when `target_id == actor.id` so an admin can't accidentally suspend themselves.
+
 ### Added — Phase 1B-B: live stats over WebSocket + topology graph (2026-05-07)
 
 **The dashboard now shows a live force-directed network graph: server in the center, peers radiating out, animated particles flowing along each edge in proportion to current TX/RX rate. 22/22 smoke checks pass — including a Python+websockets check that opens an authenticated WebSocket and verifies a binary stats frame arrives within 15 seconds.**

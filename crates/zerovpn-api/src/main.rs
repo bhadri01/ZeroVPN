@@ -64,7 +64,11 @@ async fn main() -> Result<()> {
         .await
         .context("build ip allocators")?;
 
-    let app_state = AppState::new(pool, allocators);
+    let kek_b64 = env::var("ZEROVPN_KEK").context("ZEROVPN_KEK is required")?;
+    let kek = zerovpn_auth::kek::Kek::from_b64(&kek_b64)
+        .map_err(|e| anyhow::anyhow!("invalid KEK: {e}"))?;
+
+    let app_state = AppState::new(pool, allocators, kek);
 
     // ZMQ subscriber: consumes worker events (subscribed to all topics) and
     // forwards them onto the in-process broadcast bus that WS handlers tap.
@@ -110,6 +114,27 @@ async fn main() -> Result<()> {
                 .route("/devices/{id}/pause", post(routes::devices::pause))
                 .route("/devices/{id}/unpause", post(routes::devices::unpause))
                 .route("/devices/{id}/dns", axum::routing::put(routes::dns::set))
+                .route("/devices/{id}/bandwidth", get(routes::bandwidth::for_device))
+                .route("/bandwidth", get(routes::bandwidth::for_user))
+                .route("/auth/totp/setup", post(routes::totp::setup))
+                .route("/auth/totp/enable", post(routes::totp::enable))
+                .route("/auth/totp/disable", post(routes::totp::disable))
+                .route("/me/data-export", get(routes::me::export))
+                .route(
+                    "/me/account",
+                    axum::routing::delete(routes::me::delete_account),
+                )
+                .route("/admin/users", get(routes::admin::list_users))
+                .route(
+                    "/admin/users/{id}/status",
+                    axum::routing::put(routes::admin::set_user_status),
+                )
+                .route("/admin/audit", get(routes::admin::list_audit))
+                .route("/admin/failed-logins", get(routes::admin::list_failed_logins))
+                .route(
+                    "/admin/maintenance",
+                    get(routes::admin::get_maintenance).put(routes::admin::set_maintenance),
+                )
                 .route("/ws", get(routes::ws::ws)),
         )
         .layer(session_layer)

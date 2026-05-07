@@ -4,11 +4,13 @@ import { useCallback, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { toast } from "sonner"
 
+import { BandwidthChart } from "@/components/charts/BandwidthChart"
 import { Button } from "@/components/ui/button"
 import { TopologyGraph, applyEmaSmoothing } from "@/components/topology/TopologyGraph"
 import { useWebSocket } from "@/hooks/useWebSocket"
 import {
   ApiError,
+  type BandwidthRange,
   type CreatedDevice,
   type DeviceOs,
   createDevice,
@@ -17,6 +19,7 @@ import {
   logout,
   pauseDevice,
   unpauseDevice,
+  userBandwidth,
 } from "@/lib/api"
 import type { Event } from "@/lib/wire"
 import { useAuth } from "@/stores/auth"
@@ -33,6 +36,12 @@ export function DashboardPage() {
   const [rates, setRates] = useState<Map<string, { rxBps: number; txBps: number }>>(
     new Map(),
   )
+  const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
+  const bandwidthQ = useQuery({
+    queryKey: ["bandwidth", "user", bwRange],
+    queryFn: () => userBandwidth(bwRange),
+    staleTime: 60_000,
+  })
 
   const onWsEvent = useCallback((event: Event) => {
     if (event.type === "stats_delta") {
@@ -128,6 +137,37 @@ export function DashboardPage() {
             </p>
           </div>
           <TopologyGraph devices={devicesQ.data ?? []} rates={rates} />
+        </section>
+
+        <section className="space-y-2">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-xl font-semibold">Bandwidth</h2>
+            <div className="flex gap-1">
+              {(["24h", "7d", "30d"] as BandwidthRange[]).map((r) => (
+                <Button
+                  key={r}
+                  size="sm"
+                  variant={r === bwRange ? "default" : "outline"}
+                  onClick={() => setBwRange(r)}
+                >
+                  {r}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <BandwidthChart buckets={bandwidthQ.data?.buckets ?? []} />
+        </section>
+
+        <section>
+          <p className="text-muted-foreground text-xs">
+            <Link to="/app/security" className="underline">
+              Security & 2FA →
+            </Link>
+            {" · "}
+            <Link to="/app/account" className="underline">
+              Account & data →
+            </Link>
+          </p>
         </section>
 
         <section className="space-y-4">

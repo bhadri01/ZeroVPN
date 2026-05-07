@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::broadcast;
+use zerovpn_auth::kek::Kek;
 use zerovpn_db::PgPool;
 use zerovpn_wg::ip_alloc::IpAllocator;
 use zerovpn_wire::Event;
@@ -13,14 +14,15 @@ pub struct AppState {
     /// Per-server IP allocator, keyed by server UUID.
     pub allocators: Arc<IpAllocators>,
     /// Broadcast bus into which the ZMQ subscriber writes events.
-    /// WebSocket clients subscribe and filter to events that concern them.
     pub events: broadcast::Sender<Event>,
+    /// Key-encryption key used for column-level secrets (TOTP, optional WG PSK).
+    pub kek: Arc<Kek>,
 }
 
 impl AppState {
-    pub fn new(pool: PgPool, allocators: Arc<IpAllocators>) -> Self {
+    pub fn new(pool: PgPool, allocators: Arc<IpAllocators>, kek: Kek) -> Self {
         let (events, _) = broadcast::channel::<Event>(BROADCAST_BUFFER);
-        Self { pool, allocators, events }
+        Self { pool, allocators, events, kek: Arc::new(kek) }
     }
 }
 

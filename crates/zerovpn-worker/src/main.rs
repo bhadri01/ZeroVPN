@@ -10,6 +10,7 @@ use zerovpn_db::{PgPool, repos::devices};
 use zerovpn_events::Publisher;
 use zerovpn_wire::Event;
 
+mod aggregator;
 mod stats_sim;
 
 #[tokio::main]
@@ -56,12 +57,21 @@ async fn main() -> Result<()> {
     }
 
     // Stats simulation task — queries active devices every 30s and emits a
-    // StatsDelta for each. Real WG poller replaces this in 1B-C.
+    // StatsDelta for each. Real WG poller replaces this in a later phase.
     {
         let pool = pool.clone();
         let tx = tx.clone();
         tokio::spawn(async move {
             stats_sim::run(pool, tx).await;
+        });
+    }
+
+    // Bandwidth aggregator task — rolls up closed hours every 5 minutes
+    // and closed days at 00:05 UTC.
+    {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            aggregator::run(pool).await;
         });
     }
 
