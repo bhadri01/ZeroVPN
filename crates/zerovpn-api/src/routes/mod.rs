@@ -8,5 +8,7 @@ pub mod email_auth;
 pub mod health;
 pub mod me;
 pub mod metrics;
+pub mod openapi;
 pub mod totp;
+pub mod webhooks;
 pub mod ws;

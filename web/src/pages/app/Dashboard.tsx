@@ -4,9 +4,9 @@ import { useCallback, useState } from "react"
 import { Link, useNavigate } from "react-router"
 import { toast } from "sonner"
 
-import { BandwidthChart } from "@/components/charts/BandwidthChart"
+import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
 import { Button } from "@/components/ui/button"
-import { TopologyGraph, applyEmaSmoothing } from "@/components/topology/TopologyGraph"
+import { TopologyGraph, applyEmaSmoothing } from "@/components/topology/LazyTopologyGraph"
 import { useWebSocket } from "@/hooks/useWebSocket"
 import {
   ApiError,

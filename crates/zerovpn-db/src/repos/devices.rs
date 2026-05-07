@@ -115,6 +115,39 @@ pub async fn set_dns_names(
     Ok(res.rows_affected())
 }
 
+/// `public_key → (device_id, user_id)` lookup so the WG poller can attribute
+/// each `wg show dump` line.
+pub async fn pubkey_index(
+    pool: &PgPool,
+) -> sqlx::Result<std::collections::HashMap<String, (Uuid, Uuid)>> {
+    let rows: Vec<(String, Uuid, Uuid)> = sqlx::query_as(
+        "SELECT public_key, id, user_id FROM devices WHERE status <> 'revoked'",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(pk, id, uid)| (pk, (id, uid)))
+        .collect())
+}
+
+/// Update last_handshake_at without churning rows when the value didn't change.
+pub async fn touch_handshake(
+    pool: &PgPool,
+    device_id: Uuid,
+    handshake_at: time::OffsetDateTime,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        "UPDATE devices SET last_handshake_at = $2
+          WHERE id = $1 AND (last_handshake_at IS NULL OR last_handshake_at < $2)",
+    )
+    .bind(device_id)
+    .bind(handshake_at)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 /// All allocated IPs for a server, used to seed the in-memory bitmap on boot.
 pub async fn allocated_ips_for_server(pool: &PgPool, server_id: Uuid) -> sqlx::Result<Vec<IpAddr>> {
     let rows: Vec<(IpNetwork,)> = sqlx::query_as(

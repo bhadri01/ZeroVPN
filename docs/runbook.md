@@ -2,32 +2,69 @@
 
 ## First-time setup
 
-1. Clone the repo, then `make setup`. This:
-   - Copies `.env.example` to `.env`.
-   - Generates random secrets via `scripts/init-secrets.sh` (KEK, session secret, DB password, Redis password) into `./secrets/`.
-   - Builds the Docker images.
-2. `make up` starts the stack.
-3. `make migrate` applies pending migrations.
-4. `make bootstrap-admin EMAIL=admin@example.com` creates the first admin user. The CLI prompts for an initial password (≥12 chars). The user is flagged `must_change_password=TRUE` and will be required to set a new password on first login.
+```
+git clone <this repo>
+cd zerovpn
+make setup     # copies .env.example → .env, generates secrets, builds images
+make up
+make migrate
+make bootstrap-admin EMAIL=admin@example.com   # interactive password prompt
+```
+
+The bootstrap admin lands as `must_change_password=TRUE` and is forced through the email-link reset on first login (MailHog catches mail in dev at <http://localhost:8025>).
+
+## Bringing up the real WireGuard runtime (Linux production)
+
+The default `make up` runs the management plane only — **no actual WireGuard interface comes up**. To bring up real WG:
+
+1. **Linux host with the WG kernel module loaded.** Verify with `lsmod | grep wireguard`. On Debian/Ubuntu:
+   ```
+   sudo apt install -y wireguard wireguard-tools
+   sudo modprobe wireguard
+   ```
+
+2. **Set `ZEROVPN_WG__BACKEND=shell` in `.env`.** The api/worker now route `add_peer/remove_peer` to `wg set` instead of the no-op stub.
+
+3. **Bring up the wg container alongside the rest of the stack:**
+   ```
+   docker compose --profile wg up -d
+   ```
+   The bootstrap routine writes `wg0.conf` into the shared `wg_config` volume on first boot; the wg container picks it up and runs `wg-quick up wg0`.
+
+4. **Open UDP 51820** on your firewall.
+
+5. **AmneziaWG obfuscation** (optional but recommended for restrictive networks): swap the `wg` service image from `linuxserver/wireguard:latest` to an AmneziaWG-compatible build (e.g. `ghcr.io/amnezia-vpn/amneziawg-go:latest`) and add the `Jc/Jmin/Jmax/H1–H4/S1–S2` lines to peer configs (already emitted by the `.conf` template).
+
+## Bringing up observability
+
+```
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+```
+
+Adds Prometheus (scraping `api:8080/metrics` every 15 s), Grafana with the Prometheus + Loki datasources pre-provisioned (admin/admin at <http://localhost/grafana/>), Loki + Promtail for centralized container logs, and a nightly backup container.
+
+For age-encrypted backups, set `ZEROVPN_BACKUP_AGE_RECIPIENT` to your age public key in `.env` before bringing up the profile.
 
 ## Healthchecks
 
-- API `GET /health` — liveness.
-- API `GET /ready` — db reachability.
-- Caddy `GET /healthz` — proxy responsive.
+- `GET /health` — liveness (api always-on)
+- `GET /ready` — db reachability
+- `GET /metrics` — Prometheus exposition
+- `GET /openapi.json` — API schema for codegen / Swagger UI
+- Caddy `/healthz` — proxy responsive
 
 ## Common issues
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `api` exits with `database connection refused` | DB not yet ready | `docker compose logs db`; usually self-resolves once `pg_isready` succeeds |
-| Frontend shows "API unreachable" | api container down or Caddy upstream unhealthy | `docker compose ps`, then `docker compose logs api` |
-| `wg show` empty | WG container needs NET_ADMIN | check container caps; on macOS Docker Desktop the WG container runs userspace via `amneziawg-go` which is fine for dev |
-| `zmq publisher bind` fails | port 5555 already used | other compose project running; `docker compose down` first |
-
-## Backup & restore
-
-(Phase 1C deliverable. Backup container with age encryption + offsite push.)
+| api crashloops with `GLIBC_2.38 not found` | builder image has a newer glibc than the runtime | Dockerfile.api uses `cargo-chef:…-bookworm` to match the distroless `cc-debian12` runtime. Verify with `docker run --rm <api-image> ldd --version`. |
+| `database connection refused` | DB not yet ready | `docker compose logs db`; `pg_isready` should be passing. Self-resolves once Postgres is up. |
+| Frontend "API unreachable" | api container down or Caddy upstream unhealthy | `docker compose ps`, then `docker compose logs api`. |
+| `wg show` empty even with profile=wg | NET_ADMIN missing or kernel module not loaded | `lsmod | grep wireguard`; `cap_add: [NET_ADMIN, SYS_MODULE]` is set on the wg service. |
+| `zmq publisher bind` fails | port 5555 already used | another compose project running; `docker compose down` first. |
+| Maintenance mode locks out admins | The middleware's auth-path bypass exempts `/auth/*`, `/health`, `/ready`. Admin auth still works | Sign in normally; admin role bypasses the 503. |
+| `dnsmasq: failed to load /etc/dnsmasq.d/zerovpn-peers.conf` | Volume empty before first device | Harmless; the worker writes the file when the first peer's DNS name is set. |
+| `wg0.conf` missing in wg container | Bootstrap couldn't write to shared volume | Verify `wg_config` volume mount on api service; check api logs for "wg0.conf write failed". |
 
 ## Rotating secrets
 
@@ -38,12 +75,52 @@ rm secrets/*.txt
 docker compose up -d
 ```
 
-> **Caution:** rotating the session secret invalidates all live sessions; users must log in again. Rotating the KEK breaks any AES-GCM-encrypted column unless you re-encrypt first.
+> **Caution:** rotating the session secret invalidates all live sessions; users must log in again. Rotating the KEK (`ZEROVPN_KEK`) breaks any AES-GCM-encrypted column unless you decrypt + re-encrypt with the old → new key pair first. TOTP secrets are KEK-encrypted; rotating the KEK without migration disables 2FA for everyone (they'll need to re-enroll).
+
+## Restoration drill
+
+1. Stop the stack: `make down`
+2. Wipe the pg_data volume: `docker volume rm zerovpn_pg_data`
+3. Restore the latest backup: `tar -xzf zerovpn-YYYYMMDD.tar.gz -C /tmp/restore && docker run --rm -v zerovpn_pg_data:/dst -v /tmp/restore/db:/src alpine cp -av /src/. /dst/`
+4. Restore secrets: `cp -av /tmp/restore/secrets/* ./secrets/`
+5. `make up` — db should come up healthy with the restored data.
 
 ## Upgrading
 
-1. `git pull`
-2. `make check` — runs cargo check + clippy + tsc + eslint
-3. `docker compose build`
-4. `make migrate`
-5. `make up`
+```
+git pull
+make check         # cargo check + clippy + tsc + eslint
+docker compose build
+make migrate       # applies any new migrations
+make up
+```
+
+For zero-downtime upgrades, drain peers off this server first by toggling **maintenance mode** in the admin UI, then `docker compose up -d --no-deps api worker frontend`.
+
+## Switching the WG image to AmneziaWG
+
+The default `linuxserver/wireguard` image is fine for vanilla WireGuard. For AmneziaWG (obfuscated WireGuard variant the `.conf` template already emits params for):
+
+1. Replace the image in `docker-compose.yml` under the `wg` service: `image: ghcr.io/amnezia-vpn/amneziawg-go:latest` (or the kernel-module variant if your host has the kernel patches).
+2. Rebuild: `docker compose --profile wg up -d --force-recreate wg`
+3. The Sc/Sr/H1–H4/Jc/Jmin/Jmax/S1/S2 fields the api emits in `[Interface]` are AmneziaWG-only; standard WG clients ignore them.
+4. Clients need an AmneziaWG-aware app (the standard WireGuard apps won't connect).
+
+## Security review checklist (before exposing to the internet)
+
+- [ ] `ZEROVPN_KEK` is a fresh 32-byte base64 random (the default from `init-secrets.sh` is fine; never reuse across environments)
+- [ ] Caddy is fronting with TLS — `auto_https off` is dev-only; remove it for prod
+- [ ] `ZEROVPN_DOMAIN` set to the real domain so Let's Encrypt can issue
+- [ ] Firewall: 22/tcp (SSH), 80/tcp (Caddy redirect), 443/tcp+udp (Caddy + HTTP/3), 51820/udp (WireGuard) — nothing else
+- [ ] `secrets/*.txt` mode 0400, `.env` not in git
+- [ ] Admin email/password rotated from the bootstrap default
+- [ ] Backup `AGE_RECIPIENT` configured + verify a restore drill before relying on it
+- [ ] `ZEROVPN_WG__BACKEND=shell` if you actually want WG packets to flow
+
+## Container hardening notes (1C)
+
+- api / worker: `read_only: true`, `tmpfs: /tmp`, `cap_drop: [ALL]`, `no-new-privileges`. Distroless non-root.
+- caddy: `cap_drop: [ALL]`, `cap_add: [NET_BIND_SERVICE]`.
+- frontend (nginx): `cap_drop: [ALL]`, `cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]`, tmpfs for `/var/cache/nginx` + `/var/run`.
+- db / redis: untouched (need full FS access for their data dirs).
+- wg: needs `NET_ADMIN, SYS_MODULE` for the kernel module + `host` networking; no further hardening.

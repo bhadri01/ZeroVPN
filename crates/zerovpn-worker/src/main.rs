@@ -13,6 +13,7 @@ use zerovpn_wire::Event;
 mod aggregator;
 mod retention;
 mod stats_sim;
+mod wg_poller;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -59,7 +60,13 @@ async fn main() -> Result<()> {
 
     // Stats simulation task — queries active devices every 30s and emits a
     // StatsDelta for each. Real WG poller replaces this in a later phase.
-    {
+    if wg_poller::enabled() {
+        let pool = pool.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            wg_poller::run(pool, tx).await;
+        });
+    } else {
         let pool = pool.clone();
         let tx = tx.clone();
         tokio::spawn(async move {

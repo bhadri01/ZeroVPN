@@ -1,9 +1,15 @@
 # syntax=docker/dockerfile:1.7
 FROM node:24-alpine AS build
 WORKDIR /app
-RUN corepack enable
-COPY web/package.json web/pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile || pnpm install
+# Pin pnpm to 9.15.x — pnpm 10 introduced ERR_PNPM_IGNORED_BUILDS for any
+# package with a postinstall script (esbuild, msw) and treats it as a hard
+# error during `--frozen-lockfile`. The `onlyBuiltDependencies` opt-in is
+# unreliable in CI image builds. Pinning to pnpm 9 keeps the lockfile schema
+# compatible (no v10-only features in our lockfile) without the new gate.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+COPY web/package.json web/pnpm-lock.yaml* web/.npmrc* ./
+RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 

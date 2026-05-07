@@ -6,3 +6,4 @@ pub mod failed_logins;
 pub mod servers;
 pub mod users;
 pub mod verification_tokens;
+pub mod webhooks;

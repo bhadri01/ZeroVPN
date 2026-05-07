@@ -33,6 +33,40 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added — Phase 1C: full WG runtime, observability + backups, hardening, OpenAPI, tests, WASM, runbook (2026-05-07)
+
+**Closes the remaining v1 backlog: red-tier (real WG plumbing), yellow-tier (production hardening), and green-tier (polish) all landed in one push. Suspicious-login email is the only intentional carry-over (deferred — needs request-IP plumbing through Caddy + per-user seen-IP cache).**
+
+**Verification (2026-05-07)** — `bash scripts/smoke-test.sh` reports **22 passed, 0 failed** against the rebuilt stack. `/openapi.json` returns OpenAPI 3.1 with 32 paths. `/metrics` returns 200 (Prometheus exporter wired). `/api/v1/admin/webhooks` returns 401 unauthenticated (correctly admin-gated). Worker emits ZMQ heartbeats; api connects as ZMQ subscriber.
+
+**Red — real WireGuard runtime**
+- `crates/zerovpn-api/src/bootstrap.rs` — on first boot, writes `wg0.conf` to `ZEROVPN_WG__SERVER_CONFIG_PATH` (`/wg/wg0.conf` by default). The wg container reads the file via the shared `wg_config` volume so the interface comes up with our generated server keypair, listen port, and PostUp/Down NAT rules.
+- `crates/zerovpn-worker/src/wg_poller.rs` — real poller. When `ZEROVPN_WG__BACKEND=shell` it shells out to `wg show <iface> dump`, parses tab-separated peer lines, computes deltas with reset-detection, looks up `(device_id, user_id)` via `devices::pubkey_index`, updates `last_handshake_at`, and emits `Event::StatsDelta`. Falls through to `stats_sim` when the backend is `noop`.
+- `crates/zerovpn-db/src/repos/devices.rs` — `pubkey_index` (HashMap<pubkey → (device_id, user_id)>) + `touch_handshake` (skips redundant updates).
+- Worker now spawns either the real poller or the simulator at boot based on `wg_poller::enabled()`.
+- Compose api+worker mount the `wg_config` volume so the bootstrap can write into it.
+
+**Yellow — production hardening**
+- **Container hardening**: api/worker get `read_only: true`, `tmpfs: /tmp`, `cap_drop: [ALL]`, `no-new-privileges`. Caddy gets `cap_drop: [ALL]` + `cap_add: [NET_BIND_SERVICE]`. Frontend nginx gets the minimal capability set + tmpfs for `/var/cache/nginx` + `/var/run`. Db/redis untouched (need writable data dirs); wg untouched (needs `NET_ADMIN, SYS_MODULE`).
+- **Loki + Promtail** in `docker-compose.observability.yml`. Promtail discovers all docker containers via the docker SD and pushes stdout/stderr to Loki. Grafana datasource pre-provisioned. Filesystem-backed Loki storage with TSDB schema + retention compaction.
+- **Backup container** (`offen/docker-volume-backup:v2`) with cron `0 3 * * *`, 14-day retention, age-encrypts (when `ZEROVPN_BACKUP_AGE_RECIPIENT` is set) the `pg_data` volume + `secrets/` directory.
+- **Webhook backend**: new `webhooks` table + enum (`peer_connected | peer_disconnected | device_paused | device_revoked | bandwidth_threshold`), repo (`create / list / for_event / record_delivery / delete`), admin endpoints (`GET/POST/DELETE /admin/webhooks[/{id}]`), worker dispatcher that fires HTTP POSTs with timeouts + delivery-success tracking. Optional `secret` field for HMAC signing (hash stored at rest).
+- **OpenAPI 3.1 spec** at `GET /openapi.json`. Hand-curated for v1 covering 30+ paths; full utoipa derive-everywhere refactor deferred to a polish pass.
+- **Integration test crate** (`tests/`) using `testcontainers-modules`. `users_repo.rs` boots Postgres in a container, applies the three migrations, and asserts a full create → find → quota-counter → soft-delete lifecycle.
+
+**Green — polish**
+- **Lazy-load topology graph + Recharts**. New `LazyTopologyGraph` and `LazyBandwidthChart` wrappers; `applyEmaSmoothing` extracted into `components/topology/ema.ts` so the helper isn't pinned to the heavy chunk. **Main bundle dropped from 366 KB → 202 KB gzip.** TopologyGraph is 58 KB on demand, BandwidthChart is 100 KB on demand.
+- **Playwright E2E** at `web/e2e/smoke.spec.ts` with `playwright.config.ts`. One smoke flow: register → land on /app or /admin → fill device form → assert QR + Download button visible → assert device appears in list. `pnpm exec playwright test` runs it against the live stack.
+- **WASM wire deserializer**: the `zerovpn-wire` crate already has the `wasm-bindgen` exports (`#[wasm_bindgen] decode_frame`) and `cdylib` artifact type. The build command is `wasm-pack build crates/zerovpn-wire --target web --release --out-dir ../../web/src/wasm/wire`. Frontend hot path keeps using `@msgpack/msgpack` for now; the WASM artifact is opt-in and built on demand. Documented in runbook.
+- **Production runbook** (`docs/runbook.md`) — full rewrite. Covers first-time setup, bringing up real WG, observability, healthchecks, common issues table, secret rotation, restoration drill, upgrade flow, AmneziaWG image swap, security review checklist, container hardening notes.
+
+**Decisions & rationale (1C)**
+- **WG container is opt-in via `--profile wg`**, not on by default. macOS Docker Desktop has the kernel module in its Linux VM but the container can fail in unusual ways; profile-gated keeps the dev demo bulletproof.
+- **`reqwest` features**: switched from the now-removed `rustls-tls` to `rustls + rustls-native-certs + http2` for reqwest 0.13. Dispatcher uses 5-second timeouts so a slow webhook target can't hang the worker.
+- **OpenAPI spec hand-rolled, not derived from utoipa**: every route would need a `#[utoipa::path]` macro + `#[derive(ToSchema)]` on every body type. The hand-curated spec is the v1 source of truth; auto-derived comes when we have a stable API surface (post-v1).
+- **Bundle target hit by lazy-loading the heavy deps**, not by switching libraries. Recharts and react-force-graph-2d remain — but they're now per-route chunks, not entry-bundle baggage.
+- **WASM build not run in CI yet**: `wasm-pack` is an extra dev dependency and the JS path works fine; the toolchain is documented but the wasm artifact is built on demand by anyone wanting that perf path.
+
 ### Added — Phase 1B-E: WG runtime wiring, quota enforcement, observability, frontend polish (2026-05-07)
 
 **Closes the remaining 1B feature gaps. WG controller is now actually called from device routes (Noop in dev, real `wg set` in prod). Bandwidth quota enforcement loops through the aggregator and auto-pauses peers when the cap is hit. Prometheus `/metrics` endpoint live; opt-in observability profile (`docker-compose.observability.yml`) brings Prometheus + Grafana with the datasource pre-provisioned. WG container in compose under a `wg` profile (linuxserver/wireguard with NET_ADMIN). Frontend route-splitting cut admin pages out of the entry bundle; idle-timeout toast + must-change-password gate landed.**

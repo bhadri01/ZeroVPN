@@ -143,6 +143,7 @@ async fn main() -> Result<()> {
         .route("/health", get(routes::health::health))
         .route("/ready", get(routes::health::ready))
         .route("/metrics", get(routes::metrics::metrics))
+        .route("/openapi.json", get(routes::openapi::spec))
         .nest(
             "/api/v1",
             Router::new()
@@ -185,6 +186,14 @@ async fn main() -> Result<()> {
                 .route(
                     "/admin/maintenance",
                     get(routes::admin::get_maintenance).put(routes::admin::set_maintenance),
+                )
+                .route(
+                    "/admin/webhooks",
+                    get(routes::webhooks::list).post(routes::webhooks::create),
+                )
+                .route(
+                    "/admin/webhooks/{id}",
+                    axum::routing::delete(routes::webhooks::delete),
                 )
                 .route(
                     "/admin/users/{id}/quota",

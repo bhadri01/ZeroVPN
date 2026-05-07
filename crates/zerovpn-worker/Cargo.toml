@@ -27,3 +27,5 @@ time = { workspace = true }
 sqlx = { workspace = true }
 rand = { workspace = true }
 uuid = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }

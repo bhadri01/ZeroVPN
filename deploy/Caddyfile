@@ -8,7 +8,7 @@
 :80, :443 {
     encode zstd gzip
 
-    @api path /api/* /metrics /health /ready
+    @api path /api/* /metrics /health /ready /openapi.json
     handle @api {
         reverse_proxy api:8080
     }

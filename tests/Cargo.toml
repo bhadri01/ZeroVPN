@@ -1,0 +1,23 @@
+[package]
+name = "zerovpn-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone integration-test crate. Excluded from the main workspace so
+# production Docker builds don't drag in testcontainers' deps.
+
+[[test]]
+name = "users_repo"
+path = "users_repo.rs"
+
+[dev-dependencies]
+zerovpn-core = { path = "../crates/zerovpn-core" }
+zerovpn-db = { path = "../crates/zerovpn-db" }
+zerovpn-auth = { path = "../crates/zerovpn-auth" }
+sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "macros", "migrate", "uuid", "time", "ipnetwork", "json"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
+testcontainers = "0.25"
+testcontainers-modules = { version = "0.13", features = ["postgres"] }
+uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
+anyhow = "1.0"

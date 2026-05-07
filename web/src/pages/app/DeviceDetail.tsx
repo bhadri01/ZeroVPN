@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 
-import { BandwidthChart } from "@/components/charts/BandwidthChart"
+import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
 import { Button } from "@/components/ui/button"
 import {
   ApiError,
