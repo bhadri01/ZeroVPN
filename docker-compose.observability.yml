@@ -1,0 +1,41 @@
+# Optional observability stack. Run with:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+# Adds Prometheus scraping the api `/metrics` endpoint and Grafana with the
+# Prometheus datasource pre-provisioned. Loki/Promtail come in 1C polish.
+name: zerovpn
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom_data:/prometheus
+    networks:
+      - backend
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=14d
+    mem_limit: 256m
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_DEFAULT_THEME: dark
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: "http://localhost/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - backend
+    mem_limit: 128m
+
+volumes:
+  prom_data:
+  grafana_data:

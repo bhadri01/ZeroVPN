@@ -131,6 +131,38 @@ services:
       - backend
     mem_limit: 96m
 
+  # WireGuard runtime — opt-in via the `wg` profile so the rest of the
+  # stack works on macOS Docker Desktop where the WG kernel module may not
+  # be available. Run as:
+  #   docker compose --profile wg up -d
+  # In production on a Linux host with the kernel module, also flip
+  # ZEROVPN_WG__BACKEND=shell on the api+worker so they call `wg set`
+  # against the running interface.
+  wg:
+    image: linuxserver/wireguard:latest
+    profiles: ["wg"]
+    <<: [*default-restart, *default-logging]
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    network_mode: host
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: UTC
+      INTERNAL_SUBNET: "10.10.0.0/22"
+      SERVERPORT: "51820"
+      # We supply our own wg0.conf — written by the api on first boot.
+      # Disable the image's auto-config-generation entirely.
+      PEERS: "0"
+    volumes:
+      - wg_config:/config
+      - /lib/modules:/lib/modules:ro
+    mem_limit: 64m
+
   dnsmasq:
     image: jpillora/dnsmasq:latest
     <<: [*default-restart, *default-logging]
@@ -168,6 +200,7 @@ volumes:
   caddy_config:
   pg_data:
   dnsmasq_conf:
+  wg_config:
 
 networks:
   web:

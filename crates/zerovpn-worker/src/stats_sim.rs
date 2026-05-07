@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use zerovpn_db::{
     PgPool,
-    repos::{bandwidth, devices},
+    repos::{bandwidth, devices, users},
 };
 use zerovpn_wire::Event;
 
@@ -87,6 +87,46 @@ async fn emit_round(
             .await
             {
                 warn!(device = %d.id, ?e, "bandwidth sample insert failed");
+            }
+
+            // Bump the per-user monthly counter; auto-pause if the user
+            // crossed their cap.
+            let total_delta = (rx_bytes + tx_bytes) as i64;
+            match users::add_monthly_usage(pool, d.user_id, total_delta).await {
+                Ok((current, Some(cap))) if current >= cap => {
+                    if d.status == zerovpn_core::models::DeviceStatus::Active {
+                        if let Err(e) = devices::set_status(
+                            pool,
+                            d.user_id,
+                            d.id,
+                            zerovpn_core::models::DeviceStatus::Paused,
+                        )
+                        .await
+                        {
+                            warn!(?e, "auto-pause on quota exceed failed");
+                        } else {
+                            info!(
+                                user_id = %d.user_id,
+                                device_id = %d.id,
+                                current,
+                                cap,
+                                "device auto-paused: monthly quota exceeded"
+                            );
+                            let _ = tx
+                                .send((
+                                    format!("events.user.{}", d.user_id),
+                                    Event::PeerStatusChanged {
+                                        device_id: d.id,
+                                        user_id: d.user_id,
+                                        status: zerovpn_wire::PeerStatus::Paused,
+                                    },
+                                ))
+                                .await;
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => warn!(?e, "monthly usage update failed"),
             }
 
             let event = Event::StatsDelta {

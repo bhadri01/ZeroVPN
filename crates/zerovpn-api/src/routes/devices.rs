@@ -210,6 +210,15 @@ pub async fn create(
         .await?
         .ok_or_else(|| ApiError::Internal("just-created device missing".into()))?;
 
+    // Hand the new peer to the running WG interface (Noop in dev).
+    if let Err(e) = state
+        .wg
+        .add_peer(&public_key, ip, None, PERSISTENT_KEEPALIVE)
+        .await
+    {
+        tracing::warn!(?e, "wg add_peer failed (continuing — DB row persisted)");
+    }
+
     info!(user_id = %user.id, device_id = %device_id, ip = %ip, "device created");
 
     Ok((
@@ -251,6 +260,10 @@ pub async fn delete(
         },
     )
     .await?;
+    if let Err(e) = state.wg.remove_peer(&device.public_key).await {
+        tracing::warn!(?e, "wg remove_peer failed (non-fatal)");
+    }
+
     info!(user_id = %user.id, device_id = %id, "device revoked");
     Ok(Json(json!({ "status": "ok" })))
 }
@@ -368,6 +381,31 @@ async fn set_pause_state(
     if n == 0 {
         return Err(ApiError::NotFound);
     }
+
+    // Reflect status to the running WG interface.
+    match target {
+        DeviceStatus::Paused => {
+            if let Err(e) = state.wg.remove_peer(&device.public_key).await {
+                tracing::warn!(?e, "wg remove_peer (pause) failed");
+            }
+        }
+        DeviceStatus::Active => {
+            if let Err(e) = state
+                .wg
+                .add_peer(
+                    &device.public_key,
+                    device.allocated_ip.ip(),
+                    None,
+                    PERSISTENT_KEEPALIVE,
+                )
+                .await
+            {
+                tracing::warn!(?e, "wg add_peer (unpause) failed");
+            }
+        }
+        _ => {}
+    }
+
     audit::record(
         &state.pool,
         audit::AuditEntry {

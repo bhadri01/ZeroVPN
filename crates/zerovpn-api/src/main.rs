@@ -31,6 +31,9 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
 
     init_tracing();
+    if let Err(e) = routes::metrics::install_global_recorder() {
+        warn!(?e, "prometheus recorder install failed; /metrics will return 503");
+    }
     info!(version = env!("CARGO_PKG_VERSION"), "zerovpn-api starting");
 
     let bind_addr =
@@ -139,6 +142,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(routes::health::health))
         .route("/ready", get(routes::health::ready))
+        .route("/metrics", get(routes::metrics::metrics))
         .nest(
             "/api/v1",
             Router::new()

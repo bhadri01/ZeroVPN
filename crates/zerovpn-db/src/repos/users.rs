@@ -60,6 +60,52 @@ pub async fn touch_last_login(pool: &PgPool, id: Uuid) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// Increment a user's monthly bandwidth counter. Resets the counter at the
+/// start of a new month. Returns the new total + cap; caller decides whether
+/// to enforce.
+pub async fn add_monthly_usage(
+    pool: &PgPool,
+    user_id: Uuid,
+    delta_bytes: i64,
+) -> sqlx::Result<(i64, Option<i64>)> {
+    let now = OffsetDateTime::now_utc();
+    let next_reset = first_of_next_month(now);
+
+    let row: Option<(i64, Option<i64>)> = sqlx::query_as(
+        r#"UPDATE users
+              SET current_month_bytes = CASE
+                    WHEN quota_resets_at IS NULL OR quota_resets_at < $2
+                      THEN $3
+                    ELSE current_month_bytes + $3
+                  END,
+                  quota_resets_at = CASE
+                    WHEN quota_resets_at IS NULL OR quota_resets_at < $2
+                      THEN $4
+                    ELSE quota_resets_at
+                  END
+            WHERE id = $1 AND deleted_at IS NULL
+        RETURNING current_month_bytes, monthly_byte_cap"#,
+    )
+    .bind(user_id)
+    .bind(now)
+    .bind(delta_bytes)
+    .bind(next_reset)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.unwrap_or((0, None)))
+}
+
+fn first_of_next_month(t: OffsetDateTime) -> OffsetDateTime {
+    let (y, m, _d) = (t.year(), t.month(), t.day());
+    let (ny, nm) = if m == time::Month::December {
+        (y + 1, time::Month::January)
+    } else {
+        (y, m.next())
+    };
+    let date = time::Date::from_calendar_date(ny, nm, 1).expect("valid first-of-month");
+    OffsetDateTime::new_utc(date, time::Time::MIDNIGHT)
+}
+
 pub async fn count_active_admins(pool: &PgPool) -> sqlx::Result<i64> {
     let row: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = 'active' AND deleted_at IS NULL",

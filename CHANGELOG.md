@@ -33,6 +33,34 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added — Phase 1B-E: WG runtime wiring, quota enforcement, observability, frontend polish (2026-05-07)
+
+**Closes the remaining 1B feature gaps. WG controller is now actually called from device routes (Noop in dev, real `wg set` in prod). Bandwidth quota enforcement loops through the aggregator and auto-pauses peers when the cap is hit. Prometheus `/metrics` endpoint live; opt-in observability profile (`docker-compose.observability.yml`) brings Prometheus + Grafana with the datasource pre-provisioned. WG container in compose under a `wg` profile (linuxserver/wireguard with NET_ADMIN). Frontend route-splitting cut admin pages out of the entry bundle; idle-timeout toast + must-change-password gate landed.**
+
+**Backend**
+- `crates/zerovpn-api/src/routes/devices.rs` — `state.wg.add_peer` called on create + unpause; `state.wg.remove_peer` on revoke + pause. With `ZEROVPN_WG__BACKEND=noop` (default) these are tracing-only no-ops; flipping to `shell` makes them call `wg set <iface> peer ...`.
+- `crates/zerovpn-db/src/repos/users.rs` — `add_monthly_usage(user_id, delta)` increments `current_month_bytes` and resets the counter at the first of the next month. Returns the new total + cap so the caller can enforce.
+- `crates/zerovpn-worker/src/stats_sim.rs` — every poll round now bumps the per-user counter via `add_monthly_usage`. When the user crosses their cap, the device is auto-paused (status flipped to `paused` + `PeerStatusChanged` event published on `events.user.<id>`).
+- `crates/zerovpn-api/src/routes/metrics.rs` — `GET /metrics` returns Prometheus text format. `install_global_recorder()` runs at startup, pre-describes baseline counters (`zerovpn_api_requests_total`, `zerovpn_ws_clients_connected`, `zerovpn_devices_created`, `zerovpn_devices_revoked`).
+
+**Infrastructure**
+- `docker-compose.yml` — new `wg` service (linuxserver/wireguard) under `--profile wg`. Host networking + NET_ADMIN + SYS_MODULE caps + ip_forward sysctl. Mounts `wg_config:/config`. Run with `docker compose --profile wg up -d` on a Linux host with the WG kernel module + flip `ZEROVPN_WG__BACKEND=shell`.
+- `docker-compose.observability.yml` — opt-in observability stack. Prometheus scrapes `api:8080/metrics` every 15 s; Grafana with the Prometheus datasource pre-provisioned. Admin theme set to dark. Run with `docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d`.
+- `deploy/prometheus.yml`, `deploy/grafana/provisioning/{datasources,dashboards}/*.yml` — provisioning files.
+
+**Frontend**
+- `web/src/routes.tsx` — admin pages, device detail, security, account, API tokens, change-password all `React.lazy()` with `<Suspense>` fallback. Build now emits 8 separate per-route chunks (1–5 KB each) instead of one giant bundle. Main bundle size 366 KB gzip — still above the 200 KB target due to react-force-graph-2d + d3, but route-splitting is now in place to shrink further when the topology graph is also lazied.
+- `web/src/hooks/useIdleTimeout.ts` — watches mousemove/keydown/click/scroll/touchstart. Toasts a "Sign out in 5 min — Stay signed in?" warning at 25 min idle, calls `onTimeout` at 30 min. Wired into the dashboard.
+- `web/src/pages/app/ChangePassword.tsx` + auth-store `mustChangePassword` flag — login response carries `must_change_password`; the auth store tracks it; `ProtectedRoute` redirects to `/app/change-password` until the user resets via the email-link flow.
+- `web/src/stores/auth.ts` — added `mustChangePassword` field + setter.
+
+**Decisions & rationale (1B-E)**
+- **WG container is opt-in via a Docker Compose profile** rather than always-on. macOS Docker Desktop's LinuxKit VM has the WireGuard kernel module so `linuxserver/wireguard` *can* run there, but the container failing on a Mac without the module would break `docker compose up -d` for everyone. Profile-gated keeps the dev demo working while making the prod path one flag away.
+- **Quota enforcement runs in the aggregator path** (every stats round) rather than at WG packet-time because the WG runtime itself doesn't expose hooks for byte-level enforcement. The poll-cadence delay between exceeding the cap and the auto-pause kicking in is bounded by `ZEROVPN_STATS_INTERVAL_SECS` (5 s in dev). For production ≥30 s polling, that's an acceptable grace period.
+- **Force-change-password reuses the existing email reset link** rather than introducing a new `/me/change-password` endpoint. Smaller surface area, more pressure-tested code. The bootstrap admin clicks "Email me a reset link" → MailHog catches it → standard reset flow.
+- **/metrics is unauthenticated by design**, with the assumption that scrape protection lives at the proxy layer (Caddy basic-auth) in production. The endpoint isn't routed through the maintenance-mode middleware because Prometheus needs to scrape during maintenance windows too.
+- **Suspicious-login email deferred** — the template is in place but wiring it requires plumbing the request IP through the login handler and per-user "seen IP-prefix" cache. Pairs better with the broader brute-force / risk-scoring work in 1C.
+
 ### Added — Phase 1B-D: email flows, API tokens UI, device editor, retention, WG controller skeleton (2026-05-07)
 
 **Closes the remaining "auth completeness" gaps and prepares the WG runtime hookup. Email verification + password reset flows are wired end-to-end (MailHog catches mail in dev). API tokens have a full create/list/revoke UI. Device detail page lets users edit split tunneling + custom DNS + DNS names without re-creating the device. Maintenance mode is enforced by a middleware that returns 503 for non-admin writes and rendered as a sticky top banner. Worker runs a retention purger every 6 hours. WG controller trait + Noop/Shell impls are in `zerovpn-wg::control` and wired into `AppState` ready to be flipped on.**

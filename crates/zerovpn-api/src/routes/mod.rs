@@ -7,5 +7,6 @@ pub mod dns;
 pub mod email_auth;
 pub mod health;
 pub mod me;
+pub mod metrics;
 pub mod totp;
 pub mod ws;

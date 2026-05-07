@@ -29,7 +29,7 @@ export function useBootstrapAuth() {
 }
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth()
+  const { user, loading, mustChangePassword } = useAuth()
   if (loading) {
     return (
       <div className="text-muted-foreground flex min-h-svh items-center justify-center">
@@ -38,6 +38,7 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     )
   }
   if (!user) return <Navigate to="/login" replace />
+  if (mustChangePassword) return <Navigate to="/app/change-password" replace />
   return <>{children}</>
 }
 

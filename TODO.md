@@ -135,19 +135,29 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] Retention purger (worker task: bandwidth samples 7d, verification tokens 24h, audit IPs 30d, soft-delete hard-purge 30d, failed_logins 30d)
 - [x] WgController trait + Noop/Shell impls; controller wired into AppState (default Noop)
 
-### Still open (1B-E / 1C — heaviest items, deferred)
-- [ ] Real WG runtime container (amneziawg-go in compose with NET_ADMIN, host-net)
-- [ ] Real WG poller via `wg show dump` (replaces stats_sim)
-- [ ] Bandwidth quota *enforcement* (drop peer when monthly cap exceeded; aggregator must bump `current_month_bytes`)
-- [ ] Idle session timeout warning toast UI
-- [ ] WASM wire deserializer
-- [ ] Route-split admin + topology lazy-load
-- [ ] Observability stack (Prometheus + Grafana + Loki) — separate compose file
-- [ ] Backup container with age encryption + offsite push
+### Done in 1B-E (WG runtime wiring + quota enforcement + observability + frontend polish)
+- [x] `state.wg.add_peer/remove_peer` called from device create/revoke/pause/unpause (Noop in dev, Shell in prod)
+- [x] Bandwidth quota *enforcement* in aggregator (per-user counter, auto-pause at cap)
+- [x] Prometheus `/metrics` endpoint on api
+- [x] WG container in `docker-compose.yml` under `--profile wg` (linuxserver/wireguard, NET_ADMIN, host-net)
+- [x] `docker-compose.observability.yml` with Prometheus + Grafana + provisioned datasource
+- [x] Route-splitting: admin + device-detail + security + account + api-tokens + change-password are lazy chunks
+- [x] Idle session timeout warning toast (25min warn, 30min hard sign-out)
+- [x] Force-change-password gate (login response → ProtectedRoute → /app/change-password → email reset link)
+
+### Still open (1C — production hardening, deferred)
+- [ ] Real WG poller via `wg show dump` (replaces `stats_sim` when WG container is running)
+- [ ] Bootstrap writes `wg0.conf` to `wg_config` shared volume on first start so the WG container has the server key
+- [ ] Suspicious-login email on new IP-prefix per user (template ready, needs IP plumbing through login)
+- [ ] Loki + Promtail in observability profile (only Prometheus + Grafana right now)
+- [ ] Backup container (offen/docker-volume-backup) with age encryption + offsite push
 - [ ] OpenAPI generation via utoipa + frontend codegen
 - [ ] Webhook backend (peer connected/disconnected, bandwidth threshold)
 - [ ] E2E tests (Playwright) + integration tests with testcontainers
-- [ ] Production deployment guide + runbook updates
+- [ ] Container hardening pass: read-only FS, drop caps, distroless non-root for non-WG containers
+- [ ] WASM wire deserializer (compile `zerovpn-wire` to WASM)
+- [ ] Lazy-load topology graph + Recharts to drop main bundle under 200 KB gzip
+- [ ] Production deployment guide + runbook updates (Linux host AmneziaWG kernel module setup)
 
 ---
 

@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react"
 import { createBrowserRouter, Outlet } from "react-router"
 
 import { MaintenanceBanner } from "@/components/MaintenanceBanner"
@@ -5,17 +6,51 @@ import { AdminRoute, ProtectedRoute, useBootstrapAuth } from "@/lib/auth-guard"
 import { LandingPage } from "@/pages/public/Landing"
 import { LoginPage } from "@/pages/public/Login"
 import { RegisterPage } from "@/pages/public/Register"
-import { VerifyEmailPage } from "@/pages/public/VerifyEmail"
 import { ForgotPasswordPage } from "@/pages/public/ForgotPassword"
 import { ResetPasswordPage } from "@/pages/public/ResetPassword"
-import { AccountPage } from "@/pages/app/Account"
-import { ApiTokensPage } from "@/pages/app/ApiTokens"
+import { VerifyEmailPage } from "@/pages/public/VerifyEmail"
 import { DashboardPage } from "@/pages/app/Dashboard"
-import { DeviceDetailPage } from "@/pages/app/DeviceDetail"
-import { SecurityPage } from "@/pages/app/Security"
-import { AdminOverviewPage } from "@/pages/admin/Overview"
-import { AuditLogPage } from "@/pages/admin/AuditLog"
-import { FailedLoginsPage } from "@/pages/admin/FailedLogins"
+
+// Code-split everything past the dashboard. Lazy-loaded chunks fetch on
+// first navigation, keeping the entry bundle small.
+const SecurityPage = lazy(() =>
+  import("@/pages/app/Security").then((m) => ({ default: m.SecurityPage })),
+)
+const AccountPage = lazy(() =>
+  import("@/pages/app/Account").then((m) => ({ default: m.AccountPage })),
+)
+const ApiTokensPage = lazy(() =>
+  import("@/pages/app/ApiTokens").then((m) => ({ default: m.ApiTokensPage })),
+)
+const DeviceDetailPage = lazy(() =>
+  import("@/pages/app/DeviceDetail").then((m) => ({ default: m.DeviceDetailPage })),
+)
+const ChangePasswordPage = lazy(() =>
+  import("@/pages/app/ChangePassword").then((m) => ({ default: m.ChangePasswordPage })),
+)
+const AdminOverviewPage = lazy(() =>
+  import("@/pages/admin/Overview").then((m) => ({ default: m.AdminOverviewPage })),
+)
+const AuditLogPage = lazy(() =>
+  import("@/pages/admin/AuditLog").then((m) => ({ default: m.AuditLogPage })),
+)
+const FailedLoginsPage = lazy(() =>
+  import("@/pages/admin/FailedLogins").then((m) => ({ default: m.FailedLoginsPage })),
+)
+
+function Suspended({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="text-muted-foreground flex min-h-svh items-center justify-center">
+          Loading…
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  )
+}
 
 function Root() {
   useBootstrapAuth()
@@ -38,6 +73,16 @@ export const router = createBrowserRouter([
       { path: "/forgot-password", element: <ForgotPasswordPage /> },
       { path: "/reset-password", element: <ResetPasswordPage /> },
       {
+        // Force-change-password screen — outside ProtectedRoute's
+        // mustChangePassword redirect so the user can actually reach it.
+        path: "/app/change-password",
+        element: (
+          <Suspended>
+            <ChangePasswordPage />
+          </Suspended>
+        ),
+      },
+      {
         path: "/app",
         element: (
           <ProtectedRoute>
@@ -49,7 +94,9 @@ export const router = createBrowserRouter([
         path: "/app/devices/:id",
         element: (
           <ProtectedRoute>
-            <DeviceDetailPage />
+            <Suspended>
+              <DeviceDetailPage />
+            </Suspended>
           </ProtectedRoute>
         ),
       },
@@ -57,7 +104,9 @@ export const router = createBrowserRouter([
         path: "/app/security",
         element: (
           <ProtectedRoute>
-            <SecurityPage />
+            <Suspended>
+              <SecurityPage />
+            </Suspended>
           </ProtectedRoute>
         ),
       },
@@ -65,7 +114,9 @@ export const router = createBrowserRouter([
         path: "/app/account",
         element: (
           <ProtectedRoute>
-            <AccountPage />
+            <Suspended>
+              <AccountPage />
+            </Suspended>
           </ProtectedRoute>
         ),
       },
@@ -73,7 +124,9 @@ export const router = createBrowserRouter([
         path: "/app/api-tokens",
         element: (
           <ProtectedRoute>
-            <ApiTokensPage />
+            <Suspended>
+              <ApiTokensPage />
+            </Suspended>
           </ProtectedRoute>
         ),
       },
@@ -81,7 +134,9 @@ export const router = createBrowserRouter([
         path: "/admin",
         element: (
           <AdminRoute>
-            <AdminOverviewPage />
+            <Suspended>
+              <AdminOverviewPage />
+            </Suspended>
           </AdminRoute>
         ),
       },
@@ -89,7 +144,9 @@ export const router = createBrowserRouter([
         path: "/admin/audit",
         element: (
           <AdminRoute>
-            <AuditLogPage />
+            <Suspended>
+              <AuditLogPage />
+            </Suspended>
           </AdminRoute>
         ),
       },
@@ -97,7 +154,9 @@ export const router = createBrowserRouter([
         path: "/admin/failed-logins",
         element: (
           <AdminRoute>
-            <FailedLoginsPage />
+            <Suspended>
+              <FailedLoginsPage />
+            </Suspended>
           </AdminRoute>
         ),
       },
