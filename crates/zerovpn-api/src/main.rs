@@ -20,6 +20,7 @@ use zerovpn_wire::Event;
 mod bootstrap;
 mod error;
 mod extractors;
+mod middleware;
 mod routes;
 mod state;
 
@@ -68,7 +69,50 @@ async fn main() -> Result<()> {
     let kek = zerovpn_auth::kek::Kek::from_b64(&kek_b64)
         .map_err(|e| anyhow::anyhow!("invalid KEK: {e}"))?;
 
-    let app_state = AppState::new(pool, allocators, kek);
+    let public_url =
+        env::var("ZEROVPN_PUBLIC_URL").unwrap_or_else(|_| "http://localhost".into());
+
+    // Build a Mailer if SMTP is configured; otherwise routes fall back to
+    // logging the link so dev still works without MailHog.
+    let mailer = match (env::var("ZEROVPN_SMTP__HOST"), env::var("ZEROVPN_SMTP__PORT")) {
+        (Ok(host), Ok(port_str)) if !host.is_empty() => {
+            let port: u16 = port_str.parse().unwrap_or(1025);
+            let user = env::var("ZEROVPN_SMTP__USERNAME").ok().filter(|s| !s.is_empty());
+            let pass = env::var("ZEROVPN_SMTP__PASSWORD").ok().filter(|s| !s.is_empty());
+            let from_str = env::var("ZEROVPN_SMTP__FROM")
+                .unwrap_or_else(|_| "ZeroVPN <noreply@localhost>".into());
+            let from: zerovpn_mail::Mailbox = from_str
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid SMTP_FROM: {e}"))?;
+            // dev MailHog has no TLS; flip require_tls=true in prod.
+            let require_tls = port != 1025;
+            match zerovpn_mail::Mailer::new(
+                &host,
+                port,
+                user.as_deref(),
+                pass.as_deref(),
+                from,
+                require_tls,
+            ) {
+                Ok(m) => {
+                    info!(host, port, "smtp configured");
+                    Some(m)
+                }
+                Err(e) => {
+                    warn!(?e, "smtp init failed; mail send will fall back to log");
+                    None
+                }
+            }
+        }
+        _ => {
+            info!("ZEROVPN_SMTP__HOST not set; mail disabled (dev mode)");
+            None
+        }
+    };
+
+    let wg_controller = zerovpn_wg::control::from_env();
+    let app_state =
+        AppState::new(pool, allocators, kek, mailer, public_url, wg_controller);
 
     // ZMQ subscriber: consumes worker events (subscribed to all topics) and
     // forwards them onto the in-process broadcast bus that WS handlers tap.
@@ -109,7 +153,9 @@ async fn main() -> Result<()> {
                 )
                 .route(
                     "/devices/{id}",
-                    get(routes::devices::get).delete(routes::devices::delete),
+                    get(routes::devices::get)
+                        .delete(routes::devices::delete)
+                        .patch(routes::devices::patch),
                 )
                 .route("/devices/{id}/pause", post(routes::devices::pause))
                 .route("/devices/{id}/unpause", post(routes::devices::unpause))
@@ -130,13 +176,40 @@ async fn main() -> Result<()> {
                     axum::routing::put(routes::admin::set_user_status),
                 )
                 .route("/admin/audit", get(routes::admin::list_audit))
+                .route("/admin/audit.csv", get(routes::admin::list_audit_csv))
                 .route("/admin/failed-logins", get(routes::admin::list_failed_logins))
                 .route(
                     "/admin/maintenance",
                     get(routes::admin::get_maintenance).put(routes::admin::set_maintenance),
                 )
+                .route(
+                    "/admin/users/{id}/quota",
+                    axum::routing::put(routes::admin::set_user_quota),
+                )
+                .route("/auth/verify-email", post(routes::email_auth::verify_email))
+                .route("/auth/resend-verify", post(routes::email_auth::resend_verify))
+                .route(
+                    "/auth/forgot-password",
+                    post(routes::email_auth::forgot_password),
+                )
+                .route(
+                    "/auth/reset-password",
+                    post(routes::email_auth::reset_password),
+                )
+                .route(
+                    "/api-tokens",
+                    get(routes::api_tokens::list).post(routes::api_tokens::create),
+                )
+                .route(
+                    "/api-tokens/{id}",
+                    axum::routing::delete(routes::api_tokens::revoke),
+                )
                 .route("/ws", get(routes::ws::ws)),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            middleware::maintenance_gate,
+        ))
         .layer(session_layer)
         .with_state(app_state)
         .layer(CompressionLayer::new())

@@ -3,7 +3,8 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use zerovpn_auth::kek::Kek;
 use zerovpn_db::PgPool;
-use zerovpn_wg::ip_alloc::IpAllocator;
+use zerovpn_mail::Mailer;
+use zerovpn_wg::{WgController, ip_alloc::IpAllocator};
 use zerovpn_wire::Event;
 
 use crate::routes::ws::BROADCAST_BUFFER;
@@ -17,12 +18,34 @@ pub struct AppState {
     pub events: broadcast::Sender<Event>,
     /// Key-encryption key used for column-level secrets (TOTP, optional WG PSK).
     pub kek: Arc<Kek>,
+    /// Outbound email transport. None when SMTP is unconfigured (dev fallback);
+    /// routes that need to send fall back to logging the link.
+    pub mailer: Option<Arc<Mailer>>,
+    /// Public URL the API is served at, used to build email links.
+    pub public_url: String,
+    /// WG runtime controller. Defaults to NoopController in dev.
+    pub wg: Arc<dyn WgController>,
 }
 
 impl AppState {
-    pub fn new(pool: PgPool, allocators: Arc<IpAllocators>, kek: Kek) -> Self {
+    pub fn new(
+        pool: PgPool,
+        allocators: Arc<IpAllocators>,
+        kek: Kek,
+        mailer: Option<Mailer>,
+        public_url: String,
+        wg: Arc<dyn WgController>,
+    ) -> Self {
         let (events, _) = broadcast::channel::<Event>(BROADCAST_BUFFER);
-        Self { pool, allocators, events, kek: Arc::new(kek) }
+        Self {
+            pool,
+            allocators,
+            events,
+            kek: Arc::new(kek),
+            mailer: mailer.map(Arc::new),
+            public_url,
+            wg,
+        }
     }
 }
 

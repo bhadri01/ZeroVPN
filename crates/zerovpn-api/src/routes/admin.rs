@@ -171,6 +171,96 @@ pub struct FailedLoginList {
     pub items: Vec<FailedLoginRow>,
 }
 
+/// Audit log as CSV for download.
+pub async fn list_audit_csv(
+    State(state): State<AppState>,
+    RequireAdmin(_): RequireAdmin,
+    Query(q): Query<AuditQuery>,
+) -> ApiResult<axum::response::Response> {
+    let limit = q.limit.clamp(1, 5000);
+    let items: Vec<AuditRow> = sqlx::query_as(
+        r#"SELECT id, actor_user_id, action, target_type, target_id, metadata, created_at
+             FROM audit_logs
+            WHERE ($2::TEXT IS NULL OR action = $2)
+            ORDER BY id DESC
+            LIMIT $1"#,
+    )
+    .bind(limit)
+    .bind(q.action.as_deref())
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut buf = Vec::with_capacity(64 * items.len());
+    {
+        let mut wtr = csv::Writer::from_writer(&mut buf);
+        wtr.write_record(["id", "actor_user_id", "action", "target_type", "target_id", "metadata", "created_at"])
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        for r in items {
+            wtr.write_record([
+                r.id.to_string(),
+                r.actor_user_id.map(|u| u.to_string()).unwrap_or_default(),
+                r.action,
+                r.target_type.unwrap_or_default(),
+                r.target_id.map(|t| t.to_string()).unwrap_or_default(),
+                r.metadata.to_string(),
+                r.created_at.unix_timestamp().to_string(),
+            ])
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        }
+        wtr.flush().map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
+
+    use axum::http::header;
+    let resp = axum::response::Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"audit.csv\"",
+        )
+        .body(axum::body::Body::from(buf))
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(resp)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QuotaBody {
+    /// Cap in bytes for the current month. Null/0 → unlimited.
+    pub monthly_byte_cap: Option<i64>,
+}
+
+pub async fn set_user_quota(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+    Json(body): Json<QuotaBody>,
+) -> ApiResult<impl IntoResponse> {
+    let cap = body
+        .monthly_byte_cap
+        .filter(|c| *c > 0);
+    sqlx::query(
+        "UPDATE users SET monthly_byte_cap = $2 WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(target_id)
+    .bind(cap)
+    .execute(&state.pool)
+    .await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_quota_set",
+            target_type: Some("user"),
+            target_id: Some(target_id),
+            metadata: json!({ "monthly_byte_cap": cap }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %target_id, ?cap, "admin set user quota");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
 pub async fn list_failed_logins(
     State(state): State<AppState>,
     RequireAdmin(_): RequireAdmin,

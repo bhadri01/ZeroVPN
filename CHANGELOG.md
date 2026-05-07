@@ -33,6 +33,40 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added — Phase 1B-D: email flows, API tokens UI, device editor, retention, WG controller skeleton (2026-05-07)
+
+**Closes the remaining "auth completeness" gaps and prepares the WG runtime hookup. Email verification + password reset flows are wired end-to-end (MailHog catches mail in dev). API tokens have a full create/list/revoke UI. Device detail page lets users edit split tunneling + custom DNS + DNS names without re-creating the device. Maintenance mode is enforced by a middleware that returns 503 for non-admin writes and rendered as a sticky top banner. Worker runs a retention purger every 6 hours. WG controller trait + Noop/Shell impls are in `zerovpn-wg::control` and wired into `AppState` ready to be flipped on.**
+
+**Backend**
+- New repos: `verification_tokens` (issue / find_active / consume / invalidate_active) and `api_tokens` (create / list / revoke / find_active_by_hash with last-used bump).
+- `crates/zerovpn-mail/src/templates.rs` — askama text templates: VerifyEmail, PasswordReset, SuspiciousLogin.
+- `crates/zerovpn-api/src/routes/email_auth.rs` — `POST /auth/verify-email`, `POST /auth/forgot-password`, `POST /auth/reset-password`, `POST /auth/resend-verify`. 32-byte URL-safe tokens, sha256-hashed at rest, single-active-token-per-purpose. `forgot-password` is enumeration-resistant. `reset-password` revokes all active sessions on success.
+- Register flow respects SMTP availability: when SMTP is configured AND it's not the first admin, the user lands as `pending_verification` and gets a verify-email link; otherwise auto-active (dev fallback).
+- `crates/zerovpn-api/src/routes/api_tokens.rs` — `GET / POST /api-tokens`, `DELETE /api-tokens/{id}`. Cap of 10 active tokens per user. Plaintext token shown once on creation.
+- `crates/zerovpn-api/src/routes/devices.rs` — `PATCH /devices/{id}` for editing name + `allowed_ips_override` (split tunneling) + `dns_override` (custom DNS). Validates each entry as CIDR / IP.
+- `crates/zerovpn-api/src/routes/admin.rs` — `GET /admin/audit.csv` streams a CSV download; `PUT /admin/users/{id}/quota` sets `monthly_byte_cap` per user.
+- `crates/zerovpn-api/src/middleware.rs` — `maintenance_gate`: when `app_settings.maintenance_mode = TRUE`, returns 503 for non-admin writes (POST/PUT/PATCH/DELETE). Reads and `/auth/*` paths stay open so admins can still log in.
+- `crates/zerovpn-api/src/state.rs` — extended with `mailer: Option<Arc<Mailer>>`, `public_url: String`, `wg: Arc<dyn WgController>`. Mailer built only if `ZEROVPN_SMTP__HOST` is set; otherwise verify-email/password-reset routes log the link instead of sending.
+- `crates/zerovpn-wg/src/control.rs` — new `WgController` trait + `NoopController` (default — logs every call, no-ops) + `ShellController` (`wg set <iface> peer ...`). `from_env()` selects via `ZEROVPN_WG__BACKEND ∈ {noop, shell}`. Wired into AppState; flipping to `shell` on a Linux host with `wg` available enables real peer sync.
+- `crates/zerovpn-worker/src/retention.rs` — task that runs every 6h: drops bandwidth_samples >7d, expires consumed/expired verification tokens >24h, anonymizes audit_logs IPs >30d, hard-purges users soft-deleted >30d, drops failed_logins >30d. Logs row counts.
+
+**Frontend**
+- `web/src/pages/public/VerifyEmail.tsx`, `ForgotPassword.tsx`, `ResetPassword.tsx` — full email-link UX with pending/ok/fail states, 12-char-min new-password validation, confirm-match.
+- `web/src/pages/app/ApiTokens.tsx` — create form with scope picker, table of tokens with last-used / created / status, revoke confirm. Plaintext-token-once banner with copy.
+- `web/src/pages/app/DeviceDetail.tsx` — full per-device editor. Bandwidth chart with range selector, full-tunnel / split-tunnel toggle, custom DNS list, DNS-names list. PATCHes the device or PUTs DNS names.
+- `web/src/components/MaintenanceBanner.tsx` — sticky top banner that polls `/admin/maintenance` once a minute (admin-only) and renders when ON.
+- New routes: `/verify-email`, `/forgot-password`, `/reset-password`, `/app/devices/:id`, `/app/api-tokens`. Dashboard's device rows now link to the detail page.
+- Admin audit page: "Download CSV" button.
+
+**Decisions & rationale (1B-D)**
+- **Email flow falls back to log when SMTP isn't configured**: dev keeps working without MailHog. Verify/reset link logged at INFO level.
+- **Token storage**: 32-byte URL-safe random + sha256 at rest. Constant-time-ish lookup via the unique index on `token_hash`.
+- **`reset-password` revokes all sessions**: stolen-laptop scenario doesn't leave the attacker logged in after the legitimate user resets.
+- **WG controller is a trait on AppState**, not a concrete type. Noop default keeps the dev demo working; flipping `ZEROVPN_WG__BACKEND=shell` on a Linux host with `wg` in PATH gives the real runtime. Wiring `state.wg.add_peer/remove_peer` into `routes/devices.rs` is a deferred 5-line change paired with the actual WG container in 1B-E.
+- **Maintenance gate is per-request, not held in memory**: each write does one tiny `SELECT maintenance_mode FROM app_settings`. Caching adds complexity for an infrequent flag; profile-driven optimization later.
+- **Retention uses row-level `DELETE` on `bandwidth_samples`** rather than `DROP PARTITION` because v1 doesn't have partition-rotation logic. The aggregator already rolled the data into `bandwidth_aggregates` so deleting raw samples is lossless.
+- **Bandwidth quotas have an admin setter but no enforcement yet** — `monthly_byte_cap` exists in the schema, the admin endpoint sets it, but the aggregator isn't bumping `current_month_bytes` and quota-exceeded blocking is a Phase 1B-E item paired with the real WG runtime.
+
 ### Added — Phase 1B-C: 2FA, bandwidth analytics, admin tools, account flow (2026-05-07)
 
 **Closes the biggest gaps that aren't WireGuard runtime: 2FA, historical bandwidth, admin pages, GDPR export + soft-delete, maintenance mode.**

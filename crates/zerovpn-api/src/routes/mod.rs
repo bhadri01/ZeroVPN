@@ -1,8 +1,10 @@
 pub mod admin;
+pub mod api_tokens;
 pub mod auth;
 pub mod bandwidth;
 pub mod devices;
 pub mod dns;
+pub mod email_auth;
 pub mod health;
 pub mod me;
 pub mod totp;

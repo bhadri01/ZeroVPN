@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tower_sessions::Session;
-use tracing::info;
+use tracing::{info, warn};
 use zerovpn_core::models::{User, UserRole, UserStatus};
 use zerovpn_db::repos::{audit, failed_logins, users};
 

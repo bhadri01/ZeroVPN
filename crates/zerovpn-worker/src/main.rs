@@ -11,6 +11,7 @@ use zerovpn_events::Publisher;
 use zerovpn_wire::Event;
 
 mod aggregator;
+mod retention;
 mod stats_sim;
 
 #[tokio::main]
@@ -72,6 +73,16 @@ async fn main() -> Result<()> {
         let pool = pool.clone();
         tokio::spawn(async move {
             aggregator::run(pool).await;
+        });
+    }
+
+    // Retention purger task — every 6h drops old bandwidth samples,
+    // expires consumed verification tokens, anonymizes audit IPs, and
+    // hard-purges users soft-deleted for >30 days.
+    {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            retention::run(pool).await;
         });
     }
 

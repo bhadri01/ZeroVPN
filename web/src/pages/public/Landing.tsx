@@ -51,6 +51,11 @@ export function LandingPage() {
               <Link to="/login">Sign in</Link>
             </Button>
           </div>
+          <p className="text-muted-foreground text-xs">
+            <Link to="/forgot-password" className="underline">
+              Forgot your password?
+            </Link>
+          </p>
         </motion.section>
       </main>
 

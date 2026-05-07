@@ -10,3 +10,5 @@ pub mod ip_alloc;
 pub mod keys;
 pub mod pause;
 pub mod qr;
+
+pub use control::{ControlError, NoopController, ShellController, WgController};

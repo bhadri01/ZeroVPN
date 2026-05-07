@@ -56,6 +56,12 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 export type UserRole = "admin" | "user"
 export type DeviceOs = "ios" | "android" | "macos" | "windows" | "linux" | "other"
 export type DeviceStatus = "active" | "paused" | "revoked"
+export type ApiTokenScope = "read" | "read_write" | "admin"
+export type UserStatus =
+  | "active"
+  | "suspended"
+  | "pending_verification"
+  | "deleted"
 
 export interface PingResponse {
   pong: boolean
@@ -118,6 +124,30 @@ export const logout = () =>
 
 export const me = () => apiFetch<PublicUser>("/me")
 
+export const verifyEmail = (token: string) =>
+  apiFetch<{ status: string }>("/auth/verify-email", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  })
+
+export const resendVerify = (email: string) =>
+  apiFetch<{ status: string }>("/auth/resend-verify", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  })
+
+export const forgotPassword = (email: string) =>
+  apiFetch<{ status: string }>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  })
+
+export const resetPassword = (token: string, new_password: string) =>
+  apiFetch<{ status: string }>("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, new_password }),
+  })
+
 export const listDevices = () => apiFetch<PublicDevice[]>("/devices")
 
 export const getDevice = (id: string) => apiFetch<PublicDevice>(`/devices/${id}`)
@@ -125,6 +155,19 @@ export const getDevice = (id: string) => apiFetch<PublicDevice>(`/devices/${id}`
 export const createDevice = (body: { name: string; os?: DeviceOs }) =>
   apiFetch<CreatedDevice>("/devices", {
     method: "POST",
+    body: JSON.stringify(body),
+  })
+
+export const patchDevice = (
+  id: string,
+  body: {
+    name?: string
+    allowed_ips_override?: string[] | null
+    dns_override?: string[] | null
+  },
+) =>
+  apiFetch<{ status: string }>(`/devices/${id}`, {
+    method: "PATCH",
     body: JSON.stringify(body),
   })
 
@@ -194,13 +237,43 @@ export const exportData = () => apiFetch<unknown>("/me/data-export")
 export const deleteAccount = () =>
   apiFetch<{ status: string }>("/me/account", { method: "DELETE" })
 
-// --- admin ---------------------------------------------------------------
+// --- API tokens ----------------------------------------------------------
 
-export type UserStatus =
-  | "active"
-  | "suspended"
-  | "pending_verification"
-  | "deleted"
+export interface ApiTokenRow {
+  id: string
+  name: string
+  scope: ApiTokenScope
+  last_used_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+  created_at: string
+}
+
+export interface CreatedApiToken {
+  id: string
+  name: string
+  scope: ApiTokenScope
+  plaintext_token: string
+  created_at: string
+  expires_at: string | null
+}
+
+export const listApiTokens = () => apiFetch<ApiTokenRow[]>("/api-tokens")
+
+export const createApiToken = (body: {
+  name: string
+  scope?: ApiTokenScope
+  expires_in_days?: number
+}) =>
+  apiFetch<CreatedApiToken>("/api-tokens", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+
+export const revokeApiToken = (id: string) =>
+  apiFetch<{ status: string }>(`/api-tokens/${id}`, { method: "DELETE" })
+
+// --- admin ---------------------------------------------------------------
 
 export interface AdminUser {
   id: string
@@ -229,6 +302,12 @@ export const adminSetUserStatus = (id: string, status: UserStatus) =>
     body: JSON.stringify({ status }),
   })
 
+export const adminSetUserQuota = (id: string, monthly_byte_cap: number | null) =>
+  apiFetch<{ status: string }>(`/admin/users/${id}/quota`, {
+    method: "PUT",
+    body: JSON.stringify({ monthly_byte_cap }),
+  })
+
 export interface AuditRow {
   id: number
   actor_user_id: string | null
@@ -246,6 +325,9 @@ export const adminListAudit = (limit = 100, offset = 0, action?: string) => {
   if (action) params.set("action", action)
   return apiFetch<{ items: AuditRow[] }>(`/admin/audit?${params.toString()}`)
 }
+
+export const adminAuditCsvUrl = (limit = 5000) =>
+  `/api/v1/admin/audit.csv?limit=${limit}`
 
 export interface FailedLoginRow {
   id: number

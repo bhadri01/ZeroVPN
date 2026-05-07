@@ -125,22 +125,29 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] Per-row rate sparklines (↑ Mbps · ↓ Mbps)
 - [x] Stats simulator (real WG poller is 1B-C)
 
-### Still open (later in Phase 1B)
-- [ ] Real WG poller via defguard-wireguard-rs (replace stats_sim with `wg show dump`)
-- [ ] Live WG peer add/remove on device create/revoke (currently only DB rows)
-- [ ] 2FA (TOTP enroll/verify, recovery codes, step-up auth)
-- [ ] Email verification + password reset flows + lettre wiring
-- [ ] Bandwidth aggregates (hourly/daily/monthly rollups via apalis)
-- [ ] Admin audit-log page (CSV export); failed-logins page
-- [ ] Per-peer split tunneling + custom DNS overrides UI
-- [ ] API tokens UI
-- [ ] Soft-delete + GDPR data export
-- [ ] Retention purger cron
-- [ ] Idle session timeout
-- [ ] Bandwidth quotas per user
-- [ ] Maintenance mode toggle
-- [ ] WASM wire deserializer (compile `zerovpn-wire` to WASM, hook into frontend WS)
-- [ ] Route-split admin + topology to drop bundle back under 200 KB gzip
+### Done in 1B-D (email + API tokens + device editor + retention + WG skeleton)
+- [x] Email verification + password reset + resend-verify flows (lettre + MailHog dev fallback)
+- [x] API tokens: create / list / revoke (backend + UI page)
+- [x] Per-device editor: split tunnel + custom DNS + DNS names (`PATCH /devices/{id}` + DeviceDetail page)
+- [x] Audit log CSV export endpoint + frontend download button
+- [x] Maintenance-mode enforcement middleware (503 for non-admin writes) + site-wide sticky banner
+- [x] Bandwidth quota admin endpoint (`PUT /admin/users/{id}/quota`)
+- [x] Retention purger (worker task: bandwidth samples 7d, verification tokens 24h, audit IPs 30d, soft-delete hard-purge 30d, failed_logins 30d)
+- [x] WgController trait + Noop/Shell impls; controller wired into AppState (default Noop)
+
+### Still open (1B-E / 1C — heaviest items, deferred)
+- [ ] Real WG runtime container (amneziawg-go in compose with NET_ADMIN, host-net)
+- [ ] Real WG poller via `wg show dump` (replaces stats_sim)
+- [ ] Bandwidth quota *enforcement* (drop peer when monthly cap exceeded; aggregator must bump `current_month_bytes`)
+- [ ] Idle session timeout warning toast UI
+- [ ] WASM wire deserializer
+- [ ] Route-split admin + topology lazy-load
+- [ ] Observability stack (Prometheus + Grafana + Loki) — separate compose file
+- [ ] Backup container with age encryption + offsite push
+- [ ] OpenAPI generation via utoipa + frontend codegen
+- [ ] Webhook backend (peer connected/disconnected, bandwidth threshold)
+- [ ] E2E tests (Playwright) + integration tests with testcontainers
+- [ ] Production deployment guide + runbook updates
 
 ---
 

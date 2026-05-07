@@ -255,6 +255,85 @@ pub async fn delete(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PatchBody {
+    pub name: Option<String>,
+    pub allowed_ips_override: Option<Vec<String>>,
+    pub dns_override: Option<Vec<String>>,
+}
+
+pub async fn patch(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchBody>,
+) -> ApiResult<impl IntoResponse> {
+    devices::find_for_user(&state.pool, user.id, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if let Some(ref name) = body.name {
+        if name.trim().is_empty() || name.len() > 64 {
+            return Err(ApiError::Validation("name must be 1–64 chars".into()));
+        }
+    }
+    if let Some(ref ips) = body.allowed_ips_override {
+        for s in ips {
+            if s.parse::<IpNetwork>().is_err() && s.parse::<std::net::IpAddr>().is_err() {
+                return Err(ApiError::Validation(format!("invalid CIDR: {s}")));
+            }
+        }
+    }
+    let dns_override_inet: Option<Vec<IpNetwork>> = if let Some(ref dns) = body.dns_override {
+        let mut out = Vec::with_capacity(dns.len());
+        for s in dns {
+            let ip: std::net::IpAddr = s
+                .parse()
+                .map_err(|_| ApiError::Validation(format!("invalid IP: {s}")))?;
+            out.push(
+                IpNetwork::new(ip, if ip.is_ipv4() { 32 } else { 128 })
+                    .expect("valid host prefix"),
+            );
+        }
+        Some(out)
+    } else {
+        None
+    };
+
+    sqlx::query(
+        r#"UPDATE devices
+              SET name = COALESCE($3, name),
+                  allowed_ips_override = $4,
+                  dns_override = $5
+            WHERE user_id = $1 AND id = $2"#,
+    )
+    .bind(user.id)
+    .bind(id)
+    .bind(body.name.as_deref())
+    .bind(body.allowed_ips_override.as_deref())
+    .bind(dns_override_inet.as_deref())
+    .execute(&state.pool)
+    .await?;
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "device.updated",
+            target_type: Some("device"),
+            target_id: Some(id),
+            metadata: json!({
+                "name_changed": body.name.is_some(),
+                "split_tunnel_changed": body.allowed_ips_override.is_some(),
+                "dns_changed": body.dns_override.is_some(),
+            }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(user_id = %user.id, device_id = %id, "device patched");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
 pub async fn pause(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
