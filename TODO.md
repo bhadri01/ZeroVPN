@@ -64,31 +64,33 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] `./scripts/smoke-test.sh` → 11 passed, 0 failed
 - [x] `cargo test --workspace` → 11 unit tests pass
 
-### Auth (basic)
-- [ ] Argon2id password hashing — `crates/zerovpn-auth/src/password.rs`
-- [ ] User registration endpoint (no email verify yet; auto-active in dev) — `crates/zerovpn-api/src/routes/auth.rs`
-- [ ] Login endpoint → server session via tower-sessions — `crates/zerovpn-api/src/routes/auth.rs`
-- [ ] Logout endpoint → revoke session — `crates/zerovpn-api/src/routes/auth.rs`
-- [ ] `current_user` extractor — `crates/zerovpn-api/src/extractors/`
-- [ ] Frontend register/login pages — `web/src/pages/public/`
-- [ ] Force-change of default admin password on first login
+### Auth (basic) ✅ — Phase 1B-A
+- [x] Argon2id password hashing — `crates/zerovpn-auth/src/password.rs`
+- [x] User registration endpoint with email-enumeration prevention — `crates/zerovpn-api/src/routes/auth.rs`
+- [x] Login endpoint → server session via tower-sessions — `crates/zerovpn-api/src/routes/auth.rs`
+- [x] Logout endpoint — `crates/zerovpn-api/src/routes/auth.rs`
+- [x] `CurrentUser` extractor — `crates/zerovpn-api/src/extractors/auth.rs`
+- [x] Frontend register/login pages with RHF + Zod + sonner — `web/src/pages/public/`
+- [x] First-user-becomes-admin rule
+- [ ] Force-change of default admin password on first login _(flag plumbed; UI nag deferred to 1B-B)_
 
-### Devices (basic CRUD)
-- [ ] WG keypair generation — `crates/zerovpn-wg/src/keys.rs`
-- [ ] IP allocation bitmap — `crates/zerovpn-wg/src/ip_alloc.rs`
-- [ ] `.conf` rendering with AmneziaWG params — `crates/zerovpn-wg/src/config.rs`
-- [ ] Add/remove peer via defguard-wireguard-rs UAPI — `crates/zerovpn-wg/src/control.rs`
-- [ ] Pause/unpause peer — `crates/zerovpn-wg/src/pause.rs`
-- [ ] REST routes for devices — `crates/zerovpn-api/src/routes/devices.rs`
-- [ ] Frontend devices list + detail + add wizard — `web/src/pages/app/`
-- [ ] QR code rendering on device detail — `web/src/components/device/QRDisplay.tsx`
+### Devices (basic CRUD) ✅ — Phase 1B-A
+- [x] WG keypair generation (X25519 via x25519-dalek) — `crates/zerovpn-wg/src/keys.rs`
+- [x] IP allocation bitmap with race-safe allocate/release — `crates/zerovpn-wg/src/ip_alloc.rs`
+- [x] `.conf` rendering with AmneziaWG params — `crates/zerovpn-wg/src/config.rs`
+- [ ] Add/remove peer via defguard-wireguard-rs UAPI — _stub; runtime peer-add to live WG kernel is 1B-B_
+- [x] Pause/unpause via DB status — runtime detach when WG is wired in 1B-B
+- [x] REST routes for devices (list/get/create/delete/pause/unpause) — `crates/zerovpn-api/src/routes/devices.rs`
+- [x] Server bootstrap on first boot creates default WG server — `crates/zerovpn-api/src/bootstrap.rs`
+- [x] Frontend devices list + add form + QR + .conf download + pause/unpause — `web/src/pages/app/Dashboard.tsx`
 
-### DNS
-- [ ] Hosts file writer (atomic temp+rename) — `crates/zerovpn-dns/src/lib.rs`
-- [ ] dnsmasq reload signal (SIGHUP) — `crates/zerovpn-dns/src/reload.rs`
-- [ ] DNS names CRUD endpoints — `crates/zerovpn-api/src/routes/dns.rs`
-- [ ] Frontend DNS editor on device detail — `web/src/pages/app/DeviceDetail.tsx`
-- [ ] dnsmasq container in compose — `docker-compose.yml`
+### DNS ✅ — Phase 1B-A
+- [x] Hosts file writer (atomic temp+rename) — `crates/zerovpn-dns/src/lib.rs`
+- [ ] dnsmasq SIGHUP — _file-watch pickup is fine for now via `--addn-hosts`; explicit SIGHUP if needed in 1B-B_
+- [x] DNS names CRUD endpoint — `crates/zerovpn-api/src/routes/dns.rs`
+- [x] App-layer hostname uniqueness validation
+- [ ] Frontend DNS editor — _API works; UI on dedicated DeviceDetail page in 1B-B_
+- [x] dnsmasq container in compose
 
 ### ZMQ pub/sub skeleton
 - [x] `zerovpn-events` PUB socket bind in worker — `crates/zerovpn-events/src/publisher.rs`

@@ -1,24 +1,26 @@
-use std::{env, net::SocketAddr, sync::Arc, time::Duration};
+use std::{env, net::SocketAddr, time::Duration};
 
 use anyhow::{Context, Result};
 use axum::{
     Router,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::get,
+    routing::{get, post},
 };
-use sqlx::Row;
 use tokio::signal;
 use tower_http::{
     compression::CompressionLayer, cors::CorsLayer, request_id::SetRequestIdLayer,
     trace::TraceLayer,
 };
+use tower_sessions::{Expiry, SessionManagerLayer};
+use tower_sessions_sqlx_store::PostgresStore;
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use zerovpn_events::Subscriber;
 use zerovpn_wire::Event;
 
+mod bootstrap;
+mod error;
+mod extractors;
+mod routes;
 mod state;
 
 use state::AppState;
@@ -30,22 +32,43 @@ async fn main() -> Result<()> {
     init_tracing();
     info!(version = env!("CARGO_PKG_VERSION"), "zerovpn-api starting");
 
-    let bind_addr = env::var("ZEROVPN_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    let database_url = env::var("ZEROVPN_DATABASE_URL")
-        .context("ZEROVPN_DATABASE_URL is required")?;
+    let bind_addr =
+        env::var("ZEROVPN_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
+    let database_url =
+        env::var("ZEROVPN_DATABASE_URL").context("ZEROVPN_DATABASE_URL is required")?;
 
     let pool = zerovpn_db::init_pool(&database_url, 16)
         .await
         .context("connect db")?;
     info!("db connected");
 
-    let app_state = Arc::new(AppState { pool });
+    // Run app migrations on startup. Idempotent.
+    zerovpn_db::run_migrations(&pool)
+        .await
+        .context("run migrations")?;
 
-    // Spawn ZMQ subscriber that forwards bus events into the broadcast
-    // channel for WebSocket fanout (placeholder log-only sink for 1A).
+    // Tower-sessions session store + its own migration.
+    let session_store = PostgresStore::new(pool.clone());
+    session_store.migrate().await.context("session store migrate")?;
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_secure(false) // dev only; flip in prod
+        .with_http_only(true)
+        .with_same_site(tower_sessions::cookie::SameSite::Lax)
+        .with_name("zerovpn_session")
+        .with_expiry(Expiry::OnInactivity(time::Duration::minutes(30)));
+
+    bootstrap::ensure_default_server(&pool)
+        .await
+        .context("bootstrap server")?;
+    let allocators = bootstrap::build_ip_allocators(&pool)
+        .await
+        .context("build ip allocators")?;
+
+    let app_state = AppState { pool, allocators };
+
+    // Spawn the ZMQ subscriber that consumes worker events.
     if let Ok(sub_url) = env::var("ZEROVPN_EVENTS__SUBSCRIBER_CONNECT") {
         tokio::spawn(async move {
-            // Retry connect with backoff in case the worker hasn't bound yet.
             let mut delay = Duration::from_millis(250);
             let sub = loop {
                 match Subscriber::connect(&sub_url, "events.").await {
@@ -64,9 +87,29 @@ async fn main() -> Result<()> {
     }
 
     let app = Router::new()
-        .route("/health", get(health))
-        .route("/ready", get(ready))
-        .route("/api/v1/ping", get(ping))
+        .route("/health", get(routes::health::health))
+        .route("/ready", get(routes::health::ready))
+        .nest(
+            "/api/v1",
+            Router::new()
+                .route("/ping", get(routes::health::ping))
+                .route("/auth/register", post(routes::auth::register))
+                .route("/auth/login", post(routes::auth::login))
+                .route("/auth/logout", post(routes::auth::logout))
+                .route("/me", get(routes::auth::me))
+                .route(
+                    "/devices",
+                    get(routes::devices::list).post(routes::devices::create),
+                )
+                .route(
+                    "/devices/{id}",
+                    get(routes::devices::get).delete(routes::devices::delete),
+                )
+                .route("/devices/{id}/pause", post(routes::devices::pause))
+                .route("/devices/{id}/unpause", post(routes::devices::unpause))
+                .route("/devices/{id}/dns", axum::routing::put(routes::dns::set)),
+        )
+        .layer(session_layer)
         .with_state(app_state)
         .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
@@ -121,37 +164,6 @@ async fn shutdown_signal() {
         _ = ctrl_c => info!("ctrl-c received"),
         _ = terminate => info!("sigterm received"),
     }
-}
-
-#[derive(serde::Serialize)]
-struct Health {
-    status: &'static str,
-    version: &'static str,
-}
-
-async fn health() -> impl IntoResponse {
-    axum::Json(Health { status: "ok", version: env!("CARGO_PKG_VERSION") })
-}
-
-async fn ready(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match sqlx::query("SELECT 1").fetch_one(&state.pool).await {
-        Ok(row) => {
-            let _: i32 = row.get(0);
-            (StatusCode::OK, axum::Json(serde_json::json!({ "ready": true }))).into_response()
-        }
-        Err(e) => {
-            error!(?e, "db not ready");
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                axum::Json(serde_json::json!({ "ready": false, "reason": "db" })),
-            )
-                .into_response()
-        }
-    }
-}
-
-async fn ping() -> impl IntoResponse {
-    axum::Json(serde_json::json!({ "pong": true, "ts_ms": time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000 }))
 }
 
 async fn run_subscriber(mut sub: Subscriber) {

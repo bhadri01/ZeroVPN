@@ -43,3 +43,8 @@ moka = { workspace = true }
 dotenvy = { workspace = true }
 figment = { workspace = true }
 governor = { workspace = true }
+garde = { workspace = true }
+parking_lot = "0.12"
+ipnetwork = { workspace = true }
+askama = { workspace = true }
+zerovpn-obfs = { workspace = true }

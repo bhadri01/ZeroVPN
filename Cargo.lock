@@ -1474,6 +1474,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "garde"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a74b56a4039a46e8c91cc9d84e8a7df4e1f8b24239ca57d1304b3263cb599b9"
+dependencies = [
+ "compact_str",
+ "garde_derive",
+ "once_cell",
+ "regex",
+ "smallvec",
+ "url",
+]
+
+[[package]]
+name = "garde_derive"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7224c08ec489e2840af29ed882b47f7f6ac8f4ce15c275d9fc0d6d1b94578ae6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn",
+]
+
+[[package]]
 name = "generator"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2038,15 +2064,6 @@ name = "ipnetwork"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf466541e9d546596ee94f9f69590f89473455f88372423e0008fc1a7daf100e"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "ipnetwork"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 dependencies = [
  "serde",
 ]
@@ -3596,7 +3613,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "hashlink",
  "indexmap",
- "ipnetwork 0.20.0",
+ "ipnetwork",
  "log",
  "memchr",
  "once_cell",
@@ -3718,7 +3735,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "home",
- "ipnetwork 0.20.0",
+ "ipnetwork",
  "itoa",
  "log",
  "md-5",
@@ -4270,9 +4287,9 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tower-sessions"
-version = "0.15.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "518dca34b74a17cadfcee06e616a09d2bd0c3984eff1769e1e76d58df978fc78"
+checksum = "43a05911f23e8fae446005fe9b7b97e66d95b6db589dc1c4d59f6a2d4d4927d3"
 dependencies = [
  "async-trait",
  "http",
@@ -4281,7 +4298,7 @@ dependencies = [
  "tower-cookies",
  "tower-layer",
  "tower-service",
- "tower-sessions-core 0.15.0",
+ "tower-sessions-core",
  "tower-sessions-memory-store",
  "tracing",
 ]
@@ -4293,6 +4310,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce8cce604865576b7751b7a6bc3058f754569a60d689328bb74c52b1d87e355b"
 dependencies = [
  "async-trait",
+ "axum-core",
  "base64",
  "futures",
  "http",
@@ -4307,36 +4325,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "tower-sessions-core"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "568531ec3dfcf3ffe493de1958ae5662a0284ac5d767476ecdb6a34ff8c6b06c"
-dependencies = [
- "async-trait",
- "axum-core",
- "base64",
- "futures",
- "http",
- "parking_lot",
- "rand 0.9.4",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "time",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "tower-sessions-memory-store"
-version = "0.15.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "713fabf882b6560a831e2bbed6204048b35bdd60e50bbb722902c74f8df33460"
+checksum = "fb05909f2e1420135a831dd5df9f5596d69196d0a64c3499ca474c4bd3d33242"
 dependencies = [
  "async-trait",
  "time",
  "tokio",
- "tower-sessions-core 0.15.0",
+ "tower-sessions-core",
 ]
 
 [[package]]
@@ -4350,7 +4347,7 @@ dependencies = [
  "sqlx",
  "thiserror 1.0.69",
  "time",
- "tower-sessions-core 0.14.0",
+ "tower-sessions-core",
 ]
 
 [[package]]
@@ -5530,13 +5527,17 @@ name = "zerovpn-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askama 0.16.0",
  "axum",
  "dotenvy",
  "figment",
+ "garde",
  "governor",
+ "ipnetwork",
  "metrics",
  "metrics-exporter-prometheus",
  "moka",
+ "parking_lot",
  "serde",
  "serde_json",
  "sqlx",
@@ -5559,6 +5560,7 @@ dependencies = [
  "zerovpn-dns",
  "zerovpn-events",
  "zerovpn-mail",
+ "zerovpn-obfs",
  "zerovpn-wg",
  "zerovpn-wire",
 ]
@@ -5606,8 +5608,9 @@ version = "0.1.0"
 dependencies = [
  "compact_str",
  "figment",
- "ipnetwork 0.21.1",
+ "ipnetwork",
  "serde",
+ "sqlx",
  "thiserror 2.0.18",
  "time",
  "url",
@@ -5618,7 +5621,7 @@ dependencies = [
 name = "zerovpn-db"
 version = "0.1.0"
 dependencies = [
- "ipnetwork 0.21.1",
+ "ipnetwork",
  "serde",
  "serde_json",
  "sqlx",
@@ -5633,7 +5636,7 @@ dependencies = [
 name = "zerovpn-dns"
 version = "0.1.0"
 dependencies = [
- "ipnetwork 0.21.1",
+ "ipnetwork",
  "once_cell",
  "regex",
  "serde",
@@ -5712,7 +5715,7 @@ dependencies = [
  "base64",
  "defguard_wireguard_rs",
  "fixedbitset",
- "ipnetwork 0.21.1",
+ "ipnetwork",
  "parking_lot",
  "qrcode",
  "rand 0.8.6",
@@ -5720,6 +5723,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "x25519-dalek",
  "zerovpn-core",
  "zerovpn-obfs",
 ]

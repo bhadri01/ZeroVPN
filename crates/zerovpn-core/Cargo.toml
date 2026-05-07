@@ -15,3 +15,7 @@ ipnetwork = { workspace = true }
 figment = { workspace = true }
 url = { workspace = true }
 compact_str = { workspace = true }
+# sqlx is added so we can derive Type on the domain enums and avoid a
+# parallel set of DB-side wrapper enums. Compile-time-only impact; no
+# runtime side effects on consumers that don't use it.
+sqlx = { workspace = true }

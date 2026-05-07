@@ -33,6 +33,41 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Added — Phase 1B-A: auth + device CRUD (2026-05-07)
+
+**Stack now supports the full v1 user flow: register → log in → add a device with QR/.conf → set DNS names → pause/unpause/revoke. 21/21 smoke checks pass.**
+
+**Backend**
+- New `crates/zerovpn-core/src/models.rs` — domain types (`User`, `Server`, `Device`, role/status enums) with `sqlx::Type`/`sqlx::FromRow` derives so they map to Postgres columns directly.
+- New repos under `crates/zerovpn-db/src/repos/`: `users`, `servers`, `devices`, `audit`, `failed_logins` (with the FailedLoginReason enum).
+- `crates/zerovpn-api/src/`:
+  - `error.rs` — unified `ApiError` enum + `IntoResponse` that emits `{"error":{"code","message","request_id"}}` and surfaces 404/401/403/409/422/429/500.
+  - `extractors/auth.rs` — `CurrentUser` and `RequireAdmin` Axum extractors backed by `tower-sessions`.
+  - `bootstrap.rs` — on first boot, generates the WG server X25519 keypair (`x25519-dalek`) and inserts the default server row at `10.10.0.0/22`. Builds per-server in-memory IP allocation bitmaps from existing rows.
+  - `routes/auth.rs` — `POST /auth/register` (no email enumeration: always 202; auto-activates accounts in 1A), `POST /auth/login` (argon2id verify, session cookie, 5-failed-in-15-min rate-limit, brute-force timing-attack padding), `POST /auth/logout`, `GET /me`. First-user-becomes-admin rule.
+  - `routes/devices.rs` — `GET/POST /devices`, `GET/DELETE /devices/{id}`, `POST /devices/{id}/pause`, `POST /devices/{id}/unpause`. Create allocates an IP from the bitmap, generates an X25519 keypair, randomizes AmneziaWG params, persists the row (private key never stored), renders `wg-quick` config + QR SVG, returns the bundle once. Pause/unpause/revoke audit-log every transition.
+  - `routes/dns.rs` — `PUT /devices/{id}/dns` validates hostnames, enforces app-layer uniqueness, and writes the dnsmasq hosts file via `zerovpn-dns::write_hosts_file`.
+- `zerovpn-wg::keys` — X25519 keypair derivation now real (was a stub). 4 unit tests including roundtrip + invalid-key length.
+- `zerovpn-auth::api_token` and `zerovpn-auth::kek` — opaque token + AES-256-GCM column-encryption modules ready to wire into endpoints in 1B-B.
+
+**Frontend**
+- `web/src/lib/api.ts` — full client with `register`, `login`, `logout`, `me`, `listDevices`, `createDevice`, `deleteDevice`, `pauseDevice`, `unpauseDevice`, `setDeviceDns`. Cookies sent with `credentials: "include"`. Errors normalized to `ApiError`.
+- `web/src/stores/auth.ts` — Zustand `useAuth` store.
+- `web/src/lib/auth-guard.tsx` — `useBootstrapAuth` hook, `ProtectedRoute`, `AdminRoute`.
+- Real `Login` and `Register` pages with React Hook Form + Zod, sonner toasts.
+- `Dashboard` page lists devices, has an inline "Add device" form, animates the just-created device card via Motion, shows the QR + Download/Copy buttons, supports pause/unpause/revoke with `layout` re-order.
+- Bundle 193 KB gzip main chunk.
+
+**Smoke test extended** (`scripts/smoke-test.sh`)
+- Now 21 checks (was 11). Adds: register, login, /me, device create (verifies PrivateKey + SVG in body), list, pause, unpause, set DNS names, revoke, logout, /me-401-after-logout.
+
+### Decisions & rationale (1B-A)
+- **`tower-sessions` pinned to 0.14**: matching `tower-sessions-sqlx-store@0.15.0` still depends on `tower-sessions-core@0.14`. 0.15 of `tower-sessions` would not satisfy its `SessionStore` trait. Bump in lockstep when upstream catches up.
+- **`ipnetwork` pinned to 0.20**, matching `sqlx@0.8.6`'s internal version. Two ipnetwork versions in the graph means our `IpNetwork` doesn't satisfy `sqlx::Type<Postgres>`.
+- **`sqlx::Type` and `sqlx::FromRow` derives live in `zerovpn-core`** (not parallel DB-side enums in `zerovpn-db`). Adds one `sqlx` workspace dep to core in exchange for no manual FromRow impls and no orphan-rule conflicts.
+- **`as "alias!: Type"` cast syntax is macro-only** (`query!`/`query_as!`). For runtime queries (`query_as::<_, T>(sql)`), columns are matched by `FromRow` so the SQL is plain `SELECT col1, col2, ...`. Caught when smoke first failed at "no column found for name".
+- **First-user-becomes-admin** in `/auth/register`: fresh deploys don't need the CLI bootstrap step. Once one admin exists, subsequent registrations are regular users.
+
 ### Added — Phase 1A foundation (2026-05-07)
 
 **Project bootstrap**
