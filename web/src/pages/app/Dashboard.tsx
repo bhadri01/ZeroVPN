@@ -229,12 +229,26 @@ export function DashboardPage() {
       </AnimatePresence>
 
       <div className="grid gap-6 lg:grid-cols-5">
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle className="text-base">Live network</CardTitle>
-            <CardDescription>
-              Particles flow with traffic; speed scales with rate.
-            </CardDescription>
+        <Card className="bg-primary-radial relative isolate overflow-hidden lg:col-span-3">
+          {/* Faint dotted-grid backdrop layered under the canvas */}
+          <span
+            aria-hidden
+            className="bg-dot-grid pointer-events-none absolute inset-0 -z-10 opacity-40"
+          />
+          <CardHeader className="flex-row items-start justify-between space-y-0">
+            <div className="space-y-1">
+              <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-[0.08em]">
+                Topology
+              </p>
+              <CardTitle className="text-lg tracking-tight">
+                Live network
+              </CardTitle>
+              <CardDescription>
+                Particles flow in the direction of traffic; density scales
+                with rate.
+              </CardDescription>
+            </div>
+            <LiveIndicator />
           </CardHeader>
           <CardContent>
             <TopologyGraph devices={devices} rates={rates} />
@@ -243,14 +257,21 @@ export function DashboardPage() {
 
         <Card className="lg:col-span-2">
           <CardHeader className="flex-row items-start justify-between space-y-0">
-            <div>
-              <CardTitle className="text-base">Network traffic</CardTitle>
+            <div className="space-y-1">
+              <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-[0.08em]">
+                Throughput
+              </p>
+              <CardTitle className="text-lg tracking-tight">
+                Network traffic
+              </CardTitle>
               <CardDescription>
-                Aggregate RX/TX, last 60 frames. Visit{" "}
-                <Link to="/app/bandwidth" className="hover:text-foreground underline">
-                  Bandwidth
-                </Link>{" "}
-                for historical.
+                Aggregate RX/TX, last 60 frames.{" "}
+                <Link
+                  to="/app/bandwidth"
+                  className="hover:text-foreground underline"
+                >
+                  Historical →
+                </Link>
               </CardDescription>
             </div>
             <LiveIndicator />

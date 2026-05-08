@@ -150,6 +150,45 @@
   100% { background-position: 200% 0; }
 }
 
+/* Slow breathing halo behind a focal element (e.g. topology server node).
+   Two-stage opacity + scale so it looks like ambient light, not a pulse. */
+@keyframes halo {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(1.04); }
+}
+.animate-halo { animation: halo 5s ease-in-out infinite; }
+
+/* Premium surface utilities. Light: subtle vertical gradient + crisp shadow.
+   Dark: stronger top-edge highlight via gradient, no shadow needed. */
+.surface-premium {
+  background:
+    linear-gradient(180deg, var(--card) 0%, color-mix(in oklch, var(--card) 88%, transparent) 100%);
+}
+.dark .surface-premium {
+  background:
+    linear-gradient(180deg,
+      color-mix(in oklch, var(--card) 100%, white 3%) 0%,
+      var(--card) 100%);
+}
+
+/* Faint dot-grid background — used behind topology canvas + page hero areas.
+   Auto-adapts via currentColor; layer over a solid bg first. */
+.bg-dot-grid {
+  background-image:
+    radial-gradient(circle at 1px 1px,
+      color-mix(in oklch, var(--foreground) 8%, transparent) 1px,
+      transparent 0);
+  background-size: 16px 16px;
+}
+
+/* Soft radial primary tint — for hero / live-network card backgrounds. */
+.bg-primary-radial {
+  background-image:
+    radial-gradient(60% 80% at 50% 0%,
+      color-mix(in oklch, var(--primary) 14%, transparent) 0%,
+      transparent 70%);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

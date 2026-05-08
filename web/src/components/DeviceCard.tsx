@@ -13,12 +13,7 @@ import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
 import { RelativeTime } from "@/components/RelativeTime"
 import { StatusPill, type Status } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-} from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,18 +40,29 @@ export function DeviceCard({
   pending,
 }: Props) {
   const live = useLiveStats((s) => s.devices[d.id])
+  const isActive = d.status === "active"
 
   return (
-    <Card className="hover:border-foreground/20 group flex flex-col transition-colors">
-      <CardHeader className="space-y-0 pb-3">
+    <Card className="relative isolate flex flex-col overflow-hidden p-0">
+      {/* Subtle status-tinted top-edge stripe — adds the directional
+          "this device is in such-and-such state" feel without painting
+          the whole card. */}
+      <span
+        aria-hidden
+        className={`pointer-events-none absolute inset-x-0 top-0 h-px ${stripeFor(d.status as Status)}`}
+      />
+
+      <div className="relative px-4 pt-4 pb-3">
         <div className="flex items-start justify-between gap-2">
           <Link
             to={`/app/devices/${d.id}`}
-            className="hover:text-primary group/link flex min-w-0 flex-col gap-0.5 transition-colors"
+            className="hover:text-foreground group/link flex min-w-0 flex-col gap-0.5 transition-colors"
           >
-            <span className="truncate text-sm font-medium">{d.name}</span>
+            <span className="text-foreground truncate text-sm font-semibold tracking-tight">
+              {d.name}
+            </span>
             <span className="text-muted-foreground text-xs capitalize">
-              {d.os}
+              {d.os} · {d.allocated_ip}
             </span>
           </Link>
           <div className="flex items-center gap-1">
@@ -66,7 +72,7 @@ export function DeviceCard({
                 <Button
                   size="icon-sm"
                   variant="ghost"
-                  className="text-muted-foreground"
+                  className="text-muted-foreground -mr-1"
                   aria-label="Device actions"
                 >
                   <IconDots className="size-3.5" />
@@ -110,55 +116,89 @@ export function DeviceCard({
             </DropdownMenu>
           </div>
         </div>
-      </CardHeader>
+      </div>
 
-      <CardContent className="flex-1 space-y-3 pb-3">
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
-          <dt className="text-muted-foreground">IP</dt>
-          <dd className="text-right font-mono">{d.allocated_ip}</dd>
-          <dt className="text-muted-foreground">Last handshake</dt>
-          <dd className="text-right text-muted-foreground">
-            <RelativeTime value={d.last_handshake_at} fallback="Never" />
-          </dd>
-        </dl>
-
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] font-medium uppercase tracking-wider">
-            <span className="text-muted-foreground">Live</span>
-            <span className="text-muted-foreground tabular-nums">
-              {d.status === "active" ? formatBps(live?.rxBps ?? 0) + " ↓ · " + formatBps(live?.txBps ?? 0) + " ↑" : "—"}
-            </span>
-          </div>
-          <MiniAreaChart
-            rxHistory={live?.rxHistory ?? []}
-            txHistory={live?.txHistory ?? []}
-            height={48}
+      {/* Live rates — the visual focal point of the card. */}
+      <CardContent className="relative px-4 pb-3">
+        <div className="grid grid-cols-2 gap-3">
+          <RateBlock
+            label="↓ RX"
+            value={isActive ? formatBps(live?.rxBps ?? 0) : "—"}
+            color="text-status-online"
+          />
+          <RateBlock
+            label="↑ TX"
+            value={isActive ? formatBps(live?.txBps ?? 0) : "—"}
+            color="text-primary"
           />
         </div>
       </CardContent>
 
-      <CardFooter className="border-t pt-3">
-        <dl className="grid w-full grid-cols-2 gap-x-3 text-xs">
-          <div className="space-y-0.5">
-            <dt className="text-muted-foreground inline-flex items-center gap-1 text-[10px] uppercase tracking-wider">
-              <IconArrowDown className="size-3" /> Total RX
-            </dt>
-            <dd className="text-foreground tabular-nums">
-              {formatBytes(live?.totalRx ?? 0)}
-            </dd>
-          </div>
-          <div className="space-y-0.5 text-right">
-            <dt className="text-muted-foreground inline-flex items-center gap-1 text-[10px] uppercase tracking-wider">
-              <IconArrowUp className="size-3" /> Total TX
-            </dt>
-            <dd className="text-foreground tabular-nums">
-              {formatBytes(live?.totalTx ?? 0)}
-            </dd>
-          </div>
-        </dl>
-      </CardFooter>
+      {/* Sparkline — full-width strip, breathes when it fills with data. */}
+      <div className="relative -mb-4 px-1">
+        <MiniAreaChart
+          rxHistory={live?.rxHistory ?? []}
+          txHistory={live?.txHistory ?? []}
+          height={56}
+        />
+      </div>
+
+      {/* Footer: meta strip with handshake + cumulative totals. */}
+      <div className="border-border/60 bg-muted/20 flex items-center justify-between gap-3 border-t px-4 py-2.5 text-[11px]">
+        <span className="text-muted-foreground inline-flex items-center gap-1.5">
+          <span className="bg-status-paused size-1 rounded-full" aria-hidden />
+          <RelativeTime value={d.last_handshake_at} fallback="Never" />
+        </span>
+        <span className="text-muted-foreground inline-flex items-center gap-2 tabular-nums">
+          <span className="inline-flex items-center gap-0.5">
+            <IconArrowDown className="size-2.5" />
+            {compactBytes(live?.totalRx ?? 0)}
+          </span>
+          <span className="inline-flex items-center gap-0.5">
+            <IconArrowUp className="size-2.5" />
+            {compactBytes(live?.totalTx ?? 0)}
+          </span>
+        </span>
+      </div>
     </Card>
   )
+}
+
+function RateBlock({
+  label,
+  value,
+  color,
+}: {
+  label: string
+  value: string
+  color: string
+}) {
+  return (
+    <div className="space-y-0.5">
+      <p
+        className={`text-[10px] font-semibold uppercase tracking-[0.08em] ${color}`}
+      >
+        {label}
+      </p>
+      <p className="text-foreground text-base font-semibold tabular-nums tracking-tight">
+        {value}
+      </p>
+    </div>
+  )
+}
+
+function stripeFor(status: Status): string {
+  switch (status) {
+    case "active":
+    case "online":
+      return "bg-gradient-to-r from-transparent via-status-online/60 to-transparent"
+    case "paused":
+      return "bg-gradient-to-r from-transparent via-status-paused/60 to-transparent"
+    case "revoked":
+      return "bg-gradient-to-r from-transparent via-status-revoked/60 to-transparent"
+    default:
+      return "bg-gradient-to-r from-transparent via-status-offline/40 to-transparent"
+  }
 }
 
 function formatBps(bps: number): string {
@@ -168,12 +208,11 @@ function formatBps(bps: number): string {
   return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
 }
 
-function formatBytes(n: number): string {
-  // The store accumulates *bps*, not bytes, so this is an approximation
-  // for "how much data has flowed through this card since the page
-  // mounted." Good enough for an at-a-glance card footer.
-  if (n < 1_000) return `${Math.round(n)} bps·s`
-  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)} kb·s`
-  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)} Mb·s`
-  return `${(n / 1_000_000_000).toFixed(2)} Gb·s`
+function compactBytes(n: number): string {
+  // Approximation — see Phase I.4 commit note. Good enough for an at-a-
+  // glance card meta strip.
+  if (n < 1_000) return `${Math.round(n)}`
+  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)}k`
+  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  return `${(n / 1_000_000_000).toFixed(2)}G`
 }
