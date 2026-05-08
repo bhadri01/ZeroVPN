@@ -10,7 +10,7 @@ import {
   IconTrash,
 } from "@tabler/icons-react"
 import { AnimatePresence, motion } from "motion/react"
-import { useCallback, useState } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
@@ -20,7 +20,7 @@ import { EmptyState } from "@/components/EmptyState"
 import { PageHeader } from "@/components/PageHeader"
 import { Stat } from "@/components/Stat"
 import { StatusPill } from "@/components/StatusPill"
-import { TopologyGraph, applyEmaSmoothing } from "@/components/topology/LazyTopologyGraph"
+import { TopologyGraph } from "@/components/topology/LazyTopologyGraph"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -49,7 +49,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useWebSocket } from "@/hooks/useWebSocket"
 import {
   ApiError,
   type BandwidthRange,
@@ -64,11 +63,9 @@ import {
   userBandwidth,
 } from "@/lib/api"
 import { listVariants, useReducedMotion } from "@/lib/motion"
-import type { Event } from "@/lib/wire"
-import { useAuth } from "@/stores/auth"
+import { useLiveStats } from "@/stores/liveStats"
 
 export function DashboardPage() {
-  const user = useAuth((s) => s.user)
   const queryClient = useQueryClient()
   const reduceMotion = useReducedMotion()
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
@@ -76,39 +73,24 @@ export function DashboardPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [name, setName] = useState("")
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
-  const [rates, setRates] = useState<
-    Map<string, { rxBps: number; txBps: number }>
-  >(new Map())
   const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
   const [revokeId, setRevokeId] = useState<string | null>(null)
+
+  // Live rates come from the shared store fed by LiveStatsProvider in
+  // DashboardLayout. The topology graph wants a Map<id, {rxBps, txBps}>.
+  const liveDevices = useLiveStats((s) => s.devices)
+  const rates = useMemo(() => {
+    const m = new Map<string, { rxBps: number; txBps: number }>()
+    for (const [id, d] of Object.entries(liveDevices)) {
+      m.set(id, { rxBps: d.rxBps, txBps: d.txBps })
+    }
+    return m
+  }, [liveDevices])
 
   const bandwidthQ = useQuery({
     queryKey: ["bandwidth", "user", bwRange],
     queryFn: () => userBandwidth(bwRange),
     staleTime: 60_000,
-  })
-
-  const onWsEvent = useCallback(
-    (event: Event) => {
-      if (event.type === "stats_delta") {
-        setRates((prev) =>
-          applyEmaSmoothing(prev, {
-            deviceId: event.device_id,
-            rxBps: event.rate_rx_bps,
-            txBps: event.rate_tx_bps,
-          }),
-        )
-      } else if (event.type === "peer_status_changed") {
-        void queryClient.invalidateQueries({ queryKey: ["devices"] })
-      }
-    },
-    [queryClient],
-  )
-
-  useWebSocket({
-    path: "/api/v1/ws",
-    onEvent: onWsEvent,
-    enabled: !!user,
   })
 
   const addM = useMutation({

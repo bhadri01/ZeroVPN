@@ -3,6 +3,7 @@ import { Link, useMatches } from "react-router"
 
 import { ModeToggle } from "@/components/mode-toggle"
 import { UserMenu } from "@/components/layout/UserMenu"
+import { useBreadcrumbStore } from "@/stores/breadcrumb"
 
 type Crumb = { to?: string; label: string }
 type CrumbHandle = {
@@ -15,15 +16,19 @@ function isCrumbHandle(value: unknown): value is CrumbHandle {
 
 function useBreadcrumbs(): Crumb[] {
   const matches = useMatches()
+  const overrides = useBreadcrumbStore((s) => s.overrides)
   const crumbs: Crumb[] = []
   for (const m of matches) {
     if (!isCrumbHandle(m.handle)) continue
     const b = m.handle.breadcrumb
     if (b == null) continue
-    const label =
+    // Page-set override wins over the static handle label, e.g. the
+    // actual device name instead of "Device".
+    const fallback =
       typeof b === "function"
         ? b((m.params ?? {}) as Record<string, string>)
         : b
+    const label = overrides[m.id] ?? fallback
     if (!label) continue
     crumbs.push({ to: m.pathname, label })
   }

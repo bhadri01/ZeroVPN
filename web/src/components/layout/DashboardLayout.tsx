@@ -8,6 +8,7 @@ import {
 
 import { CommandPalette } from "@/components/CommandPalette"
 import { AppSidebar } from "@/components/layout/AppSidebar"
+import { LiveStatsProvider } from "@/components/layout/LiveStatsProvider"
 import { TopBar } from "@/components/layout/TopBar"
 import { MaintenanceBanner } from "@/components/MaintenanceBanner"
 import {
@@ -39,6 +40,7 @@ export function DashboardLayout() {
   return (
     <TooltipProvider delayDuration={250}>
       <SidebarProvider defaultOpen={sidebarOpen}>
+        <LiveStatsProvider />
         <AppSidebar />
         <SidebarInset className="bg-background">
           <TopBar onOpenCommand={() => setPaletteOpen(true)} />
