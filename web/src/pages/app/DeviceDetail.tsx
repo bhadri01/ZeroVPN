@@ -1,10 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
-import { Link, useNavigate, useParams } from "react-router"
+import { useParams } from "react-router"
 import { toast } from "sonner"
 
 import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
+import { CopyableCode } from "@/components/CopyableCode"
+import { PageHeader } from "@/components/PageHeader"
+import { RelativeTime } from "@/components/RelativeTime"
+import { StatusPill } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs"
 import {
   ApiError,
   type BandwidthRange,
@@ -13,12 +33,12 @@ import {
   patchDevice,
   setDeviceDns,
 } from "@/lib/api"
+import type { Status } from "@/components/StatusPill"
 
 const FULL_TUNNEL_PRESET = ["0.0.0.0/0", "::/0"]
 
 export function DeviceDetailPage() {
   const { id = "" } = useParams()
-  const navigate = useNavigate()
   const qc = useQueryClient()
   const deviceQ = useQuery({
     queryKey: ["device", id],
@@ -34,7 +54,6 @@ export function DeviceDetailPage() {
     staleTime: 60_000,
   })
 
-  // Local form state for split-tunneling + DNS overrides + DNS names.
   const [tunnel, setTunnel] = useState<"full" | "split">("full")
   const [splitCidrs, setSplitCidrs] = useState("")
   const [customDns, setCustomDns] = useState("")
@@ -47,12 +66,12 @@ export function DeviceDetailPage() {
         !d.allowed_ips_override ||
         d.allowed_ips_override.length === 0 ||
         (d.allowed_ips_override.length === 2 &&
-          FULL_TUNNEL_PRESET.every((p) => d.allowed_ips_override?.includes(p)))
+          FULL_TUNNEL_PRESET.every((p) =>
+            d.allowed_ips_override?.includes(p),
+          ))
       setTunnel(isFull ? "full" : "split")
-      setSplitCidrs(
-        isFull ? "" : (d.allowed_ips_override ?? []).join(", "),
-      )
-      setCustomDns("") // dns_override not exposed in PublicDevice; reset
+      setSplitCidrs(isFull ? "" : (d.allowed_ips_override ?? []).join(", "))
+      setCustomDns("")
       setDnsNames(d.dns_names.join(", "))
     }
   }, [deviceQ.data])
@@ -77,7 +96,7 @@ export function DeviceDetailPage() {
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["device", id] })
-      toast.success("Device updated — re-download .conf for changes to take effect")
+      toast.success("Saved — re-download .conf to apply")
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)
@@ -104,136 +123,215 @@ export function DeviceDetailPage() {
 
   if (deviceQ.isLoading || !deviceQ.data) {
     return (
-      <div className="text-muted-foreground flex h-64 items-center justify-center">
-        Loading…
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-32" />
+        <Skeleton className="h-64" />
       </div>
     )
   }
   const d = deviceQ.data
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{d.name}</h1>
-        <p className="text-muted-foreground text-sm">
-          {d.os} · {d.allocated_ip}
-        </p>
+    <div className="space-y-6">
+      <PageHeader
+        title={d.name}
+        description={
+          <>
+            {d.os} · {d.allocated_ip}
+          </>
+        }
+        actions={<StatusPill status={d.status as Status} />}
+      />
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Status
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="-mt-2 text-sm">
+            <StatusPill status={d.status as Status} />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              IP address
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="-mt-2 font-mono text-sm">
+            {d.allocated_ip}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Last handshake
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="-mt-2 text-sm">
+            <RelativeTime value={d.last_handshake_at} fallback="Never" />
+          </CardContent>
+        </Card>
       </div>
-        <section className="space-y-1 rounded-lg border p-4">
-          <p className="text-muted-foreground text-xs uppercase">Status</p>
-          <p>
-            <strong>{d.status}</strong> · {d.os} · {d.allocated_ip}
-          </p>
-          <p className="text-muted-foreground text-xs">
-            Last handshake:{" "}
-            {d.last_handshake_at
-              ? new Date(d.last_handshake_at).toLocaleString()
-              : "Never"}
-          </p>
-        </section>
 
-        <section className="space-y-3">
-          <h2 className="text-xl font-semibold">Bandwidth</h2>
-          <div className="flex gap-1">
-            {(["24h", "7d", "30d"] as BandwidthRange[]).map((r) => (
-              <Button
-                key={r}
-                size="sm"
-                variant={r === bwRange ? "default" : "outline"}
-                onClick={() => setBwRange(r)}
+      <Tabs defaultValue="bandwidth">
+        <TabsList>
+          <TabsTrigger value="bandwidth">Bandwidth</TabsTrigger>
+          <TabsTrigger value="tunnel">Tunnel & DNS</TabsTrigger>
+          <TabsTrigger value="dns-names">DNS names</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="bandwidth" className="mt-4">
+          <Card>
+            <CardHeader className="flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-base">Bandwidth</CardTitle>
+                <CardDescription>RX and TX over time.</CardDescription>
+              </div>
+              <Tabs
+                value={bwRange}
+                onValueChange={(v) => setBwRange(v as BandwidthRange)}
               >
-                {r}
-              </Button>
-            ))}
-          </div>
-          <BandwidthChart buckets={bwQ.data?.buckets ?? []} />
-        </section>
+                <TabsList className="h-7">
+                  <TabsTrigger value="24h" className="text-xs">
+                    24h
+                  </TabsTrigger>
+                  <TabsTrigger value="7d" className="text-xs">
+                    7d
+                  </TabsTrigger>
+                  <TabsTrigger value="30d" className="text-xs">
+                    30d
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </CardHeader>
+            <CardContent>
+              <BandwidthChart buckets={bwQ.data?.buckets ?? []} />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-        <section className="space-y-3">
-          <h2 className="text-xl font-semibold">Tunnel & DNS</h2>
-          <p className="text-muted-foreground text-sm">
-            Changes apply on next config download — re-import the .conf into
-            your client.
-          </p>
+        <TabsContent value="tunnel" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Routing</CardTitle>
+              <CardDescription>
+                Choose what traffic is sent through the tunnel. Re-download
+                the .conf afterwards.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant={tunnel === "full" ? "default" : "outline"}
+                  onClick={() => setTunnel("full")}
+                >
+                  Full tunnel
+                </Button>
+                <Button
+                  size="sm"
+                  variant={tunnel === "split" ? "default" : "outline"}
+                  onClick={() => setTunnel("split")}
+                >
+                  Split tunnel
+                </Button>
+              </div>
+              {tunnel === "split" && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="cidrs">Allowed CIDRs</Label>
+                  <Input
+                    id="cidrs"
+                    value={splitCidrs}
+                    onChange={(e) => setSplitCidrs(e.target.value)}
+                    placeholder="10.0.0.0/8, 192.168.0.0/16"
+                    className="font-mono"
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    Only listed networks will be tunnelled.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Routing</label>
-            <div className="flex gap-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Custom DNS</CardTitle>
+              <CardDescription>
+                Override the server-default DNS for this device only.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="dns">DNS servers</Label>
+                <Input
+                  id="dns"
+                  value={customDns}
+                  onChange={(e) => setCustomDns(e.target.value)}
+                  placeholder="1.1.1.1, 9.9.9.9"
+                  className="font-mono"
+                />
+                <p className="text-muted-foreground text-xs">
+                  Leave empty to use the server's DNS (recommended).
+                </p>
+              </div>
               <Button
-                size="sm"
-                variant={tunnel === "full" ? "default" : "outline"}
-                onClick={() => setTunnel("full")}
+                onClick={() => saveTunnelM.mutate()}
+                disabled={saveTunnelM.isPending}
               >
-                Full tunnel
+                {saveTunnelM.isPending ? "Saving…" : "Save tunnel + DNS"}
               </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="dns-names" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">DNS names</CardTitle>
+              <CardDescription>
+                Reach this peer from other peers via{" "}
+                <code className="bg-muted rounded px-1 text-xs">
+                  name.vpn.local
+                </code>
+                .
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="dns-names">Hostnames</Label>
+                <Input
+                  id="dns-names"
+                  value={dnsNames}
+                  onChange={(e) => setDnsNames(e.target.value)}
+                  placeholder="laptop.vpn.local, work-laptop.vpn.local"
+                  className="font-mono"
+                />
+              </div>
               <Button
-                size="sm"
-                variant={tunnel === "split" ? "default" : "outline"}
-                onClick={() => setTunnel("split")}
+                onClick={() => saveDnsNamesM.mutate()}
+                disabled={saveDnsNamesM.isPending}
               >
-                Split tunnel
+                {saveDnsNamesM.isPending ? "Saving…" : "Save DNS names"}
               </Button>
-            </div>
-            {tunnel === "split" && (
-              <input
-                value={splitCidrs}
-                onChange={(e) => setSplitCidrs(e.target.value)}
-                placeholder="10.0.0.0/8, 192.168.0.0/16"
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              />
-            )}
-            <p className="text-muted-foreground text-xs">
-              CIDR list (comma-separated). Only listed networks will be sent
-              through the tunnel.
-            </p>
-          </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Custom DNS (optional)</label>
-            <input
-              value={customDns}
-              onChange={(e) => setCustomDns(e.target.value)}
-              placeholder="1.1.1.1, 9.9.9.9"
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-            />
-            <p className="text-muted-foreground text-xs">
-              Overrides the server-default DNS. Leave empty to use the server's
-              DNS (recommended for ad-blocking / split-DNS).
-            </p>
-          </div>
-
-          <Button
-            onClick={() => saveTunnelM.mutate()}
-            disabled={saveTunnelM.isPending}
-          >
-            {saveTunnelM.isPending ? "Saving…" : "Save tunnel + DNS"}
-          </Button>
-        </section>
-
-        <section className="space-y-2">
-          <h2 className="text-xl font-semibold">DNS names</h2>
-          <p className="text-muted-foreground text-sm">
-            Reach this peer from other peers as <code>name.vpn.local</code>.
-          </p>
-          <input
-            value={dnsNames}
-            onChange={(e) => setDnsNames(e.target.value)}
-            placeholder="laptop.vpn.local, work-laptop.vpn.local"
-            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-          />
-          <Button
-            onClick={() => saveDnsNamesM.mutate()}
-            disabled={saveDnsNamesM.isPending}
-          >
-            {saveDnsNamesM.isPending ? "Saving…" : "Save DNS names"}
-          </Button>
-        </section>
-
-        <section>
-          <Button variant="ghost" onClick={() => navigate("/app")}>
-            Back to dashboard
-          </Button>
-        </section>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Public key</CardTitle>
+          <CardDescription>The peer's WireGuard pubkey.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CopyableCode value={d.public_key} />
+        </CardContent>
+      </Card>
     </div>
   )
 }

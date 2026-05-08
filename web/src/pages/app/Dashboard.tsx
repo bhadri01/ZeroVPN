@@ -1,63 +1,111 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  IconDevicesPc,
+  IconDeviceTablet,
+  IconDownload,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconPlus,
+  IconQrcode,
+  IconTrash,
+} from "@tabler/icons-react"
 import { AnimatePresence, motion } from "motion/react"
 import { useCallback, useState } from "react"
-import { Link, useNavigate } from "react-router"
 import { toast } from "sonner"
 
 import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
-import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { CopyableCode } from "@/components/CopyableCode"
+import { EmptyState } from "@/components/EmptyState"
+import { PageHeader } from "@/components/PageHeader"
+import { Stat } from "@/components/Stat"
+import { StatusPill } from "@/components/StatusPill"
 import { TopologyGraph, applyEmaSmoothing } from "@/components/topology/LazyTopologyGraph"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useWebSocket } from "@/hooks/useWebSocket"
 import {
   ApiError,
   type BandwidthRange,
   type CreatedDevice,
   type DeviceOs,
+  type DeviceStatus,
   createDevice,
   deleteDevice,
   listDevices,
-  logout,
   pauseDevice,
   unpauseDevice,
   userBandwidth,
 } from "@/lib/api"
+import { listVariants, useReducedMotion } from "@/lib/motion"
 import type { Event } from "@/lib/wire"
 import { useAuth } from "@/stores/auth"
 
 export function DashboardPage() {
-  const navigate = useNavigate()
   const user = useAuth((s) => s.user)
-  const reset = useAuth((s) => s.reset)
   const queryClient = useQueryClient()
+  const reduceMotion = useReducedMotion()
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
   const [created, setCreated] = useState<CreatedDevice | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
   const [name, setName] = useState("")
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
-  const [rates, setRates] = useState<Map<string, { rxBps: number; txBps: number }>>(
-    new Map(),
-  )
+  const [rates, setRates] = useState<
+    Map<string, { rxBps: number; txBps: number }>
+  >(new Map())
   const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
+  const [revokeId, setRevokeId] = useState<string | null>(null)
+
   const bandwidthQ = useQuery({
     queryKey: ["bandwidth", "user", bwRange],
     queryFn: () => userBandwidth(bwRange),
     staleTime: 60_000,
   })
 
-  const onWsEvent = useCallback((event: Event) => {
-    if (event.type === "stats_delta") {
-      setRates((prev) =>
-        applyEmaSmoothing(prev, {
-          deviceId: event.device_id,
-          rxBps: event.rate_rx_bps,
-          txBps: event.rate_tx_bps,
-        }),
-      )
-    } else if (event.type === "peer_status_changed") {
-      void queryClient.invalidateQueries({ queryKey: ["devices"] })
-    }
-  }, [queryClient])
+  const onWsEvent = useCallback(
+    (event: Event) => {
+      if (event.type === "stats_delta") {
+        setRates((prev) =>
+          applyEmaSmoothing(prev, {
+            deviceId: event.device_id,
+            rxBps: event.rate_rx_bps,
+            txBps: event.rate_tx_bps,
+          }),
+        )
+      } else if (event.type === "peer_status_changed") {
+        void queryClient.invalidateQueries({ queryKey: ["devices"] })
+      }
+    },
+    [queryClient],
+  )
 
-  const ws = useWebSocket({
+  useWebSocket({
     path: "/api/v1/ws",
     onEvent: onWsEvent,
     enabled: !!user,
@@ -68,6 +116,7 @@ export function DashboardPage() {
     onSuccess: (data) => {
       setCreated(data)
       setName("")
+      setAddOpen(false)
       void queryClient.invalidateQueries({ queryKey: ["devices"] })
       toast.success("Device added")
     },
@@ -93,229 +142,373 @@ export function DashboardPage() {
   const deleteM = useMutation({
     mutationFn: (id: string) => deleteDevice(id),
     onSuccess: () => {
+      setRevokeId(null)
       void queryClient.invalidateQueries({ queryKey: ["devices"] })
-      setRates((r) => {
-        const updated = new Map(r)
-        return updated
-      })
       toast.warning("Device revoked")
     },
   })
 
+  const devices = devicesQ.data ?? []
+  const active = devices.filter((d) => d.status === "active").length
+  const paused = devices.filter((d) => d.status === "paused").length
+  const totalRx = Array.from(rates.values()).reduce((s, v) => s + v.rxBps, 0)
+  const totalTx = Array.from(rates.values()).reduce((s, v) => s + v.txBps, 0)
+
   return (
-    <>
-      <div className="mx-auto max-w-6xl space-y-8">
-        <section className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-xl font-semibold">Live network</h2>
-            <p className="text-muted-foreground text-xs">
-              Particles flow in the direction of traffic; speed scales with rate.
-            </p>
-          </div>
-          <TopologyGraph devices={devicesQ.data ?? []} rates={rates} />
-        </section>
-
-        <section className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-xl font-semibold">Bandwidth</h2>
-            <div className="flex gap-1">
-              {(["24h", "7d", "30d"] as BandwidthRange[]).map((r) => (
-                <Button
-                  key={r}
-                  size="sm"
-                  variant={r === bwRange ? "default" : "outline"}
-                  onClick={() => setBwRange(r)}
-                >
-                  {r}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <BandwidthChart buckets={bandwidthQ.data?.buckets ?? []} />
-        </section>
-
-        <section>
-          <p className="text-muted-foreground text-xs">
-            <Link to="/app/security" className="underline">
-              Security & 2FA →
-            </Link>
-            {" · "}
-            <Link to="/app/account" className="underline">
-              Account & data →
-            </Link>
-          </p>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-xl font-semibold">Add a device</h2>
-          <div className="flex flex-wrap gap-2">
-            <input
-              placeholder="Device name (e.g. Pixel 8)"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="border-input bg-background w-64 rounded-md border px-3 py-2 text-sm"
-            />
-            <select
-              value={osChoice}
-              onChange={(e) => setOsChoice(e.target.value as DeviceOs)}
-              className="border-input bg-background rounded-md border px-3 py-2 text-sm"
-            >
-              {(["ios", "android", "macos", "windows", "linux", "other"] as DeviceOs[]).map(
-                (o) => (
-                  <option key={o} value={o}>
-                    {o}
-                  </option>
-                ),
-              )}
-            </select>
-            <Button
-              onClick={() => addM.mutate()}
-              disabled={addM.isPending || name.trim().length === 0}
-            >
-              {addM.isPending ? "Adding…" : "Add device"}
-            </Button>
-          </div>
-
-          <AnimatePresence>
-            {created && (
-              <motion.div
-                key={created.device.id}
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                className="space-y-3 rounded-lg border p-4"
-              >
-                <div className="flex flex-wrap items-start gap-4">
-                  <div
-                    className="bg-white p-2"
-                    dangerouslySetInnerHTML={{ __html: created.qr_svg }}
+    <div className="space-y-6">
+      <PageHeader
+        title="Dashboard"
+        description="Live network and devices for your account."
+        actions={
+          <Dialog open={addOpen} onOpenChange={setAddOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <IconPlus />
+                Add device
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Add device</DialogTitle>
+                <DialogDescription>
+                  We generate a fresh keypair, allocate an IP, and hand you a
+                  WireGuard config. The private key never leaves the page.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="dev-name">Name</Label>
+                  <Input
+                    id="dev-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Pixel 8, MacBook Pro…"
+                    autoFocus
                   />
-                  <div className="flex-1 space-y-2 text-sm">
-                    <p>
-                      <strong>{created.device.name}</strong> ·{" "}
-                      {created.device.allocated_ip}
-                    </p>
-                    <p className="text-muted-foreground text-xs">
-                      Save this config now — the private key is never stored on the server.
-                    </p>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          const blob = new Blob([created.config], { type: "text/plain" })
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement("a")
-                          a.href = url
-                          a.download = `${created.device.name}.conf`
-                          a.click()
-                          URL.revokeObjectURL(url)
-                        }}
-                      >
-                        Download .conf
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          void navigator.clipboard.writeText(created.config)
-                          toast.success("Config copied")
-                        }}
-                      >
-                        Copy
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setCreated(null)}>
-                        Done
-                      </Button>
-                    </div>
-                  </div>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </section>
-
-        <section className="space-y-3">
-          <h2 className="text-xl font-semibold">Devices</h2>
-          {devicesQ.isLoading && <p className="text-muted-foreground">Loading…</p>}
-          {devicesQ.isError && (
-            <p className="text-destructive">Failed to load devices.</p>
-          )}
-          {devicesQ.data?.length === 0 && (
-            <p className="text-muted-foreground text-sm">No devices yet.</p>
-          )}
-          <ul className="space-y-2">
-            <AnimatePresence>
-              {devicesQ.data?.map((d) => {
-                const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
-                return (
-                  <motion.li
-                    key={d.id}
-                    layout
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0, x: -16 }}
-                    className="flex items-center justify-between rounded-lg border p-3"
+                <div className="space-y-1.5">
+                  <Label>Operating system</Label>
+                  <Select
+                    value={osChoice}
+                    onValueChange={(v) => setOsChoice(v as DeviceOs)}
                   >
-                    <div>
-                      <p className="font-medium">{d.name}</p>
-                      <p className="text-muted-foreground text-xs">
-                        {d.os} · {d.allocated_ip} · {d.status}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-muted-foreground text-xs tabular-nums">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(["ios", "android", "macos", "windows", "linux", "other"] as DeviceOs[]).map(
+                        (o) => (
+                          <SelectItem key={o} value={o}>
+                            {o}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="ghost">Cancel</Button>
+                </DialogClose>
+                <Button
+                  onClick={() => addM.mutate()}
+                  disabled={addM.isPending || name.trim().length === 0}
+                >
+                  {addM.isPending ? "Adding…" : "Add"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        }
+      />
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Active devices" value={active} />
+        <Stat label="Paused" value={paused} />
+        <Stat
+          label="RX total"
+          value={totalRx}
+          format={formatBps}
+          unit="now"
+        />
+        <Stat
+          label="TX total"
+          value={totalTx}
+          format={formatBps}
+          unit="now"
+        />
+      </div>
+
+      <AnimatePresence>
+        {created && <CreatedDeviceCard data={created} onClose={() => setCreated(null)} />}
+      </AnimatePresence>
+
+      <div className="grid gap-6 lg:grid-cols-5">
+        <Card className="lg:col-span-3">
+          <CardHeader>
+            <CardTitle className="text-base">Live network</CardTitle>
+            <CardDescription>
+              Particles flow with traffic; speed scales with rate.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <TopologyGraph devices={devices} rates={rates} />
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader className="flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Bandwidth</CardTitle>
+              <CardDescription>RX and TX over time.</CardDescription>
+            </div>
+            <Tabs value={bwRange} onValueChange={(v) => setBwRange(v as BandwidthRange)}>
+              <TabsList className="h-7">
+                <TabsTrigger value="24h" className="text-xs">
+                  24h
+                </TabsTrigger>
+                <TabsTrigger value="7d" className="text-xs">
+                  7d
+                </TabsTrigger>
+                <TabsTrigger value="30d" className="text-xs">
+                  30d
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </CardHeader>
+          <CardContent>
+            <BandwidthChart buckets={bandwidthQ.data?.buckets ?? []} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-base">Devices</CardTitle>
+            <CardDescription>
+              Per-device status and live throughput.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {devicesQ.isLoading && (
+            <p className="text-muted-foreground text-sm">Loading…</p>
+          )}
+          {devicesQ.isError && (
+            <p className="text-destructive text-sm">
+              Failed to load devices.
+            </p>
+          )}
+          {devicesQ.data && devicesQ.data.length === 0 && (
+            <EmptyState
+              icon={IconDeviceTablet}
+              title="No devices yet"
+              description="Add your first device to receive a WireGuard config."
+              action={
+                <Button onClick={() => setAddOpen(true)}>
+                  <IconPlus />
+                  Add device
+                </Button>
+              }
+            />
+          )}
+          {devicesQ.data && devicesQ.data.length > 0 && (
+            <ul className="divide-border -mx-1 divide-y">
+              <AnimatePresence initial={false}>
+                {devicesQ.data.map((d) => {
+                  const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
+                  return (
+                    <motion.li
+                      key={d.id}
+                      layout={!reduceMotion}
+                      variants={listVariants}
+                      initial="initial"
+                      animate="animate"
+                      exit="exit"
+                      className="hover:bg-muted/30 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors"
+                    >
+                      <span className="bg-muted text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-md">
+                        <IconDevicesPc className="size-3.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{d.name}</p>
+                        <p className="text-muted-foreground truncate text-xs">
+                          {d.os} · {d.allocated_ip}
+                        </p>
+                      </div>
+                      <span className="text-muted-foreground hidden text-xs tabular-nums sm:inline">
                         ↑ {formatBps(live.txBps)} · ↓ {formatBps(live.rxBps)}
                       </span>
-                      {d.status === "active" ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => pauseM.mutate(d.id)}
-                          disabled={pauseM.isPending}
-                        >
-                          Pause
-                        </Button>
-                      ) : d.status === "paused" ? (
-                        <Button
-                          size="sm"
-                          onClick={() => unpauseM.mutate(d.id)}
-                          disabled={unpauseM.isPending}
-                        >
-                          Unpause
-                        </Button>
-                      ) : null}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          if (confirm(`Revoke ${d.name}?`)) deleteM.mutate(d.id)
-                        }}
-                        disabled={deleteM.isPending}
-                      >
-                        Revoke
-                      </Button>
-                    </div>
-                  </motion.li>
-                )
-              })}
-            </AnimatePresence>
-          </ul>
-        </section>
-      </div>
-    </>
+                      <StatusPill status={d.status as Status} />
+                      <DeviceActions
+                        status={d.status}
+                        onPause={() => pauseM.mutate(d.id)}
+                        onUnpause={() => unpauseM.mutate(d.id)}
+                        onRevoke={() => setRevokeId(d.id)}
+                        pending={pauseM.isPending || unpauseM.isPending}
+                      />
+                    </motion.li>
+                  )
+                })}
+              </AnimatePresence>
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <ConfirmDialog
+        open={!!revokeId}
+        onOpenChange={(o) => !o && setRevokeId(null)}
+        title="Revoke device?"
+        description="This removes the peer from WireGuard, frees its IP, and is irreversible. The user must re-add a new device to reconnect."
+        confirmLabel="Revoke"
+        destructive
+        pending={deleteM.isPending}
+        onConfirm={() => revokeId && deleteM.mutate(revokeId)}
+      />
+    </div>
   )
 }
 
-function ConnectionPill({ state }: { state: "connecting" | "open" | "closed" }) {
-  const colour =
-    state === "open"
-      ? "bg-green-500/15 text-green-700 dark:text-green-400"
-      : state === "connecting"
-        ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-        : "bg-red-500/15 text-red-700 dark:text-red-400"
-  const label = state === "open" ? "Live" : state === "connecting" ? "Connecting…" : "Offline"
+type Status =
+  | "online"
+  | "active"
+  | "degraded"
+  | "offline"
+  | "paused"
+  | "revoked"
+  | "pending"
+
+function DeviceActions({
+  status,
+  onPause,
+  onUnpause,
+  onRevoke,
+  pending,
+}: {
+  status: DeviceStatus
+  onPause: () => void
+  onUnpause: () => void
+  onRevoke: () => void
+  pending: boolean
+}) {
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${colour}`}>{label}</span>
+    <div className="flex items-center gap-1">
+      {status === "active" && (
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={onPause}
+          disabled={pending}
+          title="Pause"
+        >
+          <IconPlayerPause className="size-3.5" />
+        </Button>
+      )}
+      {status === "paused" && (
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={onUnpause}
+          disabled={pending}
+          title="Unpause"
+        >
+          <IconPlayerPlay className="size-3.5" />
+        </Button>
+      )}
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        onClick={onRevoke}
+        disabled={status === "revoked"}
+        title="Revoke"
+        className="text-muted-foreground hover:text-destructive"
+      >
+        <IconTrash className="size-3.5" />
+      </Button>
+    </div>
+  )
+}
+
+function CreatedDeviceCard({
+  data,
+  onClose,
+}: {
+  data: CreatedDevice
+  onClose: () => void
+}) {
+  return (
+    <motion.div
+      key={data.device.id}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -4 }}
+      transition={{ duration: 0.18 }}
+    >
+      <Card className="border-status-online/30 bg-status-online/5">
+        <CardHeader>
+          <CardTitle className="text-base">
+            {data.device.name} · ready
+          </CardTitle>
+          <CardDescription>
+            Save this config now — the private key isn't stored on the
+            server.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-[auto_1fr]">
+            <div className="flex shrink-0 items-center justify-center rounded-md bg-white p-2">
+              <span
+                className="block size-32"
+                dangerouslySetInnerHTML={{ __html: data.qr_svg }}
+              />
+            </div>
+            <div className="min-w-0 space-y-2">
+              <p className="text-sm">
+                Allocated IP:{" "}
+                <code className="bg-muted rounded px-1 text-xs">
+                  {data.device.allocated_ip}
+                </code>
+              </p>
+              <CopyableCode value={data.config} multiline />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                const blob = new Blob([data.config], { type: "text/plain" })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement("a")
+                a.href = url
+                a.download = `${data.device.name}.conf`
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+            >
+              <IconDownload />
+              Download .conf
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                void navigator.clipboard.writeText(data.config)
+                toast.success("Config copied")
+              }}
+            >
+              <IconQrcode />
+              Copy config
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onClose}>
+              Done
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
   )
 }
 
