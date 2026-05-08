@@ -4,7 +4,31 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>vite-app</title>
+    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <title>ZeroVPN</title>
+    <script>
+      // Anti-FOUC: synchronously set the theme class before React mounts.
+      // Reads localStorage("zerovpn-theme") which is "system" | "light" | "dark"
+      // (default "system" -> matchMedia). Keeps logic in sync with
+      // theme-provider.tsx; if you change either, change both.
+      (function () {
+        try {
+          var stored = localStorage.getItem("zerovpn-theme") || "system";
+          var resolved =
+            stored === "system"
+              ? window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light"
+              : stored;
+          document.documentElement.classList.add(resolved);
+          document.documentElement.style.colorScheme = resolved;
+        } catch (e) {
+          // localStorage unavailable / disabled — fall back to light
+          document.documentElement.classList.add("light");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

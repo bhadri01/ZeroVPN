@@ -39,6 +39,13 @@
     --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
     --sidebar-border: oklch(0.92 0.004 286.32);
     --sidebar-ring: oklch(0.705 0.015 286.067);
+    /* Semantic status palette — used by StatusPill, never reuse --primary
+       for "online" etc. Light-mode values; .dark overrides below. */
+    --status-online: oklch(0.62 0.18 152);     /* green-600 */
+    --status-degraded: oklch(0.74 0.16 75);    /* amber-500 */
+    --status-offline: oklch(0.7 0.01 286);     /* zinc-400 */
+    --status-paused: oklch(0.83 0.01 286);     /* zinc-300 */
+    --status-revoked: oklch(0.577 0.245 27.325); /* destructive */
 }
 
 .dark {
@@ -73,6 +80,11 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.552 0.016 285.938);
+    --status-online: oklch(0.74 0.18 152);
+    --status-degraded: oklch(0.79 0.17 75);
+    --status-offline: oklch(0.55 0.01 286);
+    --status-paused: oklch(0.4 0.005 286);
+    --status-revoked: oklch(0.704 0.191 22.216);
 }
 
 @theme inline {
@@ -116,6 +128,26 @@
     --radius-2xl: calc(var(--radius) * 1.8);
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
+    --color-status-online: var(--status-online);
+    --color-status-degraded: var(--status-degraded);
+    --color-status-offline: var(--status-offline);
+    --color-status-paused: var(--status-paused);
+    --color-status-revoked: var(--status-revoked);
+}
+
+/* CRUD micro-interaction: brief background flash on a row that just appeared
+   or just changed. Tailwind keyframe registered globally; apply with the
+   `animate-flash-once` utility from tw-animate-css or via inline arbitrary. */
+@keyframes flash-once {
+  0% { background-color: color-mix(in oklch, var(--accent) 40%, transparent); }
+  100% { background-color: transparent; }
+}
+.animate-flash-once { animation: flash-once 600ms ease-out 1; }
+
+/* Skeleton shimmer — CSS only, no motion lib. */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
 @layer base {
@@ -123,9 +155,13 @@
     @apply border-border outline-ring/50;
     }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01"; /* slashed zeros + better digits */
     }
   html {
     @apply font-sans;
+    }
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading tracking-tight;
     }
 }
