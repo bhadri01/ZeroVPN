@@ -1,13 +1,12 @@
 import {
-  IconActivity,
   IconChartLine,
-  IconCircleCheck,
   IconCircleDashedX,
   IconClipboardList,
   IconDevices,
   IconKey,
   IconLayoutDashboard,
-  IconLogout,
+  IconLayoutSidebar,
+  IconLayoutSidebarLeftCollapse,
   IconRouter,
   IconShield,
   IconSparkles,
@@ -15,18 +14,9 @@ import {
   IconUserShield,
   IconUsers,
   IconWebhook,
-  IconWifi,
 } from "@tabler/icons-react"
 import { Link, NavLink, useLocation } from "react-router"
 
-import { ModeToggle } from "@/components/mode-toggle"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   Sidebar,
   SidebarContent,
@@ -41,7 +31,6 @@ import {
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { logout as apiLogout } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
 type NavEntry = {
@@ -71,18 +60,8 @@ const ADMIN: NavEntry[] = [
 
 export function AppSidebar() {
   const user = useAuth((s) => s.user)
-  const reset = useAuth((s) => s.reset)
   const { state } = useSidebar()
   const collapsed = state === "collapsed"
-
-  const handleLogout = async () => {
-    try {
-      await apiLogout()
-    } catch {
-      /* ignore network failures — UI must still drop session */
-    }
-    reset()
-  }
 
   return (
     <Sidebar collapsible="icon" className="border-r">
@@ -117,55 +96,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuButton
-                  size="lg"
-                  className="data-[state=open]:bg-accent"
-                >
-                  <span className="bg-muted text-muted-foreground flex size-8 items-center justify-center rounded-full text-xs font-semibold">
-                    {user?.email?.[0]?.toUpperCase() ?? "?"}
-                  </span>
-                  <div className="flex min-w-0 flex-col text-left text-xs">
-                    <span className="truncate font-medium">{user?.email}</span>
-                    <span className="text-muted-foreground capitalize">
-                      {user?.role}
-                    </span>
-                  </div>
-                </SidebarMenuButton>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                side="top"
-                align="end"
-                className="min-w-[14rem]"
-              >
-                <DropdownMenuItem asChild>
-                  <Link to="/app/account">
-                    <IconUser />
-                    Account
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link to="/app/security">
-                    <IconShield />
-                    Security
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => void handleLogout()}>
-                  <IconLogout />
-                  Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </SidebarMenuItem>
-        </SidebarMenu>
-        <div className="flex items-center justify-between px-2 pt-1">
-          {!collapsed && <WSStatusPill />}
-          <ModeToggle />
-        </div>
+        <CollapseToggle collapsed={collapsed} />
       </SidebarFooter>
 
       <SidebarRail />
@@ -202,53 +133,27 @@ function NavList({ entries }: { entries: NavEntry[] }) {
   )
 }
 
-function WSStatusPill() {
-  // Placeholder until we wire useWebSocket; the real connection state lives
-  // in the user dashboard's useWebSocket hook. For sidebar-presence we just
-  // show a static ok pill — Phase D wires the live state.
+/**
+ * Sidebar collapse/expand toggle. Lives in the footer where the theme
+ * picker used to — the theme + user-menu both moved to the top bar.
+ */
+function CollapseToggle({ collapsed }: { collapsed: boolean }) {
+  const { toggleSidebar } = useSidebar()
+  const Icon = collapsed
+    ? IconLayoutSidebar
+    : IconLayoutSidebarLeftCollapse
   return (
-    <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
-      <span className="bg-status-online size-1.5 rounded-full" />
-      Live
-    </span>
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          onClick={toggleSidebar}
+          tooltip={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          <Icon className="size-4" />
+          <span>{collapsed ? "Expand" : "Collapse"}</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
   )
-}
-
-// Helper for ConnectionStatePill consumers — keep symmetry with old usage.
-export function ConnectionPill({
-  state,
-  label,
-}: {
-  state: "online" | "offline" | "connecting" | "degraded"
-  label?: string
-}) {
-  const tone =
-    state === "online"
-      ? "bg-status-online"
-      : state === "degraded"
-        ? "bg-status-degraded"
-        : "bg-status-offline"
-  return (
-    <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
-      <span className={`${tone} size-1.5 rounded-full`} />
-      {label ??
-        (state === "online"
-          ? "Live"
-          : state === "connecting"
-            ? "Connecting"
-            : state === "degraded"
-              ? "Degraded"
-              : "Offline")}
-    </span>
-  )
-}
-
-/* eslint-disable react-refresh/only-export-components */
-// This file exports BOTH the AppSidebar component and the ConnectionPill
-// helper used elsewhere — splitting them is more churn than the warning
-// is worth.
-export const _UnusedIcons = {
-  IconActivity,
-  IconCircleCheck,
-  IconWifi,
 }
