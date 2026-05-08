@@ -1,25 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
-  IconDevicesPc,
   IconDeviceTablet,
-  IconPlayerPause,
-  IconPlayerPlay,
   IconPlus,
-  IconTrash,
 } from "@tabler/icons-react"
 import { AnimatePresence, motion } from "motion/react"
-import { useCallback, useState } from "react"
-import { Link } from "react-router"
+import { useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
+import { DeviceCard } from "@/components/DeviceCard"
 import { EmptyState } from "@/components/EmptyState"
 import { PageHeader } from "@/components/PageHeader"
-import { RelativeTime } from "@/components/RelativeTime"
-import { applyEmaSmoothing } from "@/components/topology/LazyTopologyGraph"
 import { Stat } from "@/components/Stat"
-import { StatusPill, type Status } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import {
@@ -43,31 +36,18 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { useWebSocket } from "@/hooks/useWebSocket"
-import {
   ApiError,
   type CreatedDevice,
   type DeviceOs,
-  type DeviceStatus,
   createDevice,
   deleteDevice,
   listDevices,
   pauseDevice,
   unpauseDevice,
 } from "@/lib/api"
-import { listVariants, useReducedMotion } from "@/lib/motion"
-import type { Event } from "@/lib/wire"
-import { useAuth } from "@/stores/auth"
+import { useReducedMotion } from "@/lib/motion"
 
 export function DevicesPage() {
-  const user = useAuth((s) => s.user)
   const qc = useQueryClient()
   const reduceMotion = useReducedMotion()
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
@@ -77,32 +57,6 @@ export function DevicesPage() {
   const [name, setName] = useState("")
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
   const [revokeId, setRevokeId] = useState<string | null>(null)
-  const [rates, setRates] = useState<
-    Map<string, { rxBps: number; txBps: number }>
-  >(new Map())
-
-  const onWsEvent = useCallback(
-    (event: Event) => {
-      if (event.type === "stats_delta") {
-        setRates((prev) =>
-          applyEmaSmoothing(prev, {
-            deviceId: event.device_id,
-            rxBps: event.rate_rx_bps,
-            txBps: event.rate_tx_bps,
-          }),
-        )
-      } else if (event.type === "peer_status_changed") {
-        void qc.invalidateQueries({ queryKey: ["devices"] })
-      }
-    },
-    [qc],
-  )
-
-  useWebSocket({
-    path: "/api/v1/ws",
-    onEvent: onWsEvent,
-    enabled: !!user,
-  })
 
   const addM = useMutation({
     mutationFn: () => createDevice({ name: name.trim(), os: osChoice }),
@@ -214,7 +168,7 @@ export function DevicesPage() {
         }
       />
 
-      <div className="grid grid-cols-3 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-3 gap-3">
         <Stat label="Active" value={active} />
         <Stat label="Paused" value={paused} />
         <Stat label="Revoked" value={revoked} />
@@ -278,108 +232,56 @@ export function DevicesPage() {
         )}
       </AnimatePresence>
 
-      <Card>
-        <CardContent>
-          {devicesQ.isLoading && (
-            <div className="space-y-2">
-              <Skeleton className="h-10" />
-              <Skeleton className="h-10" />
-              <Skeleton className="h-10" />
-            </div>
-          )}
-          {devicesQ.isError && (
-            <p className="text-destructive text-sm">Failed to load devices.</p>
-          )}
-          {devicesQ.data && devicesQ.data.length === 0 && (
-            <EmptyState
-              icon={IconDeviceTablet}
-              title="No devices yet"
-              description="Add your first device to receive a WireGuard config."
-              action={
-                <Button onClick={() => setAddOpen(true)}>
-                  <IconPlus />
-                  Add device
-                </Button>
-              }
-            />
-          )}
-          {devicesQ.data && devicesQ.data.length > 0 && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Device</TableHead>
-                  <TableHead>IP</TableHead>
-                  <TableHead>Last handshake</TableHead>
-                  <TableHead className="hidden sm:table-cell">Live</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <AnimatePresence initial={false}>
-                  {devicesQ.data.map((d) => {
-                    const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
-                    return (
-                      <motion.tr
-                        key={d.id}
-                        layout={!reduceMotion}
-                        variants={listVariants}
-                        initial="initial"
-                        animate="animate"
-                        exit="exit"
-                        className="hover:bg-muted/30 transition-colors"
-                      >
-                        <TableCell>
-                          <Link
-                            to={`/app/devices/${d.id}`}
-                            className="hover:text-primary flex items-center gap-2 transition-colors"
-                          >
-                            <span className="bg-muted text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-md">
-                              <IconDevicesPc className="size-3.5" />
-                            </span>
-                            <span className="min-w-0">
-                              <span className="block truncate text-sm font-medium">
-                                {d.name}
-                              </span>
-                              <span className="text-muted-foreground block text-xs">
-                                {d.os}
-                              </span>
-                            </span>
-                          </Link>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {d.allocated_ip}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          <RelativeTime
-                            value={d.last_handshake_at}
-                            fallback="Never"
-                          />
-                        </TableCell>
-                        <TableCell className="hidden text-muted-foreground text-xs tabular-nums sm:table-cell">
-                          ↑ {formatBps(live.txBps)} · ↓ {formatBps(live.rxBps)}
-                        </TableCell>
-                        <TableCell>
-                          <StatusPill status={d.status as Status} />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <DeviceActions
-                            status={d.status}
-                            onPause={() => pauseM.mutate(d.id)}
-                            onUnpause={() => unpauseM.mutate(d.id)}
-                            onRevoke={() => setRevokeId(d.id)}
-                            pending={pauseM.isPending || unpauseM.isPending}
-                          />
-                        </TableCell>
-                      </motion.tr>
-                    )
-                  })}
-                </AnimatePresence>
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      {devicesQ.isLoading && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-56" />
+          ))}
+        </div>
+      )}
+      {devicesQ.isError && (
+        <p className="text-destructive text-sm">Failed to load devices.</p>
+      )}
+      {devicesQ.data && devicesQ.data.length === 0 && (
+        <EmptyState
+          icon={IconDeviceTablet}
+          title="No devices yet"
+          description="Add your first device to receive a WireGuard config."
+          action={
+            <Button onClick={() => setAddOpen(true)}>
+              <IconPlus />
+              Add device
+            </Button>
+          }
+        />
+      )}
+      {devices.length > 0 && (
+        <motion.div
+          layout={!reduceMotion}
+          className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        >
+          <AnimatePresence initial={false}>
+            {devices.map((d) => (
+              <motion.div
+                key={d.id}
+                layout={!reduceMotion}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ duration: 0.18 }}
+              >
+                <DeviceCard
+                  device={d}
+                  onPause={(id) => pauseM.mutate(id)}
+                  onUnpause={(id) => unpauseM.mutate(id)}
+                  onRevoke={(id) => setRevokeId(id)}
+                  pending={pauseM.isPending || unpauseM.isPending}
+                />
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </motion.div>
+      )}
 
       <ConfirmDialog
         open={!!revokeId}
@@ -393,62 +295,4 @@ export function DevicesPage() {
       />
     </div>
   )
-}
-
-function DeviceActions({
-  status,
-  onPause,
-  onUnpause,
-  onRevoke,
-  pending,
-}: {
-  status: DeviceStatus
-  onPause: () => void
-  onUnpause: () => void
-  onRevoke: () => void
-  pending: boolean
-}) {
-  return (
-    <div className="inline-flex items-center gap-1">
-      {status === "active" && (
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          onClick={onPause}
-          disabled={pending}
-          title="Pause"
-        >
-          <IconPlayerPause className="size-3.5" />
-        </Button>
-      )}
-      {status === "paused" && (
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          onClick={onUnpause}
-          disabled={pending}
-          title="Unpause"
-        >
-          <IconPlayerPlay className="size-3.5" />
-        </Button>
-      )}
-      <Button
-        size="icon-sm"
-        variant="ghost"
-        onClick={onRevoke}
-        disabled={status === "revoked"}
-        title="Revoke"
-        className="text-muted-foreground hover:text-destructive"
-      >
-        <IconTrash className="size-3.5" />
-      </Button>
-    </div>
-  )
-}
-
-function formatBps(bps: number): string {
-  if (bps < 1_000) return `${Math.round(bps)} bps`
-  if (bps < 1_000_000) return `${(bps / 1_000).toFixed(1)} kbps`
-  if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`
-  return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
 }

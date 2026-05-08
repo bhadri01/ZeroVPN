@@ -17,6 +17,7 @@ import {
 } from "@tabler/icons-react"
 import { Link, NavLink, useLocation } from "react-router"
 
+import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
 import {
   Sidebar,
   SidebarContent,
@@ -32,6 +33,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useAuth } from "@/stores/auth"
+import { aggregateLiveStats, useLiveStats } from "@/stores/liveStats"
 
 type NavEntry = {
   to: string
@@ -96,6 +98,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
+        {!collapsed && <LivePulse />}
         <CollapseToggle collapsed={collapsed} />
       </SidebarFooter>
 
@@ -131,6 +134,48 @@ function NavList({ entries }: { entries: NavEntry[] }) {
       })}
     </SidebarMenu>
   )
+}
+
+/**
+ * Aggregate live RX/TX sparkline + numeric labels for the sidebar
+ * footer. Reads from the shared liveStats store; renders nothing if
+ * there's no data yet (avoids a placeholder slab on first paint).
+ */
+function LivePulse() {
+  const agg = useLiveStats(aggregateLiveStats)
+  return (
+    <div className="border-sidebar-border bg-sidebar-accent/30 mx-2 mb-1 space-y-1.5 rounded-md border p-2">
+      <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider">
+        <span className="text-muted-foreground">All devices</span>
+        <span className="text-muted-foreground inline-flex items-center gap-1">
+          <span className="bg-status-online relative size-1 rounded-full">
+            <span className="bg-status-online absolute inline-flex size-1 animate-ping rounded-full opacity-75" />
+          </span>
+          Live
+        </span>
+      </div>
+      <MiniAreaChart
+        rxHistory={agg.rxHistory}
+        txHistory={agg.txHistory}
+        height={42}
+      />
+      <div className="text-muted-foreground flex items-center justify-between text-[10px] tabular-nums">
+        <span>
+          <span className="text-status-online">↓</span> {formatBps(agg.rxBps)}
+        </span>
+        <span>
+          <span className="text-primary">↑</span> {formatBps(agg.txBps)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function formatBps(bps: number): string {
+  if (bps < 1_000) return `${Math.round(bps)} bps`
+  if (bps < 1_000_000) return `${(bps / 1_000).toFixed(1)} kbps`
+  if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`
+  return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
 }
 
 /**

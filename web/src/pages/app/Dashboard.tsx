@@ -11,9 +11,13 @@ import {
 } from "@tabler/icons-react"
 import { AnimatePresence, motion } from "motion/react"
 import { useMemo, useState } from "react"
+import { Link } from "react-router"
 import { toast } from "sonner"
 
-import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
+import {
+  LiveIndicator,
+  NetworkMonitorChart,
+} from "@/components/charts/LazyNetworkMonitorChart"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { EmptyState } from "@/components/EmptyState"
@@ -48,10 +52,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   ApiError,
-  type BandwidthRange,
   type CreatedDevice,
   type DeviceOs,
   type DeviceStatus,
@@ -60,10 +62,9 @@ import {
   listDevices,
   pauseDevice,
   unpauseDevice,
-  userBandwidth,
 } from "@/lib/api"
 import { listVariants, useReducedMotion } from "@/lib/motion"
-import { useLiveStats } from "@/stores/liveStats"
+import { aggregateLiveStats, useLiveStats } from "@/stores/liveStats"
 
 export function DashboardPage() {
   const queryClient = useQueryClient()
@@ -73,12 +74,12 @@ export function DashboardPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [name, setName] = useState("")
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
-  const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
   const [revokeId, setRevokeId] = useState<string | null>(null)
 
   // Live rates come from the shared store fed by LiveStatsProvider in
   // DashboardLayout. The topology graph wants a Map<id, {rxBps, txBps}>.
   const liveDevices = useLiveStats((s) => s.devices)
+  const liveAggregate = useLiveStats(aggregateLiveStats)
   const rates = useMemo(() => {
     const m = new Map<string, { rxBps: number; txBps: number }>()
     for (const [id, d] of Object.entries(liveDevices)) {
@@ -86,12 +87,6 @@ export function DashboardPage() {
     }
     return m
   }, [liveDevices])
-
-  const bandwidthQ = useQuery({
-    queryKey: ["bandwidth", "user", bwRange],
-    queryFn: () => userBandwidth(bwRange),
-    staleTime: 60_000,
-  })
 
   const addM = useMutation({
     mutationFn: () => createDevice({ name: name.trim(), os: osChoice }),
@@ -240,27 +235,26 @@ export function DashboardPage() {
         </Card>
 
         <Card className="lg:col-span-2">
-          <CardHeader className="flex-row items-center justify-between">
+          <CardHeader className="flex-row items-start justify-between space-y-0">
             <div>
-              <CardTitle className="text-base">Bandwidth</CardTitle>
-              <CardDescription>RX and TX over time.</CardDescription>
+              <CardTitle className="text-base">Network traffic</CardTitle>
+              <CardDescription>
+                Aggregate RX/TX, last 60 frames. Visit{" "}
+                <Link to="/app/bandwidth" className="hover:text-foreground underline">
+                  Bandwidth
+                </Link>{" "}
+                for historical.
+              </CardDescription>
             </div>
-            <Tabs value={bwRange} onValueChange={(v) => setBwRange(v as BandwidthRange)}>
-              <TabsList className="h-7">
-                <TabsTrigger value="24h" className="text-xs">
-                  24h
-                </TabsTrigger>
-                <TabsTrigger value="7d" className="text-xs">
-                  7d
-                </TabsTrigger>
-                <TabsTrigger value="30d" className="text-xs">
-                  30d
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <LiveIndicator />
           </CardHeader>
           <CardContent>
-            <BandwidthChart buckets={bandwidthQ.data?.buckets ?? []} />
+            <NetworkMonitorChart
+              rxHistory={liveAggregate.rxHistory}
+              txHistory={liveAggregate.txHistory}
+              variant="combined"
+              height={220}
+            />
           </CardContent>
         </Card>
       </div>
