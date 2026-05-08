@@ -1,7 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Link } from "react-router"
 
-import { Button } from "@/components/ui/button"
 import { adminListAudit } from "@/lib/api"
 
 export function AuditLogPage() {
@@ -11,14 +9,16 @@ export function AuditLogPage() {
   })
 
   return (
-    <div className="bg-background text-foreground min-h-svh">
-      <header className="flex items-center justify-between border-b p-4">
-        <h1 className="text-lg font-semibold">Audit log</h1>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/admin">Back</Link>
-        </Button>
-      </header>
-      <main className="mx-auto max-w-5xl p-6">
+    <div className="mx-auto max-w-6xl space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
+          <p className="text-muted-foreground text-sm">
+            Every administrative action recorded with actor, target, and IP prefix.
+          </p>
+        </div>
+      </div>
+      <div>
         {auditQ.isLoading && <p className="text-muted-foreground">Loading…</p>}
         {auditQ.data && (
           <div className="overflow-x-auto rounded-lg border">
@@ -68,7 +68,7 @@ export function AuditLogPage() {
             </table>
           </div>
         )}
-      </main>
+      </div>
     </div>
   )
 }

@@ -22,20 +22,19 @@ export function ServersPage() {
   })
 
   return (
-    <div className="bg-background text-foreground min-h-svh">
-      <header className="flex items-center justify-between border-b p-4">
-        <h1 className="text-lg font-semibold">Servers</h1>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/admin">Back</Link>
-        </Button>
-      </header>
-      <main className="mx-auto max-w-3xl space-y-6 p-6">
-        {q.isLoading && <p className="text-muted-foreground">Loading…</p>}
-        {q.data && q.data.length === 0 && (
-          <p className="text-muted-foreground text-sm">No servers configured.</p>
-        )}
-        {q.data?.map((s) => <ServerEditor key={s.id} server={s} />)}
-      </main>
+    <div className="mx-auto max-w-4xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Servers</h1>
+        <p className="text-muted-foreground text-sm">
+          WireGuard servers under management. Edit endpoint, MTU, DNS or
+          rotate keys.
+        </p>
+      </div>
+      {q.isLoading && <p className="text-muted-foreground">Loading…</p>}
+      {q.data && q.data.length === 0 && (
+        <p className="text-muted-foreground text-sm">No servers configured.</p>
+      )}
+      {q.data?.map((s) => <ServerEditor key={s.id} server={s} />)}
     </div>
   )
 }

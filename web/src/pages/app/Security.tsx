@@ -58,15 +58,14 @@ export function SecurityPage() {
   })
 
   return (
-    <div className="bg-background text-foreground min-h-svh">
-      <header className="flex items-center justify-between border-b p-4">
-        <h1 className="text-lg font-semibold">Security</h1>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/app">Back to dashboard</Link>
-        </Button>
-      </header>
-
-      <main className="mx-auto max-w-2xl space-y-8 p-6">
+    <div className="mx-auto max-w-2xl space-y-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Security</h1>
+        <p className="text-muted-foreground text-sm">
+          Two-factor authentication, recovery codes, and account-protection
+          settings.
+        </p>
+      </div>
         <section className="space-y-3">
           <h2 className="text-xl font-semibold">Two-factor authentication</h2>
           <p className="text-muted-foreground text-sm">
@@ -166,7 +165,6 @@ export function SecurityPage() {
             </motion.div>
           )}
         </section>
-      </main>
     </div>
   )
 }

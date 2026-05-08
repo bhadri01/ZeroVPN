@@ -104,7 +104,7 @@ export function DeviceDetailPage() {
 
   if (deviceQ.isLoading || !deviceQ.data) {
     return (
-      <div className="text-muted-foreground flex min-h-svh items-center justify-center">
+      <div className="text-muted-foreground flex h-64 items-center justify-center">
         Loading…
       </div>
     )
@@ -112,15 +112,13 @@ export function DeviceDetailPage() {
   const d = deviceQ.data
 
   return (
-    <div className="bg-background text-foreground min-h-svh">
-      <header className="flex items-center justify-between border-b p-4">
-        <h1 className="text-lg font-semibold">{d.name}</h1>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/app">Back</Link>
-        </Button>
-      </header>
-
-      <main className="mx-auto max-w-3xl space-y-8 p-6">
+    <div className="mx-auto max-w-3xl space-y-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">{d.name}</h1>
+        <p className="text-muted-foreground text-sm">
+          {d.os} · {d.allocated_ip}
+        </p>
+      </div>
         <section className="space-y-1 rounded-lg border p-4">
           <p className="text-muted-foreground text-xs uppercase">Status</p>
           <p>
@@ -236,7 +234,6 @@ export function DeviceDetailPage() {
             Back to dashboard
           </Button>
         </section>
-      </main>
     </div>
   )
 }

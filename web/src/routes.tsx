@@ -1,18 +1,40 @@
-import { lazy, Suspense } from "react"
+import { lazy } from "react"
 import { createBrowserRouter, Outlet } from "react-router"
 
-import { MaintenanceBanner } from "@/components/MaintenanceBanner"
+import { DashboardLayout } from "@/components/layout/DashboardLayout"
+import { PublicShell } from "@/components/layout/PublicShell"
 import { AdminRoute, ProtectedRoute, useBootstrapAuth } from "@/lib/auth-guard"
-import { LandingPage } from "@/pages/public/Landing"
-import { LoginPage } from "@/pages/public/Login"
-import { RegisterPage } from "@/pages/public/Register"
-import { ForgotPasswordPage } from "@/pages/public/ForgotPassword"
-import { ResetPasswordPage } from "@/pages/public/ResetPassword"
-import { VerifyEmailPage } from "@/pages/public/VerifyEmail"
-import { DashboardPage } from "@/pages/app/Dashboard"
 
-// Code-split everything past the dashboard. Lazy-loaded chunks fetch on
-// first navigation, keeping the entry bundle small.
+// All pages lazy-loaded to keep the entry chunk small. The DashboardLayout
+// wraps the lazy load with its own Suspense fallback (skeleton).
+const LandingPage = lazy(() =>
+  import("@/pages/public/Landing").then((m) => ({ default: m.LandingPage })),
+)
+const LoginPage = lazy(() =>
+  import("@/pages/public/Login").then((m) => ({ default: m.LoginPage })),
+)
+const RegisterPage = lazy(() =>
+  import("@/pages/public/Register").then((m) => ({ default: m.RegisterPage })),
+)
+const VerifyEmailPage = lazy(() =>
+  import("@/pages/public/VerifyEmail").then((m) => ({
+    default: m.VerifyEmailPage,
+  })),
+)
+const ForgotPasswordPage = lazy(() =>
+  import("@/pages/public/ForgotPassword").then((m) => ({
+    default: m.ForgotPasswordPage,
+  })),
+)
+const ResetPasswordPage = lazy(() =>
+  import("@/pages/public/ResetPassword").then((m) => ({
+    default: m.ResetPasswordPage,
+  })),
+)
+
+const DashboardPage = lazy(() =>
+  import("@/pages/app/Dashboard").then((m) => ({ default: m.DashboardPage })),
+)
 const SecurityPage = lazy(() =>
   import("@/pages/app/Security").then((m) => ({ default: m.SecurityPage })),
 )
@@ -23,19 +45,27 @@ const ApiTokensPage = lazy(() =>
   import("@/pages/app/ApiTokens").then((m) => ({ default: m.ApiTokensPage })),
 )
 const DeviceDetailPage = lazy(() =>
-  import("@/pages/app/DeviceDetail").then((m) => ({ default: m.DeviceDetailPage })),
+  import("@/pages/app/DeviceDetail").then((m) => ({
+    default: m.DeviceDetailPage,
+  })),
 )
 const ChangePasswordPage = lazy(() =>
-  import("@/pages/app/ChangePassword").then((m) => ({ default: m.ChangePasswordPage })),
+  import("@/pages/app/ChangePassword").then((m) => ({
+    default: m.ChangePasswordPage,
+  })),
 )
 const AdminOverviewPage = lazy(() =>
-  import("@/pages/admin/Overview").then((m) => ({ default: m.AdminOverviewPage })),
+  import("@/pages/admin/Overview").then((m) => ({
+    default: m.AdminOverviewPage,
+  })),
 )
 const AuditLogPage = lazy(() =>
   import("@/pages/admin/AuditLog").then((m) => ({ default: m.AuditLogPage })),
 )
 const FailedLoginsPage = lazy(() =>
-  import("@/pages/admin/FailedLogins").then((m) => ({ default: m.FailedLoginsPage })),
+  import("@/pages/admin/FailedLogins").then((m) => ({
+    default: m.FailedLoginsPage,
+  })),
 )
 const WebhooksPage = lazy(() =>
   import("@/pages/admin/Webhooks").then((m) => ({ default: m.WebhooksPage })),
@@ -44,147 +74,106 @@ const ServersPage = lazy(() =>
   import("@/pages/admin/Servers").then((m) => ({ default: m.ServersPage })),
 )
 
-function Suspended({ children }: { children: React.ReactNode }) {
-  return (
-    <Suspense
-      fallback={
-        <div className="text-muted-foreground flex min-h-svh items-center justify-center">
-          Loading…
-        </div>
-      }
-    >
-      {children}
-    </Suspense>
-  )
-}
-
+/**
+ * Root: bootstraps auth on mount, then renders the matching outlet
+ * (PublicShell for unauthenticated paths, DashboardLayout for protected).
+ */
 function Root() {
   useBootstrapAuth()
-  return (
-    <>
-      <MaintenanceBanner />
-      <Outlet />
-    </>
-  )
+  return <Outlet />
 }
 
 export const router = createBrowserRouter([
   {
     element: <Root />,
     children: [
-      { path: "/", element: <LandingPage /> },
-      { path: "/login", element: <LoginPage /> },
-      { path: "/register", element: <RegisterPage /> },
-      { path: "/verify-email", element: <VerifyEmailPage /> },
-      { path: "/forgot-password", element: <ForgotPasswordPage /> },
-      { path: "/reset-password", element: <ResetPasswordPage /> },
+      // ── Public ─────────────────────────────────────────────────────────
       {
-        // Force-change-password screen — outside ProtectedRoute's
-        // mustChangePassword redirect so the user can actually reach it.
-        path: "/app/change-password",
-        element: (
-          <Suspended>
-            <ChangePasswordPage />
-          </Suspended>
-        ),
+        element: <PublicShell />,
+        children: [
+          { path: "/", element: <LandingPage /> },
+          { path: "/login", element: <LoginPage /> },
+          { path: "/register", element: <RegisterPage /> },
+          { path: "/verify-email", element: <VerifyEmailPage /> },
+          { path: "/forgot-password", element: <ForgotPasswordPage /> },
+          { path: "/reset-password", element: <ResetPasswordPage /> },
+          // Force-change-password lives outside DashboardLayout because
+          // ProtectedRoute would redirect us back here in a loop.
+          { path: "/app/change-password", element: <ChangePasswordPage /> },
+        ],
       },
+
+      // ── App (user) ─────────────────────────────────────────────────────
       {
-        path: "/app",
         element: (
           <ProtectedRoute>
-            <DashboardPage />
+            <DashboardLayout />
           </ProtectedRoute>
         ),
-      },
-      {
-        path: "/app/devices/:id",
-        element: (
-          <ProtectedRoute>
-            <Suspended>
-              <DeviceDetailPage />
-            </Suspended>
-          </ProtectedRoute>
-        ),
-      },
-      {
-        path: "/app/security",
-        element: (
-          <ProtectedRoute>
-            <Suspended>
-              <SecurityPage />
-            </Suspended>
-          </ProtectedRoute>
-        ),
-      },
-      {
-        path: "/app/account",
-        element: (
-          <ProtectedRoute>
-            <Suspended>
-              <AccountPage />
-            </Suspended>
-          </ProtectedRoute>
-        ),
-      },
-      {
-        path: "/app/api-tokens",
-        element: (
-          <ProtectedRoute>
-            <Suspended>
-              <ApiTokensPage />
-            </Suspended>
-          </ProtectedRoute>
-        ),
-      },
-      {
-        path: "/admin",
-        element: (
-          <AdminRoute>
-            <Suspended>
-              <AdminOverviewPage />
-            </Suspended>
-          </AdminRoute>
-        ),
-      },
-      {
-        path: "/admin/audit",
-        element: (
-          <AdminRoute>
-            <Suspended>
-              <AuditLogPage />
-            </Suspended>
-          </AdminRoute>
-        ),
-      },
-      {
-        path: "/admin/failed-logins",
-        element: (
-          <AdminRoute>
-            <Suspended>
-              <FailedLoginsPage />
-            </Suspended>
-          </AdminRoute>
-        ),
-      },
-      {
-        path: "/admin/webhooks",
-        element: (
-          <AdminRoute>
-            <Suspended>
-              <WebhooksPage />
-            </Suspended>
-          </AdminRoute>
-        ),
-      },
-      {
-        path: "/admin/servers",
-        element: (
-          <AdminRoute>
-            <Suspended>
-              <ServersPage />
-            </Suspended>
-          </AdminRoute>
-        ),
+        children: [
+          {
+            path: "/app",
+            handle: { breadcrumb: "Dashboard" },
+            element: <DashboardPage />,
+          },
+          {
+            path: "/app/devices/:id",
+            handle: { breadcrumb: "Device" },
+            element: <DeviceDetailPage />,
+          },
+          {
+            path: "/app/security",
+            handle: { breadcrumb: "Security" },
+            element: <SecurityPage />,
+          },
+          {
+            path: "/app/account",
+            handle: { breadcrumb: "Account" },
+            element: <AccountPage />,
+          },
+          {
+            path: "/app/api-tokens",
+            handle: { breadcrumb: "API tokens" },
+            element: <ApiTokensPage />,
+          },
+
+          // ── Admin ──────────────────────────────────────────────────────
+          {
+            element: (
+              <AdminRoute>
+                <Outlet />
+              </AdminRoute>
+            ),
+            handle: { breadcrumb: "Admin" },
+            children: [
+              {
+                path: "/admin",
+                handle: { breadcrumb: "Overview" },
+                element: <AdminOverviewPage />,
+              },
+              {
+                path: "/admin/audit",
+                handle: { breadcrumb: "Audit log" },
+                element: <AuditLogPage />,
+              },
+              {
+                path: "/admin/failed-logins",
+                handle: { breadcrumb: "Failed logins" },
+                element: <FailedLoginsPage />,
+              },
+              {
+                path: "/admin/webhooks",
+                handle: { breadcrumb: "Webhooks" },
+                element: <WebhooksPage />,
+              },
+              {
+                path: "/admin/servers",
+                handle: { breadcrumb: "Servers" },
+                element: <ServersPage />,
+              },
+            ],
+          },
+        ],
       },
     ],
   },

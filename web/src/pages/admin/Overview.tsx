@@ -57,29 +57,16 @@ export function AdminOverviewPage() {
   })
 
   return (
-    <div className="bg-background text-foreground min-h-svh">
-      <header className="flex items-center justify-between border-b p-4">
-        <h1 className="text-lg font-semibold">Admin · ZeroVPN</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-muted-foreground text-sm">{user?.email}</span>
-          <Button asChild variant="outline" size="sm">
-            <Link to="/app">User dashboard</Link>
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={async () => {
-              await logout()
-              reset()
-              navigate("/")
-            }}
-          >
-            Sign out
-          </Button>
+    <>
+      <div className="mx-auto max-w-6xl space-y-8">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Admin overview
+          </h1>
+          <p className="text-muted-foreground text-sm">
+            Operate the deployment: users, servers, audit, maintenance.
+          </p>
         </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl space-y-8 p-6">
         <section className="rounded-lg border p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -172,8 +159,8 @@ export function AdminOverviewPage() {
             </Link>
           </p>
         </section>
-      </main>
-    </div>
+      </div>
+    </>
   )
 }
 

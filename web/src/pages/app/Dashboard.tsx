@@ -103,32 +103,8 @@ export function DashboardPage() {
   })
 
   return (
-    <div className="bg-background text-foreground min-h-svh">
-      <header className="flex items-center justify-between border-b p-4">
-        <h1 className="text-lg font-semibold">ZeroVPN</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-muted-foreground text-sm">{user?.email}</span>
-          <ConnectionPill state={ws.state} />
-          {user?.role === "admin" && (
-            <Button asChild variant="outline" size="sm">
-              <Link to="/admin">Admin</Link>
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={async () => {
-              await logout()
-              reset()
-              navigate("/")
-            }}
-          >
-            Sign out
-          </Button>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-4xl space-y-8 p-6">
+    <>
+      <div className="mx-auto max-w-6xl space-y-8">
         <section className="space-y-2">
           <div className="flex items-baseline justify-between">
             <h2 className="text-xl font-semibold">Live network</h2>
@@ -325,8 +301,8 @@ export function DashboardPage() {
             </AnimatePresence>
           </ul>
         </section>
-      </main>
-    </div>
+      </div>
+    </>
   )
 }
 

@@ -67,14 +67,14 @@ export function WebhooksPage() {
   }
 
   return (
-    <div className="bg-background text-foreground min-h-svh">
-      <header className="flex items-center justify-between border-b p-4">
-        <h1 className="text-lg font-semibold">Webhooks</h1>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/admin">Back</Link>
-        </Button>
-      </header>
-      <main className="mx-auto max-w-3xl space-y-8 p-6">
+    <div className="mx-auto max-w-4xl space-y-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Webhooks</h1>
+        <p className="text-muted-foreground text-sm">
+          Outbound HTTP notifications when peers, devices, or quotas change
+          state.
+        </p>
+      </div>
         <section className="rounded-lg border p-4">
           <h2 className="mb-3 text-sm font-semibold">Add webhook</h2>
           <form
@@ -213,7 +213,6 @@ export function WebhooksPage() {
             </div>
           )}
         </section>
-      </main>
     </div>
   )
 }

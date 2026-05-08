@@ -49,15 +49,13 @@ export function AccountPage() {
   }
 
   return (
-    <div className="bg-background text-foreground min-h-svh">
-      <header className="flex items-center justify-between border-b p-4">
-        <h1 className="text-lg font-semibold">Account</h1>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/app">Back to dashboard</Link>
-        </Button>
-      </header>
-
-      <main className="mx-auto max-w-2xl space-y-8 p-6">
+    <div className="mx-auto max-w-2xl space-y-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Account</h1>
+        <p className="text-muted-foreground text-sm">
+          Profile, password, data export, and account deletion.
+        </p>
+      </div>
         <section className="space-y-2">
           <h2 className="text-xl font-semibold">Your data</h2>
           <p className="text-muted-foreground text-sm">
@@ -100,7 +98,6 @@ export function AccountPage() {
             </Button>
           </div>
         </section>
-      </main>
     </div>
   )
 }

@@ -43,15 +43,14 @@ export function ApiTokensPage() {
   })
 
   return (
-    <div className="bg-background text-foreground min-h-svh">
-      <header className="flex items-center justify-between border-b p-4">
-        <h1 className="text-lg font-semibold">API tokens</h1>
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/app">Back</Link>
-        </Button>
-      </header>
-
-      <main className="mx-auto max-w-3xl space-y-6 p-6">
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">API tokens</h1>
+        <p className="text-muted-foreground text-sm">
+          Programmatic access to your ZeroVPN account. Tokens are shown once
+          on creation and hashed at rest.
+        </p>
+      </div>
         <section className="space-y-2">
           <p className="text-muted-foreground text-sm">
             API tokens let scripts and CLIs call ZeroVPN endpoints without
@@ -173,7 +172,6 @@ export function ApiTokensPage() {
             </table>
           </div>
         </section>
-      </main>
     </div>
   )
 }
