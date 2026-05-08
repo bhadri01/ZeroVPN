@@ -56,7 +56,7 @@ export function LoginPage() {
       }
       setUser(res.user)
       toast.success(`Welcome, ${res.user.email}`)
-      navigate(res.user.role === "admin" ? "/admin" : "/app")
+      navigate("/app")
     } catch (e) {
       if (e instanceof ApiError) {
         if (e.status === 429)

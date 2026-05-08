@@ -43,7 +43,7 @@ export function RegisterPage() {
       })
       setUser(res.user)
       toast.success("Account created")
-      navigate(res.user.role === "admin" ? "/admin" : "/app")
+      navigate("/app")
     } catch (e) {
       if (e instanceof ApiError) toast.error(e.message)
       else toast.error("Registration failed")
