@@ -77,9 +77,16 @@ export function DashboardPage() {
   const [revokeId, setRevokeId] = useState<string | null>(null)
 
   // Live rates come from the shared store fed by LiveStatsProvider in
-  // DashboardLayout. The topology graph wants a Map<id, {rxBps, txBps}>.
+  // DashboardLayout. Both `rates` (for the topology graph) and the
+  // aggregate stream (for the bandwidth card) are derived via useMemo
+  // off the stable `devices` reference — calling
+  // `useLiveStats(aggregateLiveStats)` directly would return a fresh
+  // object on every read and trip useSyncExternalStore (React #185).
   const liveDevices = useLiveStats((s) => s.devices)
-  const liveAggregate = useLiveStats(aggregateLiveStats)
+  const liveAggregate = useMemo(
+    () => aggregateLiveStats(liveDevices),
+    [liveDevices],
+  )
   const rates = useMemo(() => {
     const m = new Map<string, { rxBps: number; txBps: number }>()
     for (const [id, d] of Object.entries(liveDevices)) {

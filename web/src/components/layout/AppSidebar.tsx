@@ -15,6 +15,7 @@ import {
   IconUsers,
   IconWebhook,
 } from "@tabler/icons-react"
+import { useMemo } from "react"
 import { Link, NavLink, useLocation } from "react-router"
 
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
@@ -142,7 +143,12 @@ function NavList({ entries }: { entries: NavEntry[] }) {
  * there's no data yet (avoids a placeholder slab on first paint).
  */
 function LivePulse() {
-  const agg = useLiveStats(aggregateLiveStats)
+  // Select the stable `devices` reference and memoize the aggregate.
+  // Calling `useLiveStats(aggregateLiveStats)` directly would return a
+  // new object on every read and trip `useSyncExternalStore` into the
+  // "snapshot is not cached" infinite loop (React error #185).
+  const devices = useLiveStats((s) => s.devices)
+  const agg = useMemo(() => aggregateLiveStats(devices), [devices])
   return (
     <div className="border-sidebar-border bg-sidebar-accent/30 mx-2 mb-1 space-y-1.5 rounded-md border p-2">
       <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider">

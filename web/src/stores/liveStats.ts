@@ -83,22 +83,23 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
 }))
 
 /**
- * Aggregate sparkline data across every device in the store. Returns
- * arrays of equal length (the longest device's history); shorter
- * histories are zero-padded at the head so all devices align in time.
- *
- * Used by the sidebar mini-chart to show "all devices, all the time"
- * without having to pick one.
+ * Aggregate sparkline data across every device. Takes the stable
+ * `devices` map (NOT the whole state); call from a `useMemo` keyed on
+ * `useLiveStats(s => s.devices)` so the result has a stable reference
+ * between renders. Returning a new object on every store read would
+ * make `useSyncExternalStore` loop (React error #185).
  */
-export function aggregateLiveStats(state: LiveStatsState) {
-  const devices = Object.values(state.devices)
-  if (devices.length === 0) {
+export function aggregateLiveStats(
+  devices: Record<string, DeviceLive>,
+): { rxHistory: number[]; txHistory: number[]; rxBps: number; txBps: number } {
+  const list = Object.values(devices)
+  if (list.length === 0) {
     return { rxHistory: [], txHistory: [], rxBps: 0, txBps: 0 }
   }
-  const maxLen = devices.reduce((m, d) => Math.max(m, d.rxHistory.length), 0)
+  const maxLen = list.reduce((m, d) => Math.max(m, d.rxHistory.length), 0)
   const rx = new Array<number>(maxLen).fill(0)
   const tx = new Array<number>(maxLen).fill(0)
-  for (const d of devices) {
+  for (const d of list) {
     const offset = maxLen - d.rxHistory.length
     for (let i = 0; i < d.rxHistory.length; i++) {
       rx[offset + i] += d.rxHistory[i]
@@ -107,7 +108,7 @@ export function aggregateLiveStats(state: LiveStatsState) {
   }
   let totalRx = 0
   let totalTx = 0
-  for (const d of devices) {
+  for (const d of list) {
     totalRx += d.rxBps
     totalTx += d.txBps
   }
