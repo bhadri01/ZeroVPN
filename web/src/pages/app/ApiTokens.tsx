@@ -153,7 +153,7 @@ export function ApiTokensPage() {
           <Card className="border-status-online/30 bg-status-online/5">
             <CardHeader>
               <CardTitle className="text-base">
-                {created.token.name} · save this token now
+                {created.name} · save this token now
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">

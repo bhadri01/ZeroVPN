@@ -1,9 +1,37 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { IconPlus, IconTrash, IconWebhook } from "@tabler/icons-react"
 import { useState } from "react"
-import { Link } from "react-router"
 import { toast } from "sonner"
 
+import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { EmptyState } from "@/components/EmptyState"
+import { PageHeader } from "@/components/PageHeader"
+import { RelativeTime } from "@/components/RelativeTime"
+import { StatusPill } from "@/components/StatusPill"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import {
   ALL_WEBHOOK_EVENTS,
   adminCreateWebhook,
@@ -12,10 +40,6 @@ import {
 } from "@/lib/api"
 import type { WebhookEventKind } from "@/lib/api"
 
-const inputClass =
-  "border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-const labelClass = "text-sm font-medium"
-
 export function WebhooksPage() {
   const qc = useQueryClient()
   const q = useQuery({
@@ -23,12 +47,14 @@ export function WebhooksPage() {
     queryFn: adminListWebhooks,
   })
 
+  const [createOpen, setCreateOpen] = useState(false)
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
   const [secret, setSecret] = useState("")
   const [events, setEvents] = useState<Set<WebhookEventKind>>(
     new Set(ALL_WEBHOOK_EVENTS),
   )
+  const [deleteId, setDeleteId] = useState<string | null>(null)
 
   const create = useMutation({
     mutationFn: () =>
@@ -43,6 +69,7 @@ export function WebhooksPage() {
       setName("")
       setUrl("")
       setSecret("")
+      setCreateOpen(false)
       qc.invalidateQueries({ queryKey: ["admin", "webhooks"] })
     },
     onError: (e: Error) => toast.error(e.message),
@@ -52,6 +79,7 @@ export function WebhooksPage() {
     mutationFn: (id: string) => adminDeleteWebhook(id),
     onSuccess: () => {
       toast.success("Webhook deleted")
+      setDeleteId(null)
       qc.invalidateQueries({ queryKey: ["admin", "webhooks"] })
     },
     onError: (e: Error) => toast.error(e.message),
@@ -66,153 +94,210 @@ export function WebhooksPage() {
     })
   }
 
-  return (
-    <div className="mx-auto max-w-4xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Webhooks</h1>
-        <p className="text-muted-foreground text-sm">
-          Outbound HTTP notifications when peers, devices, or quotas change
-          state.
-        </p>
-      </div>
-        <section className="rounded-lg border p-4">
-          <h2 className="mb-3 text-sm font-semibold">Add webhook</h2>
-          <form
-            className="space-y-3"
-            onSubmit={(e: React.FormEvent<HTMLFormElement>) => {
-              e.preventDefault()
-              if (!name.trim() || !url.trim() || events.size === 0) {
-                toast.error("Name, URL, and at least one event are required")
-                return
-              }
-              create.mutate()
-            }}
-          >
-            <div className="space-y-1">
-              <label htmlFor="wh-name" className={labelClass}>
-                Name
-              </label>
-              <input
-                id="wh-name"
-                className={inputClass}
-                value={name}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  setName(e.target.value)
-                }
-                placeholder="My alerter"
-              />
-            </div>
-            <div className="space-y-1">
-              <label htmlFor="wh-url" className={labelClass}>
-                URL
-              </label>
-              <input
-                id="wh-url"
-                className={inputClass}
-                value={url}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  setUrl(e.target.value)
-                }
-                placeholder="https://example.com/hook"
-              />
-            </div>
-            <div className="space-y-1">
-              <label htmlFor="wh-secret" className={labelClass}>
-                Secret (optional)
-              </label>
-              <input
-                id="wh-secret"
-                className={inputClass}
-                value={secret}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  setSecret(e.target.value)
-                }
-                placeholder="signing secret"
-              />
-            </div>
-            <div className="space-y-1">
-              <span className={labelClass}>Events</span>
-              <div className="mt-1 flex flex-wrap gap-2">
-                {ALL_WEBHOOK_EVENTS.map((ev) => {
-                  const checked = events.has(ev)
-                  return (
-                    <button
-                      key={ev}
-                      type="button"
-                      onClick={() => toggleEvent(ev)}
-                      className={`rounded-full border px-3 py-1 text-xs transition ${
-                        checked
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "border-border text-muted-foreground"
-                      }`}
-                    >
-                      {ev.replace(/_/g, " ")}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-            <Button type="submit" disabled={create.isPending}>
-              {create.isPending ? "Saving…" : "Save webhook"}
-            </Button>
-          </form>
-        </section>
+  const items = q.data ?? []
 
-        <section>
-          <h2 className="mb-3 text-sm font-semibold">Configured webhooks</h2>
-          {q.isLoading && <p className="text-muted-foreground">Loading…</p>}
-          {q.data && q.data.length === 0 && (
-            <p className="text-muted-foreground text-sm">
-              No webhooks configured.
-            </p>
-          )}
-          {q.data && q.data.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/40 text-left text-xs uppercase">
-                  <tr>
-                    <th className="p-2">Name</th>
-                    <th className="p-2">URL</th>
-                    <th className="p-2">Events</th>
-                    <th className="p-2">Last delivery</th>
-                    <th className="p-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {q.data.map((w) => (
-                    <tr key={w.id} className="border-t">
-                      <td className="p-2 font-medium">{w.name}</td>
-                      <td className="p-2 font-mono text-xs">{w.url}</td>
-                      <td className="p-2 text-xs">
-                        {w.events.map((e) => e.replace(/_/g, " ")).join(", ")}
-                      </td>
-                      <td className="p-2 whitespace-nowrap text-xs">
-                        {w.last_delivery_at
-                          ? `${new Date(w.last_delivery_at).toLocaleString()} (${
-                              w.last_status ?? "?"
-                            })`
-                          : "—"}
-                      </td>
-                      <td className="p-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={remove.isPending}
-                          onClick={() => {
-                            if (confirm(`Delete webhook "${w.name}"?`))
-                              remove.mutate(w.id)
-                          }}
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Webhooks"
+        description="Outbound HTTP notifications when peers, devices, or quotas change state."
+        actions={
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <IconPlus />
+                Add webhook
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Add webhook</DialogTitle>
+                <DialogDescription>
+                  POST'd as JSON. Optional secret is hashed at rest and used
+                  to sign deliveries (header <code>X-ZeroVPN-Signature</code>).
+                </DialogDescription>
+              </DialogHeader>
+              <form
+                className="space-y-3"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (!name.trim() || !url.trim() || events.size === 0) {
+                    toast.error("Name, URL, and ≥1 event are required")
+                    return
+                  }
+                  create.mutate()
+                }}
+              >
+                <div className="space-y-1.5">
+                  <Label htmlFor="wh-name">Name</Label>
+                  <Input
+                    id="wh-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="My alerter"
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="wh-url">URL</Label>
+                  <Input
+                    id="wh-url"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://example.com/hook"
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="wh-secret">Secret (optional)</Label>
+                  <Input
+                    id="wh-secret"
+                    type="password"
+                    value={secret}
+                    onChange={(e) => setSecret(e.target.value)}
+                    placeholder="signing secret"
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Events</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ALL_WEBHOOK_EVENTS.map((ev) => {
+                      const checked = events.has(ev)
+                      return (
+                        <button
+                          key={ev}
+                          type="button"
+                          onClick={() => toggleEvent(ev)}
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                            checked
+                              ? "bg-primary/10 text-primary border-primary/30"
+                              : "border-border text-muted-foreground hover:bg-muted/50"
+                          }`}
                         >
-                          Delete
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                          {ev.replace(/_/g, " ")}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button type="button" variant="ghost">
+                      Cancel
+                    </Button>
+                  </DialogClose>
+                  <Button type="submit" disabled={create.isPending}>
+                    {create.isPending ? "Saving…" : "Save"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        }
+      />
+
+      <Card>
+        <CardContent>
+          {q.isLoading && (
+            <div className="space-y-2">
+              <Skeleton className="h-8" />
+              <Skeleton className="h-8" />
             </div>
           )}
-        </section>
+          {!q.isLoading && items.length === 0 && (
+            <EmptyState
+              icon={IconWebhook}
+              title="No webhooks configured"
+              description="Add a webhook to receive HTTP POSTs on peer or device events."
+              action={
+                <Button onClick={() => setCreateOpen(true)}>
+                  <IconPlus />
+                  Add webhook
+                </Button>
+              }
+            />
+          )}
+          {items.length > 0 && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>URL</TableHead>
+                  <TableHead>Events</TableHead>
+                  <TableHead>Last delivery</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((w) => (
+                  <TableRow key={w.id}>
+                    <TableCell className="font-medium">{w.name}</TableCell>
+                    <TableCell className="font-mono text-xs">{w.url}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {w.events.map((e) => (
+                          <Badge
+                            key={e}
+                            variant="outline"
+                            className="text-[10px]"
+                          >
+                            {e.replace(/_/g, " ")}
+                          </Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {w.last_delivery_at ? (
+                        <span className="flex items-center gap-1.5">
+                          <RelativeTime value={w.last_delivery_at} />
+                          <Badge
+                            variant="outline"
+                            className="font-mono text-[10px]"
+                          >
+                            {w.last_status ?? "?"}
+                          </Badge>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">never</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <StatusPill
+                        status={w.active ? "active" : "paused"}
+                        label={w.active ? "active" : "off"}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        onClick={() => setDeleteId(w.id)}
+                        title="Delete"
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        <IconTrash className="size-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <ConfirmDialog
+        open={!!deleteId}
+        onOpenChange={(o) => !o && setDeleteId(null)}
+        title="Delete webhook?"
+        description="Future events won't be delivered. Existing delivery history is preserved on the audit log."
+        confirmLabel="Delete"
+        destructive
+        pending={remove.isPending}
+        onConfirm={() => deleteId && remove.mutate(deleteId)}
+      />
     </div>
   )
 }

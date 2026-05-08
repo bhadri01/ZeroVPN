@@ -108,7 +108,7 @@ export function CommandPalette({
     function onKey(e: KeyboardEvent) {
       if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
-        setOpen((o) => !o)
+        setOpen(!open)
         return
       }
       if (
@@ -122,7 +122,7 @@ export function CommandPalette({
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [])
+  }, [open, setOpen])
 
   // Linear-style chord nav: "g d" → /app, "g s" → /admin/servers, etc.
   // Buffered chord with a 750 ms timeout.

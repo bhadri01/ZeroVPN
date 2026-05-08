@@ -1,9 +1,31 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { IconSearch, IconShieldCheck } from "@tabler/icons-react"
 import { useState } from "react"
-import { Link, useNavigate } from "react-router"
 import { toast } from "sonner"
 
+import { PageHeader } from "@/components/PageHeader"
+import { RelativeTime } from "@/components/RelativeTime"
+import { Stat } from "@/components/Stat"
+import { StatusPill, type Status } from "@/components/StatusPill"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import {
   ApiError,
   type AdminUser,
@@ -12,14 +34,18 @@ import {
   adminListUsers,
   adminSetMaintenance,
   adminSetUserStatus,
-  logout,
 } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
+const USER_STATUS_TO_PILL: Record<UserStatus, Status> = {
+  active: "active",
+  suspended: "revoked",
+  pending_verification: "pending",
+  deleted: "offline",
+}
+
 export function AdminOverviewPage() {
-  const navigate = useNavigate()
-  const reset = useAuth((s) => s.reset)
-  const user = useAuth((s) => s.user)
+  const me = useAuth((s) => s.user)
   const qc = useQueryClient()
 
   const [search, setSearch] = useState("")
@@ -56,111 +82,106 @@ export function AdminOverviewPage() {
     },
   })
 
-  return (
-    <>
-      <div className="mx-auto max-w-6xl space-y-8">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Admin overview
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            Operate the deployment: users, servers, audit, maintenance.
-          </p>
-        </div>
-        <section className="rounded-lg border p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">Maintenance mode</h2>
-              <p className="text-muted-foreground text-xs">
-                When ON, the API enters read-only and the user UI shows a banner.
-                {maintQ.data?.maintenance_mode && (
-                  <span className="ml-1 font-medium text-amber-600 dark:text-amber-400">
-                    Currently ON.
-                  </span>
-                )}
-              </p>
-            </div>
-            <Button
-              variant={maintQ.data?.maintenance_mode ? "destructive" : "default"}
-              onClick={() => setMaintM.mutate(!maintQ.data?.maintenance_mode)}
-              disabled={setMaintM.isPending || maintQ.isLoading}
-            >
-              {maintQ.data?.maintenance_mode ? "Disable" : "Enable"}
-            </Button>
-          </div>
-        </section>
+  const items = usersQ.data?.items ?? []
+  const total = usersQ.data?.total ?? 0
+  const active = items.filter((u) => u.status === "active").length
+  const suspended = items.filter((u) => u.status === "suspended").length
+  const totalDevices = items.reduce((s, u) => s + u.device_count, 0)
 
-        <section className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xl font-semibold">Users</h2>
-            <input
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Admin overview"
+        description="Operate the deployment: users, maintenance, audit, servers."
+      />
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Total users" value={total} />
+        <Stat label="Active" value={active} />
+        <Stat label="Suspended" value={suspended} />
+        <Stat label="Devices" value={totalDevices} />
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <IconShieldCheck className="size-4" />
+            Maintenance mode
+          </CardTitle>
+          <CardDescription>
+            When ON, the API rejects writes with 503 and the UI shows a
+            site-wide banner.
+            {maintQ.data?.maintenance_mode && (
+              <span className="text-status-degraded ml-1 font-medium">
+                Currently ON.
+              </span>
+            )}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Switch
+            checked={!!maintQ.data?.maintenance_mode}
+            onCheckedChange={(v) => setMaintM.mutate(v)}
+            disabled={setMaintM.isPending || maintQ.isLoading}
+            aria-label="Maintenance mode"
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
+          <div>
+            <CardTitle className="text-base">Users</CardTitle>
+            <CardDescription>
+              Search, suspend, unsuspend. {total.toLocaleString()} total.
+            </CardDescription>
+          </div>
+          <div className="relative w-72">
+            <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
+            <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by email…"
-              className="border-input bg-background w-72 rounded-md border px-3 py-2 text-sm"
+              className="pl-8"
             />
           </div>
-          {usersQ.isLoading && <p className="text-muted-foreground">Loading…</p>}
-          {usersQ.data && (
-            <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/40 text-left text-xs uppercase">
-                  <tr>
-                    <th className="p-2">Email</th>
-                    <th className="p-2">Role</th>
-                    <th className="p-2">Status</th>
-                    <th className="p-2">2FA</th>
-                    <th className="p-2">Devices</th>
-                    <th className="p-2">Last login</th>
-                    <th className="p-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {usersQ.data.items.map((u) => (
-                    <UserRow
-                      key={u.id}
-                      u={u}
-                      isSelf={u.id === user?.id}
-                      onSet={(status) => setStatusM.mutate({ id: u.id, status })}
-                    />
-                  ))}
-                  {usersQ.data.items.length === 0 && (
-                    <tr>
-                      <td className="text-muted-foreground p-3" colSpan={7}>
-                        No users.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <p className="text-muted-foreground text-xs">
-            Total: {usersQ.data?.total ?? 0}
-          </p>
-        </section>
-
-        <section>
-          <p className="text-muted-foreground text-xs">
-            <Link to="/admin/audit" className="underline">
-              Audit log →
-            </Link>
-            {" · "}
-            <Link to="/admin/failed-logins" className="underline">
-              Failed logins →
-            </Link>
-            {" · "}
-            <Link to="/admin/webhooks" className="underline">
-              Webhooks →
-            </Link>
-            {" · "}
-            <Link to="/admin/servers" className="underline">
-              Servers →
-            </Link>
-          </p>
-        </section>
-      </div>
-    </>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Email</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>2FA</TableHead>
+                <TableHead className="text-right">Devices</TableHead>
+                <TableHead>Last login</TableHead>
+                <TableHead className="text-right"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((u) => (
+                <UserRow
+                  key={u.id}
+                  u={u}
+                  isSelf={u.id === me?.id}
+                  onSet={(status) =>
+                    setStatusM.mutate({ id: u.id, status })
+                  }
+                />
+              ))}
+              {!usersQ.isLoading && items.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
+                    No users match.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
@@ -174,18 +195,39 @@ function UserRow({
   onSet: (status: UserStatus) => void
 }) {
   return (
-    <tr className="border-t">
-      <td className="p-2">{u.email}</td>
-      <td className="p-2">{u.role}</td>
-      <td className="p-2">
-        <StatusPill status={u.status} />
-      </td>
-      <td className="p-2">{u.totp_enabled ? "Yes" : "—"}</td>
-      <td className="p-2 tabular-nums">{u.device_count}</td>
-      <td className="p-2 text-xs">
-        {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "Never"}
-      </td>
-      <td className="p-2 text-right">
+    <TableRow>
+      <TableCell className="font-medium">
+        {u.email}
+        {isSelf && (
+          <Badge variant="outline" className="ml-2 text-[10px]">
+            you
+          </Badge>
+        )}
+      </TableCell>
+      <TableCell>
+        <Badge variant="outline" className="capitalize">
+          {u.role}
+        </Badge>
+      </TableCell>
+      <TableCell>
+        <StatusPill status={USER_STATUS_TO_PILL[u.status] ?? "pending"} label={u.status.replace(/_/g, " ")} />
+      </TableCell>
+      <TableCell>
+        {u.totp_enabled ? (
+          <Badge variant="outline" className="text-status-online">
+            on
+          </Badge>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {u.device_count}
+      </TableCell>
+      <TableCell className="text-xs">
+        <RelativeTime value={u.last_login_at} fallback="Never" />
+      </TableCell>
+      <TableCell className="text-right">
         {!isSelf && u.status === "active" && (
           <Button size="sm" variant="outline" onClick={() => onSet("suspended")}>
             Suspend
@@ -196,19 +238,7 @@ function UserRow({
             Unsuspend
           </Button>
         )}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   )
-}
-
-function StatusPill({ status }: { status: UserStatus }) {
-  const cls =
-    status === "active"
-      ? "bg-green-500/15 text-green-700 dark:text-green-400"
-      : status === "suspended"
-        ? "bg-red-500/15 text-red-700 dark:text-red-400"
-        : status === "pending_verification"
-          ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
-          : "bg-gray-500/15 text-gray-700 dark:text-gray-400"
-  return <span className={`rounded px-2 py-0.5 text-xs ${cls}`}>{status}</span>
 }

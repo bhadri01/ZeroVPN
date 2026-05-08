@@ -1,5 +1,18 @@
 import { useQuery } from "@tanstack/react-query"
 
+import { PageHeader } from "@/components/PageHeader"
+import { RelativeTime } from "@/components/RelativeTime"
+import { Badge } from "@/components/ui/badge"
+import { Card, CardContent } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { adminListFailedLogins } from "@/lib/api"
 
 export function FailedLoginsPage() {
@@ -9,48 +22,60 @@ export function FailedLoginsPage() {
   })
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Failed logins</h1>
-        <p className="text-muted-foreground text-sm">
-          Login attempts that didn't succeed in the last 30 days. IPs stored as
-          /24 prefixes only.
-        </p>
-      </div>
-      {q.isLoading && <p className="text-muted-foreground">Loading…</p>}
-      {q.data && (
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40 text-left text-xs uppercase">
-              <tr>
-                <th className="p-2">When</th>
-                <th className="p-2">Email</th>
-                <th className="p-2">Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              {q.data.items.map((row) => (
-                <tr key={row.id} className="border-t">
-                  <td className="p-2 whitespace-nowrap">
-                    {new Date(row.attempted_at).toLocaleString()}
-                  </td>
-                  <td className="p-2 font-mono text-xs">
-                    {row.email_attempted ?? "—"}
-                  </td>
-                  <td className="p-2">{row.reason.replace(/_/g, " ")}</td>
-                </tr>
-              ))}
-              {q.data.items.length === 0 && (
-                <tr>
-                  <td className="text-muted-foreground p-3" colSpan={3}>
-                    No failed-login attempts yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <div className="space-y-6">
+      <PageHeader
+        title="Failed logins"
+        description="Authentication attempts that didn't succeed in the last 30 days. IPs stored as /24 prefixes only."
+      />
+
+      <Card>
+        <CardContent>
+          {q.isLoading && (
+            <div className="space-y-2">
+              <Skeleton className="h-8" />
+              <Skeleton className="h-8" />
+            </div>
+          )}
+          {q.data && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[180px]">When</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Reason</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {q.data.items.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell className="text-muted-foreground text-xs">
+                      <RelativeTime value={row.attempted_at} />
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {row.email_attempted ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="font-mono text-[11px]">
+                        {row.reason.replace(/_/g, " ")}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {q.data.items.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={3}
+                      className="text-muted-foreground py-8 text-center"
+                    >
+                      No failed-login attempts yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

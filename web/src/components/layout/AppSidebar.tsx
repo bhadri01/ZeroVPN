@@ -20,7 +20,6 @@ import {
 import { Link, NavLink, useLocation } from "react-router"
 
 import { ModeToggle } from "@/components/mode-toggle"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
