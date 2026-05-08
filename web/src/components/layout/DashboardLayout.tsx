@@ -6,6 +6,7 @@ import {
   useLocation,
 } from "react-router"
 
+import { CommandPalette } from "@/components/CommandPalette"
 import { AppSidebar } from "@/components/layout/AppSidebar"
 import { TopBar } from "@/components/layout/TopBar"
 import { MaintenanceBanner } from "@/components/MaintenanceBanner"
@@ -32,7 +33,7 @@ function readSidebarCookie(): boolean {
 export function DashboardLayout() {
   const reduceMotion = useReducedMotion()
   const location = useLocation()
-  const [commandOpen, setCommandOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const sidebarOpen = readSidebarCookie()
 
   return (
@@ -40,7 +41,7 @@ export function DashboardLayout() {
       <SidebarProvider defaultOpen={sidebarOpen}>
         <AppSidebar />
         <SidebarInset className="bg-background">
-          <TopBar onOpenCommand={() => setCommandOpen(true)} />
+          <TopBar onOpenCommand={() => setPaletteOpen(true)} />
           <MaintenanceBanner />
           <ScrollRestoration />
           <main className="relative flex-1">
@@ -54,12 +55,16 @@ export function DashboardLayout() {
                 className="px-4 py-6 md:px-6 md:py-8"
               >
                 <Suspense fallback={<RoutePending />}>
-                  <Outlet context={{ commandOpen, setCommandOpen }} />
+                  <Outlet />
                 </Suspense>
               </motion.div>
             </AnimatePresence>
           </main>
         </SidebarInset>
+        <CommandPalette
+          openOverride={paletteOpen}
+          setOpenOverride={setPaletteOpen}
+        />
       </SidebarProvider>
     </TooltipProvider>
   )
