@@ -3,6 +3,7 @@ import { createBrowserRouter, Outlet } from "react-router"
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout"
 import { PublicShell } from "@/components/layout/PublicShell"
+import { PublicRouteError, RouteError } from "@/components/RouteError"
 import { AdminRoute, ProtectedRoute, useBootstrapAuth } from "@/lib/auth-guard"
 
 // All pages lazy-loaded to keep the entry chunk small. The DashboardLayout
@@ -35,6 +36,12 @@ const ResetPasswordPage = lazy(() =>
 const DashboardPage = lazy(() =>
   import("@/pages/app/Dashboard").then((m) => ({ default: m.DashboardPage })),
 )
+const DevicesPage = lazy(() =>
+  import("@/pages/app/Devices").then((m) => ({ default: m.DevicesPage })),
+)
+const BandwidthPage = lazy(() =>
+  import("@/pages/app/Bandwidth").then((m) => ({ default: m.BandwidthPage })),
+)
 const SecurityPage = lazy(() =>
   import("@/pages/app/Security").then((m) => ({ default: m.SecurityPage })),
 )
@@ -58,6 +65,9 @@ const AdminOverviewPage = lazy(() =>
   import("@/pages/admin/Overview").then((m) => ({
     default: m.AdminOverviewPage,
   })),
+)
+const UsersPage = lazy(() =>
+  import("@/pages/admin/Users").then((m) => ({ default: m.UsersPage })),
 )
 const AuditLogPage = lazy(() =>
   import("@/pages/admin/AuditLog").then((m) => ({ default: m.AuditLogPage })),
@@ -90,6 +100,7 @@ export const router = createBrowserRouter([
       // ── Public ─────────────────────────────────────────────────────────
       {
         element: <PublicShell />,
+        errorElement: <PublicRouteError />,
         children: [
           { path: "/", element: <LandingPage /> },
           { path: "/login", element: <LoginPage /> },
@@ -110,6 +121,7 @@ export const router = createBrowserRouter([
             <DashboardLayout />
           </ProtectedRoute>
         ),
+        errorElement: <RouteError />,
         children: [
           {
             path: "/app",
@@ -117,9 +129,19 @@ export const router = createBrowserRouter([
             element: <DashboardPage />,
           },
           {
+            path: "/app/devices",
+            handle: { breadcrumb: "Devices" },
+            element: <DevicesPage />,
+          },
+          {
             path: "/app/devices/:id",
             handle: { breadcrumb: "Device" },
             element: <DeviceDetailPage />,
+          },
+          {
+            path: "/app/bandwidth",
+            handle: { breadcrumb: "Bandwidth" },
+            element: <BandwidthPage />,
           },
           {
             path: "/app/security",
@@ -152,6 +174,11 @@ export const router = createBrowserRouter([
                 element: <AdminOverviewPage />,
               },
               {
+                path: "/admin/users",
+                handle: { breadcrumb: "Users" },
+                element: <UsersPage />,
+              },
+              {
                 path: "/admin/audit",
                 handle: { breadcrumb: "Audit log" },
                 element: <AuditLogPage />,
@@ -173,6 +200,10 @@ export const router = createBrowserRouter([
               },
             ],
           },
+
+          // Catch-all inside the authenticated shell so /app/foo and
+          // /admin/foo render a branded 404 with the sidebar still visible.
+          { path: "*", element: <RouteError /> },
         ],
       },
     ],
