@@ -1,8 +1,18 @@
+import { IconMail } from "@tabler/icons-react"
 import { useState } from "react"
 import { Link } from "react-router"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { ApiError, forgotPassword } from "@/lib/api"
 
 export function ForgotPasswordPage() {
@@ -25,44 +35,70 @@ export function ForgotPasswordPage() {
 
   return (
     <div className="flex min-h-svh items-center justify-center p-6">
-      <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4">
-        <h1 className="text-2xl font-semibold">Forgot password</h1>
-        {done ? (
-          <>
-            <p className="text-sm">
-              If an account with that email exists, we've emailed a reset link.
-              Check your inbox (or MailHog at <code>:8025</code> in dev).
-            </p>
-            <Button asChild variant="outline" className="w-full">
-              <Link to="/login">Back to sign in</Link>
-            </Button>
-          </>
-        ) : (
-          <>
-            <p className="text-muted-foreground text-sm">
-              Enter your email and we'll send a reset link. The link expires
-              in 1 hour.
-            </p>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoFocus
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              placeholder="you@example.com"
-              required
-            />
-            <Button type="submit" disabled={submitting} className="w-full">
-              {submitting ? "Sending…" : "Send reset link"}
-            </Button>
-            <div className="text-muted-foreground text-center text-sm">
-              <Link to="/login" className="underline">
-                Back to sign in
-              </Link>
-            </div>
-          </>
-        )}
-      </form>
+      <div className="w-full max-w-sm space-y-6">
+        <div className="text-center">
+          <span className="bg-primary/10 text-primary mx-auto mb-3 flex size-9 items-center justify-center rounded-md">
+            <IconMail className="size-4" />
+          </span>
+          <h1 className="text-xl font-semibold tracking-tight">
+            Forgot password
+          </h1>
+          <p className="text-muted-foreground text-sm">
+            We'll email a reset link. Expires in 1 hour.
+          </p>
+        </div>
+        <Card>
+          {done ? (
+            <>
+              <CardHeader>
+                <CardTitle className="text-base">Check your inbox</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm">
+                If an account with that email exists, we've emailed a reset
+                link. In dev, check MailHog at{" "}
+                <code className="bg-muted rounded px-1">:8025</code>.
+              </CardContent>
+              <CardFooter>
+                <Button asChild variant="outline" className="w-full">
+                  <Link to="/login">Back to sign in</Link>
+                </Button>
+              </CardFooter>
+            </>
+          ) : (
+            <form onSubmit={onSubmit} className="contents">
+              <CardContent className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    autoFocus
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    required
+                  />
+                </div>
+              </CardContent>
+              <CardFooter className="flex-col gap-3">
+                <Button
+                  type="submit"
+                  disabled={submitting}
+                  className="w-full"
+                >
+                  {submitting ? "Sending…" : "Send reset link"}
+                </Button>
+                <Link
+                  to="/login"
+                  className="text-muted-foreground hover:text-foreground text-center text-xs"
+                >
+                  Back to sign in
+                </Link>
+              </CardFooter>
+            </form>
+          )}
+        </Card>
+      </div>
     </div>
   )
 }
