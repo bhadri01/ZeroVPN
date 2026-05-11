@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use axum::{Json, extract::State, response::IntoResponse};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tower_sessions::Session;
 use tracing::info;
-use zerovpn_db::repos::{audit, devices, servers, users};
+use zerovpn_db::repos::{audit, devices, servers, topology_positions, users};
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -119,6 +121,81 @@ pub async fn server_info(
         endpoint_port: s.endpoint_port,
         mtu: s.mtu,
     }))
+}
+
+// ── Topology positions ──────────────────────────────────────────────────
+// Per-user saved node positions for the live-topology drag UI. Stored as
+// rows in topology_positions, serialised over the wire as a flat
+// {node_id: {x, y}} object — same shape the frontend uses in localStorage.
+
+#[derive(Debug, Serialize)]
+pub struct TopologyPositionsResponse {
+    pub positions: HashMap<String, Pos>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Pos {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TopologyPositionsRequest {
+    pub positions: HashMap<String, Pos>,
+}
+
+pub async fn get_topology(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> ApiResult<impl IntoResponse> {
+    let rows = topology_positions::get_all(&state.pool, user.id).await?;
+    let mut positions = HashMap::new();
+    for r in rows {
+        // Drop non-finite values defensively — should never happen since
+        // we reject them on write, but a bad row from an older client
+        // shouldn't poison the chart.
+        if !r.x.is_finite() || !r.y.is_finite() {
+            continue;
+        }
+        positions.insert(r.node_id, Pos { x: r.x, y: r.y });
+    }
+    Ok(Json(TopologyPositionsResponse { positions }))
+}
+
+pub async fn set_topology(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(body): Json<TopologyPositionsRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Sanitize: skip non-finite coords, cap the number of entries so a
+    // misbehaving client can't fill our table with a million bogus rows.
+    const MAX_ENTRIES: usize = 1024;
+    if body.positions.len() > MAX_ENTRIES {
+        return Err(ApiError::Validation(format!(
+            "too many positions ({} > {})",
+            body.positions.len(),
+            MAX_ENTRIES
+        )));
+    }
+    let mut clean: Vec<topology_positions::Position> = Vec::with_capacity(body.positions.len());
+    for (node_id, pos) in body.positions {
+        if !pos.x.is_finite() || !pos.y.is_finite() {
+            continue;
+        }
+        // node_id length cap so a malicious client can't bloat rows with
+        // arbitrarily long strings. UUID (36) + sentinel ("__hub__") fit
+        // comfortably below 64.
+        if node_id.is_empty() || node_id.len() > 64 {
+            continue;
+        }
+        clean.push(topology_positions::Position {
+            node_id,
+            x: pos.x,
+            y: pos.y,
+        });
+    }
+    topology_positions::replace_all(&state.pool, user.id, &clean).await?;
+    Ok(Json(json!({ "status": "ok", "count": clean.len() })))
 }
 
 /// Soft-delete the user's account: nulls PII, revokes devices/sessions/

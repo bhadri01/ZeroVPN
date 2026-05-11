@@ -139,6 +139,28 @@ export interface MyServerInfo {
 
 export const meServer = () => apiFetch<MyServerInfo>("/me/server")
 
+// ── Topology positions ─────────────────────────────────────────────────
+// Per-user saved arrangement for the live-topology drag UI. Round-trip
+// shape matches what we keep in localStorage: a flat {node_id: {x, y}}.
+
+export interface TopologyPosition {
+  x: number
+  y: number
+}
+
+export interface TopologyPositionsResponse {
+  positions: Record<string, TopologyPosition>
+}
+
+export const getMyTopology = () =>
+  apiFetch<TopologyPositionsResponse>("/me/topology")
+
+export const setMyTopology = (positions: Record<string, TopologyPosition>) =>
+  apiFetch<{ status: string; count: number }>("/me/topology", {
+    method: "PUT",
+    body: JSON.stringify({ positions }),
+  })
+
 export const verifyEmail = (token: string) =>
   apiFetch<{ status: string }>("/auth/verify-email", {
     method: "POST",

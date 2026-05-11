@@ -65,7 +65,18 @@ export function CopyableCode({
         )}
       </span>
       {copied && (
-        <span className="bg-status-online text-background pointer-events-none absolute -top-2 right-2 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase leading-none tracking-[0.06em]">
+        <span
+          className={cn(
+            // Sit INSIDE the button bounds (no bleed) so a scroll container
+            // wrapping the code block can't clip the badge, and so the
+            // stacking context never has to fight the surrounding card.
+            // z-10 keeps it above the icon + text on the same row.
+            "bg-status-online text-background pointer-events-none absolute z-10 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase leading-none tracking-[0.06em]",
+            multiline
+              ? "right-8 top-1.5"
+              : "right-7 top-1/2 -translate-y-1/2",
+          )}
+        >
           Copied
         </span>
       )}

@@ -11,8 +11,7 @@ import {
   IconSearch,
   IconX,
 } from "@tabler/icons-react"
-import { AnimatePresence, motion } from "motion/react"
-import { Link } from "react-router"
+import { Link, useNavigate } from "react-router"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
@@ -97,6 +96,7 @@ const PEER_FILTERS: { value: PeerState; label: string; pill: PillStatus }[] = [
 
 export function DevicesPage() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
 
   // Two orthogonal multi-select dimensions: connection (is the tunnel
@@ -105,7 +105,6 @@ export function DevicesPage() {
   const [connFilter, setConnFilter] = useState<Set<ConnState>>(new Set())
   const [peerFilter, setPeerFilter] = useState<Set<PeerState>>(new Set())
   const [query, setQuery] = useState("")
-  const [created, setCreated] = useState<CreatedDevice | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [revokeId, setRevokeId] = useState<string | null>(null)
 
@@ -254,8 +253,11 @@ export function DevicesPage() {
             </DialogTrigger>
             <AddDeviceDialog
               onCreated={(d) => {
-                setCreated(d)
+                // Dialog showed QR + config on step 2; on Done we close it
+                // and land the user on the new device's detail page so they
+                // can verify the row is live without hunting for it.
                 setAddOpen(false)
+                navigate(`/app/devices/${d.device.id}`)
               }}
             />
           </Dialog>
@@ -274,12 +276,6 @@ export function DevicesPage() {
         topTraffic={topTraffic}
         loading={devicesQ.isLoading}
       />
-
-      <AnimatePresence>
-        {created && (
-          <CreatedDeviceCard data={created} onClose={() => setCreated(null)} />
-        )}
-      </AnimatePresence>
 
       <Panel
         flush
@@ -1364,58 +1360,6 @@ function IpModeOption({
         {sub}
       </span>
     </button>
-  )
-}
-
-function CreatedDeviceCard({
-  data,
-  onClose,
-}: {
-  data: CreatedDevice
-  onClose: () => void
-}) {
-  return (
-    <motion.div
-      key={data.device.id}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -4 }}
-      transition={{ duration: 0.18 }}
-    >
-      <Panel
-        title={`${data.device.name} · ready`}
-        sub="Save this config now — the private key isn't stored on the server."
-        className="border-status-online/40 bg-status-online/5"
-      >
-        <div className="grid gap-4 sm:grid-cols-[auto_1fr]">
-          <div className="zv-qr-box bg-card flex shrink-0 items-center justify-center">
-            <span
-              className="block size-32"
-              dangerouslySetInnerHTML={{ __html: data.qr_svg }}
-            />
-          </div>
-          <div className="min-w-0 space-y-2">
-            <p className="text-sm">
-              Allocated IP:{" "}
-              <span className="zv-kbd">{data.device.allocated_ip}</span>
-            </p>
-            <CopyableCode value={data.config} multiline />
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            onClick={() => downloadConfig(data.device.name, data.config)}
-          >
-            <IconDownload />
-            Download .conf
-          </Button>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            Done
-          </Button>
-        </div>
-      </Panel>
-    </motion.div>
   )
 }
 

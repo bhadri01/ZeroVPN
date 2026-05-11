@@ -193,6 +193,10 @@ async fn main() -> Result<()> {
                 .route("/me/data-export", get(routes::me::export))
                 .route("/me/server", get(routes::me::server_info))
                 .route(
+                    "/me/topology",
+                    get(routes::me::get_topology).put(routes::me::set_topology),
+                )
+                .route(
                     "/me/account",
                     axum::routing::delete(routes::me::delete_account),
                 )

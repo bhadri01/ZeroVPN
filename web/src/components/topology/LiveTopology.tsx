@@ -16,10 +16,17 @@ import {
   type Icon,
   type IconProps,
 } from "@tabler/icons-react"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { usePageVisible } from "@/hooks/usePageVisible"
-import type { DeviceOs, DeviceStatus, PublicDevice } from "@/lib/api"
+import {
+  getMyTopology,
+  setMyTopology,
+  type DeviceOs,
+  type DeviceStatus,
+  type PublicDevice,
+} from "@/lib/api"
 import { connState } from "@/lib/deviceState"
 
 interface LiveTopologyProps {
@@ -172,16 +179,64 @@ export function LiveTopology({
   // Subsequent renders prefer the override to the computed ring position.
   // Keyed by device id; the hub uses the literal key "__hub__".
   //
-  // Persisted to localStorage so a drag layout survives refresh. Lazy
-  // initializer reads + parses on mount; a useEffect below mirrors any
-  // future change back to storage. Per-user separation isn't needed for
-  // v1 — localStorage is already per-browser-per-origin and the
-  // overrides only describe positions, never sensitive state.
+  // Two-layer persistence:
+  //   - localStorage = fast-paint cache. Lazy initializer reads on mount
+  //     so the chart paints the saved layout immediately (no flicker
+  //     while the server fetch is in flight).
+  //   - Server (GET /me/topology) = source of truth. When the response
+  //     lands and differs from local, server wins (cross-device sync).
+  //   - On every change, mirror to localStorage AND fire a debounced PUT
+  //     so rapid drags coalesce into one network write.
   const [nodePositions, setNodePositions] = useState<Map<string, { x: number; y: number }>>(
     () => loadNodePositions(),
   )
+
+  // Server fetch — runs once per session, hydrates into state if it
+  // diverges from the localStorage cache.
+  const topologyQ = useQuery({
+    queryKey: ["me", "topology"],
+    queryFn: getMyTopology,
+    staleTime: Infinity,
+  })
+  // Track whether we've already hydrated from this query response so we
+  // don't overwrite an in-progress user drag with stale server state.
+  const hydratedFromServerRef = useRef(false)
+  useEffect(() => {
+    if (!topologyQ.data || hydratedFromServerRef.current) return
+    const server = topologyQ.data.positions
+    const next = new Map<string, { x: number; y: number }>()
+    for (const [id, pos] of Object.entries(server)) {
+      next.set(id, { x: pos.x, y: pos.y })
+    }
+    hydratedFromServerRef.current = true
+    setNodePositions(next)
+    saveNodePositions(next)
+  }, [topologyQ.data])
+
+  // Debounced save: 500ms after the last change, PUT to server. Mirror to
+  // localStorage on every change for the next refresh's fast-paint.
+  const saveMut = useMutation({
+    mutationFn: (positions: Map<string, { x: number; y: number }>) => {
+      const obj: Record<string, { x: number; y: number }> = {}
+      for (const [id, pos] of positions) obj[id] = pos
+      return setMyTopology(obj)
+    },
+  })
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     saveNodePositions(nodePositions)
+    // Don't fire a PUT before we've hydrated from the server — would
+    // race with the initial GET and might overwrite the server copy
+    // with the localStorage copy if they differ.
+    if (!hydratedFromServerRef.current) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      saveMut.mutate(nodePositions)
+    }, 500)
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodePositions])
   // While a node-drag is in flight: which node + its starting client/view
   // anchors. Set on pointerdown of a node, cleared on pointerup. While

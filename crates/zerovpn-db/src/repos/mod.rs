@@ -5,6 +5,7 @@ pub mod devices;
 pub mod failed_logins;
 pub mod server_samples;
 pub mod servers;
+pub mod topology_positions;
 pub mod users;
 pub mod verification_tokens;
 pub mod webhooks;
