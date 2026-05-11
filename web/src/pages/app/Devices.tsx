@@ -13,7 +13,7 @@ import {
 } from "@tabler/icons-react"
 import { AnimatePresence, motion } from "motion/react"
 import { Link } from "react-router"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
@@ -63,6 +63,7 @@ import {
   createDevice,
   deleteDevice,
   listDevices,
+  meServer,
   pauseDevice,
   unpauseDevice,
 } from "@/lib/api"
@@ -945,11 +946,44 @@ function AddDeviceDialog({
   onCreated: (d: CreatedDevice) => void
 }) {
   const qc = useQueryClient()
+  // Fetch the user's WG server info (cidr, default DNS, endpoint) so we
+  // can seed sensible defaults: split tunnel ON pointing at the WG
+  // subnet, custom-DNS box pre-filled with the server's resolver, and a
+  // "must be inside <cidr>" hint under the IP input. Cached for the
+  // session — server config almost never changes mid-flight.
+  const serverInfoQ = useQuery({
+    queryKey: ["me", "server"],
+    queryFn: meServer,
+    staleTime: 5 * 60_000,
+  })
+  const serverCidr = serverInfoQ.data?.cidr
+  const serverDns = serverInfoQ.data?.dns_servers ?? []
+  const serverDnsDefault = serverDns.join(", ")
+
   const [step, setStep] = useState<1 | 2>(1)
   const [name, setName] = useState("")
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
-  const [splitTunnel, setSplitTunnel] = useState(false)
+  // Split tunnel defaults ON now: most users only need the VPN for
+  // reaching peer devices on the WG subnet, not for routing all their
+  // traffic. The pre-set CIDR is the server's subnet, so this is also
+  // accurate (not just an arbitrary RFC1918 mask).
+  const [splitTunnel, setSplitTunnel] = useState(true)
+  // Pre-fill the custom DNS with the server's default resolver so the
+  // box shows what they'll actually get when they leave it alone, and
+  // is editable if they want to point at 1.1.1.1 / a corp DNS / etc.
   const [dnsInput, setDnsInput] = useState("")
+  // When server info lands, seed the DNS input once. Subsequent edits by
+  // the user are preserved (we only assign when the box is still empty).
+  // The set-state-in-effect lint rule warns about cascading renders, but
+  // this is the documented React pattern for "one-time seed from async
+  // data" — the guard on `dnsInput === ""` makes it idempotent.
+  useEffect(() => {
+    if (serverDnsDefault && dnsInput === "") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDnsInput(serverDnsDefault)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverDnsDefault])
   const [ipMode, setIpMode] = useState<IpMode>("auto")
   const [ipInput, setIpInput] = useState("")
   const [result, setResult] = useState<CreatedDevice | null>(null)
@@ -1067,19 +1101,37 @@ function AddDeviceDialog({
 
           {/* IP allocation — two-mode picker with conditional input. */}
           <div className="flex flex-col gap-1.5">
-            <Label className="zv-eyebrow">IP allocation</Label>
+            <Label className="zv-eyebrow">
+              IP allocation
+              {serverCidr && (
+                <span className="text-muted-foreground/70 normal-case">
+                  {" "}· subnet{" "}
+                  <span className="text-foreground font-mono">
+                    {serverCidr}
+                  </span>
+                </span>
+              )}
+            </Label>
             <div className="grid grid-cols-2 gap-2">
               <IpModeOption
                 selected={ipMode === "auto"}
                 onClick={() => setIpMode("auto")}
                 title="Auto-assign"
-                sub="Server picks the next free address in the subnet."
+                sub={
+                  serverCidr
+                    ? `Server picks the next free address in ${serverCidr}.`
+                    : "Server picks the next free address in the subnet."
+                }
               />
               <IpModeOption
                 selected={ipMode === "custom"}
                 onClick={() => setIpMode("custom")}
                 title="Choose IP"
-                sub="Reserve a specific address inside the server's CIDR."
+                sub={
+                  serverCidr
+                    ? `Reserve a specific address inside ${serverCidr}.`
+                    : "Reserve a specific address inside the server's CIDR."
+                }
               />
             </div>
             {ipMode === "custom" && (
@@ -1087,14 +1139,20 @@ function AddDeviceDialog({
                 <Input
                   value={ipInput}
                   onChange={(e) => setIpInput(e.target.value)}
-                  placeholder="10.42.0.42"
+                  placeholder={
+                    serverCidr ? ipPlaceholderFor(serverCidr) : "10.42.0.42"
+                  }
                   className="font-mono"
                   aria-invalid={!ipLooksValid}
                   autoFocus
                 />
                 <p className="text-muted-foreground mt-1 font-mono text-[11px]">
-                  IPv4 only. Must be inside the server's subnet and not already
-                  taken. Network / broadcast / gateway are reserved.
+                  IPv4 only. Must be inside{" "}
+                  <span className="text-foreground font-mono">
+                    {serverCidr ?? "the server's subnet"}
+                  </span>{" "}
+                  and not already taken. Network / broadcast / gateway are
+                  reserved.
                   {!ipLooksValid && ipInput && (
                     <span className="text-destructive ml-2">
                       that doesn't look like a valid IPv4 address
@@ -1117,8 +1175,9 @@ function AddDeviceDialog({
             >
               <span className="text-sm font-medium">Split tunnel</span>
               <span className="text-muted-foreground font-mono text-[11px]">
-                Only RFC1918 (10/8, 172.16/12, 192.168/16) routes through the
-                tunnel — the rest of your traffic exits via your LAN.
+                {serverCidr
+                  ? `Only ${serverCidr} routes through the tunnel — the rest of your traffic exits via your LAN. Default ON.`
+                  : "Only the WG subnet routes through the tunnel — the rest of your traffic exits via your LAN. Default ON."}
               </span>
             </Label>
           </div>
@@ -1357,4 +1416,15 @@ function formatLastSeen(iso: string | null): string {
   const ms = Date.now() - new Date(iso).getTime()
   if (ms < 60_000) return "now"
   return fmtRel(ms)
+}
+
+/** Build a plausible example IP for the input placeholder, based on the
+ *  server's CIDR. We just swap the host portion for `.42` so the user
+ *  sees the right network prefix without us pretending to allocate. */
+function ipPlaceholderFor(cidr: string): string {
+  const slash = cidr.indexOf("/")
+  const net = slash > 0 ? cidr.slice(0, slash) : cidr
+  const parts = net.split(".")
+  if (parts.length !== 4) return "10.42.0.42"
+  return `${parts[0]}.${parts[1]}.${parts[2]}.42`
 }

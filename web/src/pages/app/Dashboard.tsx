@@ -15,7 +15,6 @@ import { LiveEventStream } from "@/components/dashboard/LiveEventStream"
 import { RecentActivity } from "@/components/dashboard/RecentActivity"
 import { EmptyState } from "@/components/EmptyState"
 import { Kpi, KpiStrip, PageHead, Panel, Seg } from "@/components/swiss"
-import { StatusPill } from "@/components/StatusPill"
 import { LiveTopology } from "@/components/topology/LiveTopology"
 import { Button } from "@/components/ui/button"
 import {
@@ -26,7 +25,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -181,71 +179,68 @@ export function DashboardPage() {
         eyebrow="Workspace · 01"
         title="Dashboard"
         sub="Live network and devices for your account."
-        right={
-          <Dialog open={addOpen} onOpenChange={setAddOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <IconPlus />
-                Add device
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Add device</DialogTitle>
-                <DialogDescription>
-                  We generate a fresh keypair, allocate an IP, and hand you a
-                  WireGuard config. The private key never leaves the page.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-3">
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="dev-name" className="zv-eyebrow">
-                    Name
-                  </Label>
-                  <Input
-                    id="dev-name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Pixel 8, MacBook Pro…"
-                    autoFocus
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label className="zv-eyebrow">Operating system</Label>
-                  <Select
-                    value={osChoice}
-                    onValueChange={(v) => setOsChoice(v as DeviceOs)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(["ios", "android", "macos", "windows", "linux", "other"] as DeviceOs[]).map(
-                        (o) => (
-                          <SelectItem key={o} value={o}>
-                            {o}
-                          </SelectItem>
-                        ),
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button variant="ghost">Cancel</Button>
-                </DialogClose>
-                <Button
-                  onClick={() => addM.mutate()}
-                  disabled={addM.isPending || name.trim().length === 0}
-                >
-                  {addM.isPending ? "Adding…" : "Add"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        }
       />
+
+      {/* Add-device dialog. The header trigger button is intentionally gone;
+          the empty-state CTA below calls `setAddOpen(true)` when the user
+          has no devices yet. Once they have at least one, this dialog is
+          only reachable via /app/devices. */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add device</DialogTitle>
+            <DialogDescription>
+              We generate a fresh keypair, allocate an IP, and hand you a
+              WireGuard config. The private key never leaves the page.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="dev-name" className="zv-eyebrow">
+                Name
+              </Label>
+              <Input
+                id="dev-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Pixel 8, MacBook Pro…"
+                autoFocus
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="zv-eyebrow">Operating system</Label>
+              <Select
+                value={osChoice}
+                onValueChange={(v) => setOsChoice(v as DeviceOs)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(["ios", "android", "macos", "windows", "linux", "other"] as DeviceOs[]).map(
+                    (o) => (
+                      <SelectItem key={o} value={o}>
+                        {o}
+                      </SelectItem>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="ghost">Cancel</Button>
+            </DialogClose>
+            <Button
+              onClick={() => addM.mutate()}
+              disabled={addM.isPending || name.trim().length === 0}
+            >
+              {addM.isPending ? "Adding…" : "Add"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* KPI strip — 4-up. Devices · TX · RX · (Hubs for admin / Paused for users) */}
       <KpiStrip>
@@ -307,34 +302,24 @@ export function DashboardPage() {
       </AnimatePresence>
 
       {/* Row 2: live topology (1fr) + live event stream (360px) */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
-        <Panel
-          title="Live topology"
-          sub="Worker → ZeroMQ → API → WS · sub-second"
-          right={<LiveIndicator />}
-          bodyClassName="p-0 aspect-[16/10] relative"
-        >
-          <LiveTopology
-            devices={devices}
-            rates={rates}
-            serverLabel={user?.email?.split("@")[1] ?? "vpn-server"}
-            serverMeta={
-              devices.length > 0 && devices[0].allocated_ip
-                ? deriveCidr(devices[0].allocated_ip)
-                : undefined
-            }
-          />
-        </Panel>
-
-        <Panel
-          title="Live event stream"
-          sub="ws · /api/v1/ws"
-          right={<LiveIndicator />}
-          flush
-        >
-          <LiveEventStream />
-        </Panel>
-      </div>
+      {/* Row 2: live topology — full-width hero */}
+      <Panel
+        title="Live topology"
+        sub="Worker → ZeroMQ → API → WS · sub-second"
+        right={<LiveIndicator />}
+        bodyClassName="p-0 aspect-[21/9] relative"
+      >
+        <LiveTopology
+          devices={devices}
+          rates={rates}
+          serverLabel={user?.email?.split("@")[1] ?? "vpn-server"}
+          serverMeta={
+            devices.length > 0 && devices[0].allocated_ip
+              ? deriveCidr(devices[0].allocated_ip)
+              : undefined
+          }
+        />
+      </Panel>
 
       {/* Row 3: bandwidth — full width with range selector */}
       <Panel
@@ -376,110 +361,26 @@ export function DashboardPage() {
         )}
       </Panel>
 
-      {/* Row 4: devices (1.4fr) + recent activity (1fr) */}
-      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <Panel
-          title="Devices"
-          sub={`${devices.length} total · ${active} live`}
-          flush
-          right={
-            <Link
-              to="/app/devices"
-              className="text-muted-foreground hover:text-foreground font-mono text-xs"
-            >
-              View all ↗
-            </Link>
-          }
-        >
-          {devicesQ.isLoading && (
-            <p className="text-muted-foreground p-4 font-mono text-sm">Loading…</p>
-          )}
-          {devicesQ.isError && (
-            <p className="text-destructive p-4 font-mono text-sm">
-              Failed to load devices.
-            </p>
-          )}
-          {devicesQ.data && devicesQ.data.length === 0 && (
-            <div className="p-4">
-              <EmptyState
-                icon={IconDeviceTablet}
-                title="No devices yet"
-                description="Add your first device to receive a WireGuard config."
-                action={
-                  <Button onClick={() => setAddOpen(true)}>
-                    <IconPlus />
-                    Add device
-                  </Button>
-                }
-              />
-            </div>
-          )}
-          {devicesQ.data && devicesQ.data.length > 0 && (
-            <table className="zv-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>OS</th>
-                  <th>IP</th>
-                  <th>Status</th>
-                  <th className="zv-num">TX</th>
-                  <th className="zv-num">RX</th>
-                </tr>
-              </thead>
-              <tbody>
-                {devicesQ.data.slice(0, 7).map((d) => {
-                  const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
-                  const online = connState(d) === "online"
-                  return (
-                    <tr key={d.id}>
-                      <td>
-                        <Link
-                          to={`/app/devices/${d.id}`}
-                          className="hover:text-foreground inline-flex items-center gap-2 font-medium"
-                        >
-                          <span
-                            className={`size-1.5 rounded-full ${online ? "bg-status-online" : d.status === "paused" ? "bg-status-degraded" : "bg-status-offline"}`}
-                          />
-                          {d.name}
-                        </Link>
-                      </td>
-                      <td className="text-muted-foreground">{d.os}</td>
-                      <td className="font-mono">{d.allocated_ip}</td>
-                      <td>
-                        <StatusPill
-                          status={
-                            d.status === "revoked"
-                              ? "revoked"
-                              : d.status === "paused"
-                                ? "paused"
-                                : online
-                                  ? "online"
-                                  : "offline"
-                          }
-                        />
-                      </td>
-                      <td className="zv-num">
-                        {online ? (
-                          formatRate(live.txBps)
-                        ) : (
-                          <span className="text-muted-foreground/50">—</span>
-                        )}
-                      </td>
-                      <td className="zv-num">
-                        {online ? (
-                          formatRate(live.rxBps)
-                        ) : (
-                          <span className="text-muted-foreground/50">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
+      {/* First-device empty state — surfaced only when there are zero
+          devices, since the devices table is no longer on this page. */}
+      {devicesQ.data && devicesQ.data.length === 0 && (
+        <Panel>
+          <EmptyState
+            icon={IconDeviceTablet}
+            title="No devices yet"
+            description="Add your first device to receive a WireGuard config."
+            action={
+              <Button onClick={() => setAddOpen(true)}>
+                <IconPlus />
+                Add device
+              </Button>
+            }
+          />
         </Panel>
+      )}
 
+      {/* Row 4: recent activity (left) + live event stream (right) */}
+      <div className="grid gap-6 lg:grid-cols-2">
         <Panel
           title="Recent activity"
           sub={isAdmin ? "audit · last 8" : "live events · last 8"}
@@ -496,6 +397,15 @@ export function DashboardPage() {
           }
         >
           <RecentActivity limit={8} />
+        </Panel>
+
+        <Panel
+          title="Live event stream"
+          sub="ws · /api/v1/ws"
+          right={<LiveIndicator />}
+          flush
+        >
+          <LiveEventStream />
         </Panel>
       </div>
     </div>

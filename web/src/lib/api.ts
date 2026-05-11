@@ -126,6 +126,19 @@ export const logout = () =>
 
 export const me = () => apiFetch<PublicUser>("/me")
 
+/** Public-safe info about the user's WG server — used by the create-device
+ * dialog to pre-fill defaults (DNS, split-tunnel CIDR) and render hints
+ * ("must be inside <cidr>"). */
+export interface MyServerInfo {
+  cidr: string
+  dns_servers: string[]
+  endpoint_host: string
+  endpoint_port: number
+  mtu: number
+}
+
+export const meServer = () => apiFetch<MyServerInfo>("/me/server")
+
 export const verifyEmail = (token: string) =>
   apiFetch<{ status: string }>("/auth/verify-email", {
     method: "POST",

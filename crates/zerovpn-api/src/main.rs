@@ -191,6 +191,7 @@ async fn main() -> Result<()> {
                 .route("/auth/totp/enable", post(routes::totp::enable))
                 .route("/auth/totp/disable", post(routes::totp::disable))
                 .route("/me/data-export", get(routes::me::export))
+                .route("/me/server", get(routes::me::server_info))
                 .route(
                     "/me/account",
                     axum::routing::delete(routes::me::delete_account),
