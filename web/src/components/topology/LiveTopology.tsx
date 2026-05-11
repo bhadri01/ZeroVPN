@@ -1,4 +1,6 @@
 import {
+  IconArrowsMaximize,
+  IconArrowsMinimize,
   IconBrandAndroid,
   IconBrandApple,
   IconBrandUbuntu,
@@ -29,9 +31,12 @@ interface LiveTopologyProps {
   serverMeta?: string
 }
 
-const W = 1000
+// Fixed vertical SVG-unit budget. The horizontal one is computed
+// per-render from the container's aspect ratio so the viewBox always
+// matches the actual painted area — `preserveAspectRatio` stays at
+// "meet" and we get no letterboxing AND no stretching.
 const H = 560
-const HUB_X = W / 2
+const DEFAULT_VB_W = 1000
 const HUB_Y = H / 2
 const RING_INNER = 170
 const RING_OUTER = 245
@@ -131,9 +136,64 @@ export function LiveTopology({
   }, [pageVisible])
 
   const svgRef = useRef<SVGSVGElement | null>(null)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+
+  // Dynamic horizontal viewBox extent. We hold the vertical extent fixed
+  // (H) and stretch the horizontal one so `vbW / H === containerW /
+  // containerH`. With the viewBox matching the container's aspect, the
+  // default `preserveAspectRatio="xMidYMid meet"` neither letterboxes nor
+  // stretches — every SVG user-unit maps to the same number of CSS px on
+  // both axes, so circles stay circles at every screen size.
+  const [vbW, setVbW] = useState<number>(DEFAULT_VB_W)
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const update = () => {
+      const r = el.getBoundingClientRect()
+      if (r.height > 0 && r.width > 0) {
+        // Floor at DEFAULT_VB_W so very narrow containers don't squash
+        // the peer ring against the hub.
+        setVbW(Math.max(DEFAULT_VB_W, Math.round((H * r.width) / r.height)))
+      }
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   const [view, setView] = useState<View>(INITIAL_VIEW)
   const dragRef = useRef<{ startX: number; startY: number; tx: number; ty: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  // Per-node position overrides. When the user grabs a peer (or the hub)
+  // and drags it, we record the resulting (x, y) in viewBox space here.
+  // Subsequent renders prefer the override to the computed ring position.
+  // Keyed by device id; the hub uses the literal key "__hub__".
+  //
+  // Persisted to localStorage so a drag layout survives refresh. Lazy
+  // initializer reads + parses on mount; a useEffect below mirrors any
+  // future change back to storage. Per-user separation isn't needed for
+  // v1 — localStorage is already per-browser-per-origin and the
+  // overrides only describe positions, never sensitive state.
+  const [nodePositions, setNodePositions] = useState<Map<string, { x: number; y: number }>>(
+    () => loadNodePositions(),
+  )
+  useEffect(() => {
+    saveNodePositions(nodePositions)
+  }, [nodePositions])
+  // While a node-drag is in flight: which node + its starting client/view
+  // anchors. Set on pointerdown of a node, cleared on pointerup. While
+  // non-null, the canvas-level pan handler is short-circuited so dragging
+  // a node doesn't also pan the view.
+  const nodeDragRef = useRef<{
+    id: string
+    startVx: number
+    startVy: number
+    baseX: number
+    baseY: number
+  } | null>(null)
 
   // Convert client (pixel) coordinates to viewBox (SVG user) coordinates,
   // so panning/zooming math stays in the same space as our laid-out nodes
@@ -142,15 +202,17 @@ export function LiveTopology({
     const svg = svgRef.current
     if (!svg) return { x: clientX, y: clientY }
     const rect = svg.getBoundingClientRect()
-    const x = ((clientX - rect.left) / rect.width) * W
+    const x = ((clientX - rect.left) / rect.width) * vbW
     const y = ((clientY - rect.top) / rect.height) * H
     return { x, y }
-  }, [])
+  }, [vbW])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
       // Ignore right/middle clicks so we don't fight context menus.
       if (e.button !== 0) return
+      // Don't start a canvas-pan if a node grabbed the pointer first.
+      if (nodeDragRef.current) return
       ;(e.target as Element).setPointerCapture?.(e.pointerId)
       const p = clientToView(e.clientX, e.clientY)
       dragRef.current = { startX: p.x, startY: p.y, tx: view.tx, ty: view.ty }
@@ -161,6 +223,27 @@ export function LiveTopology({
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
+      // Node-drag has priority — convert pointer to scene coords and
+      // write the new position into the overrides map.
+      const nd = nodeDragRef.current
+      if (nd) {
+        const p = clientToView(e.clientX, e.clientY)
+        // Convert from viewport space → scene space (undo the pan/zoom
+        // applied by the transformed <g>). Same inverse the wheel-zoom
+        // handler uses for cursor anchoring.
+        const sx = (p.x - view.tx) / view.scale
+        const sy = (p.y - view.ty) / view.scale
+        const dx = sx - nd.startVx
+        const dy = sy - nd.startVy
+        const nx = nd.baseX + dx
+        const ny = nd.baseY + dy
+        setNodePositions((prev) => {
+          const next = new Map(prev)
+          next.set(nd.id, { x: nx, y: ny })
+          return next
+        })
+        return
+      }
       const d = dragRef.current
       if (!d) return
       const p = clientToView(e.clientX, e.clientY)
@@ -170,13 +253,39 @@ export function LiveTopology({
         ty: d.ty + (p.y - d.startY),
       }))
     },
-    [clientToView],
+    [clientToView, view.tx, view.ty, view.scale],
   )
 
   const endDrag = useCallback(() => {
     dragRef.current = null
+    nodeDragRef.current = null
     setIsDragging(false)
   }, [])
+
+  /** Begin dragging a single node. Captures the pointer on the SVG so
+   *  subsequent move events still hit our canvas-level handler (which is
+   *  where the node-drag branch lives) even as the cursor leaves the node
+   *  shape. Stops propagation so the canvas-pan handler doesn't also fire. */
+  const beginNodeDrag = useCallback(
+    (
+      e: React.PointerEvent<SVGGElement>,
+      id: string,
+      baseX: number,
+      baseY: number,
+    ) => {
+      if (e.button !== 0) return
+      e.stopPropagation()
+      // Capture on the SVG, not the <g>, so onPointerMove on the SVG keeps
+      // firing while we drag. Without this, capture happens on the <g>
+      // and move events skip the SVG handler.
+      svgRef.current?.setPointerCapture?.(e.pointerId)
+      const p = clientToView(e.clientX, e.clientY)
+      const sx = (p.x - view.tx) / view.scale
+      const sy = (p.y - view.ty) / view.scale
+      nodeDragRef.current = { id, startVx: sx, startVy: sy, baseX, baseY }
+    },
+    [clientToView, view.tx, view.ty, view.scale],
+  )
 
   // Wheel zoom — keep the point under the cursor anchored. Capture native
   // wheel via a non-passive listener so we can preventDefault and avoid
@@ -187,7 +296,7 @@ export function LiveTopology({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       const rect = svg.getBoundingClientRect()
-      const cx = ((e.clientX - rect.left) / rect.width) * W
+      const cx = ((e.clientX - rect.left) / rect.width) * vbW
       const cy = ((e.clientY - rect.top) / rect.height) * H
       setView((v) => {
         const factor = Math.exp(-e.deltaY * 0.0015)
@@ -202,14 +311,14 @@ export function LiveTopology({
     }
     svg.addEventListener("wheel", onWheel, { passive: false })
     return () => svg.removeEventListener("wheel", onWheel)
-  }, [])
+  }, [vbW])
 
   const zoom = (factor: number) => {
     setView((v) => {
       const nextScale = clamp(v.scale * factor, MIN_SCALE, MAX_SCALE)
       // Zoom around the SVG center to keep the action predictable when the
       // user hits the +/- buttons.
-      const cx = W / 2
+      const cx = vbW / 2
       const cy = H / 2
       const k = nextScale / v.scale
       return {
@@ -220,7 +329,33 @@ export function LiveTopology({
     })
   }
 
-  const resetView = () => setView(INITIAL_VIEW)
+  const resetView = () => {
+    setView(INITIAL_VIEW)
+    setNodePositions(new Map())
+  }
+
+  // "Full view": expand the topology to cover the browser window (NOT
+  // the OS-level Fullscreen API). The wrap goes fixed inset-0 with a
+  // high z-index so the chrome — sidebar, top bar, page header — stays
+  // around just hidden behind it. Esc exits.
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen((v) => !v)
+  }, [])
+
+  useEffect(() => {
+    if (!isFullscreen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsFullscreen(false)
+    }
+    // Prevent the page underneath from scrolling while in full view.
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    document.addEventListener("keydown", onKey)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [isFullscreen])
 
   const visible = useMemo(() => {
     const live = devices.filter((d) => d.status !== "revoked")
@@ -245,11 +380,22 @@ export function LiveTopology({
       const onInner = useTwoRings && i % 2 === 0
       const r = useTwoRings ? (onInner ? RING_INNER : RING_OUTER) : SINGLE_RING
       const a = angleFor(d.id, n, i)
-      const x = HUB_X + Math.cos(a) * r
-      const y = HUB_Y + Math.sin(a) * r * 0.62 // squash vertically so labels fit
+      // Ring is centered on the *default* hub position (vbW/2, HUB_Y) so
+      // dragging the hub doesn't drag the whole peer ring with it.
+      const computedX = vbW / 2 + Math.cos(a) * r
+      const computedY = HUB_Y + Math.sin(a) * r * 0.62 // squash vertically so labels fit
+      // If the user has dragged this node, prefer the override.
+      const override = nodePositions.get(d.id)
+      const x = override?.x ?? computedX
+      const y = override?.y ?? computedY
       return { device: d, x, y, tone, rateBps }
     })
-  }, [visible, rates])
+  }, [visible, rates, nodePositions, vbW])
+
+  // Hub position can also be overridden by drag. Default to canvas center.
+  const hubOverride = nodePositions.get("__hub__")
+  const hubX = hubOverride?.x ?? vbW / 2
+  const hubY = hubOverride?.y ?? HUB_Y
 
   // Inverse-scale glyph stroke widths so icons + lines don't get heavy when
   // zoomed out and don't get hair-thin when zoomed in. Capped so things stay
@@ -257,11 +403,26 @@ export function LiveTopology({
   const strokeScale = clamp(1 / view.scale, 0.5, 2)
 
   return (
-    <div className="zv-livetopo-wrap relative h-full w-full">
+    <div
+      ref={wrapRef}
+      className={
+        isFullscreen
+          ? // "Full view": fixed-position overlay covering the window.
+            // z-50 floats above the sidebar/top-bar without going over
+            // toasts (which use z-[100]+). bg-background hides the page
+            // chrome behind so the topology reads cleanly.
+            "zv-livetopo-wrap fixed inset-0 z-50 bg-background"
+          : "zv-livetopo-wrap relative h-full w-full"
+      }
+    >
       <svg
         ref={svgRef}
         className={`zv-topo zv-livetopo ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
-        viewBox={`0 0 ${W} ${H}`}
+        // Dynamic viewBox width matches the container's aspect ratio so the
+        // default `xMidYMid meet` neither letterboxes (the old "fit"
+        // problem) nor stretches axes (the previous `none` workaround that
+        // turned circles into ovals).
+        viewBox={`0 0 ${vbW} ${H}`}
         preserveAspectRatio="xMidYMid meet"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -289,7 +450,7 @@ export function LiveTopology({
         {/* grid is drawn full-bleed; its pattern transform keeps it locked
             to the scene under pan/zoom */}
         <rect
-          width={W}
+          width={vbW}
           height={H}
           fill="url(#zv-livetopo-grid)"
           opacity="0.55"
@@ -300,14 +461,15 @@ export function LiveTopology({
           transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}
           style={{ vectorEffect: "non-scaling-stroke" }}
         >
-          {/* edges + flow */}
+          {/* edges + flow — edges anchor on the live hub position so they
+              follow when the hub is dragged. */}
           {placed.map((p) => {
             const isLive = p.tone === "live"
             return (
               <g key={`e-${p.device.id}`}>
                 <line
-                  x1={HUB_X}
-                  y1={HUB_Y}
+                  x1={hubX}
+                  y1={hubY}
                   x2={p.x}
                   y2={p.y}
                   className={isLive ? "zv-topo-edge-live" : "zv-topo-edge"}
@@ -316,8 +478,8 @@ export function LiveTopology({
                 {isLive && (
                   <line
                     className="zv-topo-flow"
-                    x1={HUB_X}
-                    y1={HUB_Y}
+                    x1={hubX}
+                    y1={hubY}
                     x2={p.x}
                     y2={p.y}
                     strokeWidth={1.2 * strokeScale}
@@ -333,24 +495,32 @@ export function LiveTopology({
             )
           })}
 
-          {/* peers */}
+          {/* peers — draggable */}
           {placed.map((p) => (
-            <PeerNode key={p.device.id} peer={p} />
+            <PeerNode
+              key={p.device.id}
+              peer={p}
+              hubX={hubX}
+              onPointerDown={(e) => beginNodeDrag(e, p.device.id, p.x, p.y)}
+            />
           ))}
 
-          {/* hub on top, last so it overlaps incoming edges */}
+          {/* hub on top, last so it overlaps incoming edges — also draggable */}
           <HubNode
             tick={tick}
             label={serverLabel}
             meta={serverMeta}
             peerCount={placed.length}
             hidden={hidden}
+            hubX={hubX}
+            hubY={hubY}
+            onPointerDown={(e) => beginNodeDrag(e, "__hub__", hubX, hubY)}
           />
         </g>
 
         {/* HUD — sits in screen-space (outside the transformed group) so
             metrics stay anchored to the corner under any zoom level */}
-        <g transform={`translate(${W - 200}, 20)`} className="zv-topo-meta">
+        <g transform={`translate(${vbW - 200}, 20)`} className="zv-topo-meta">
           <text fontSize="9">
             PEERS · {placed.filter((p) => p.tone === "live").length}/
             {devices.filter((d) => d.status !== "revoked").length}
@@ -365,8 +535,22 @@ export function LiveTopology({
       </svg>
 
       {/* Pan/zoom controls — keep them small + tucked in the bottom-right
-          so the canvas stays uncluttered. */}
+          so the canvas stays uncluttered. Reset clears node-drag overrides
+          too, so users can always undo a layout they don't like. */}
       <div className="absolute bottom-2 right-2 flex flex-col gap-1">
+        <button
+          type="button"
+          aria-label={isFullscreen ? "Exit fullscreen" : "Open fullscreen"}
+          title={isFullscreen ? "Exit fullscreen" : "Open fullscreen"}
+          className="zv-icon-btn bg-card"
+          onClick={toggleFullscreen}
+        >
+          {isFullscreen ? (
+            <IconArrowsMinimize size={14} />
+          ) : (
+            <IconArrowsMaximize size={14} />
+          )}
+        </button>
         <button
           type="button"
           aria-label="Zoom in"
@@ -388,9 +572,15 @@ export function LiveTopology({
         <button
           type="button"
           aria-label="Reset view"
+          title="Reset view + clear node positions"
           className="zv-icon-btn bg-card"
           onClick={resetView}
-          disabled={view.tx === 0 && view.ty === 0 && view.scale === 1}
+          disabled={
+            view.tx === 0 &&
+            view.ty === 0 &&
+            view.scale === 1 &&
+            nodePositions.size === 0
+          }
         >
           <IconFocusCentered size={14} />
         </button>
@@ -403,21 +593,81 @@ function clamp(n: number, lo: number, hi: number): number {
   return n < lo ? lo : n > hi ? hi : n
 }
 
+// ---------------------------------------------------------------------------
+// Position persistence
+// ---------------------------------------------------------------------------
+
+const POS_STORAGE_KEY = "zerovpn.topology.positions.v1"
+
+/** Read the saved drag-overrides on mount. Wrapped in try/catch because
+ *  localStorage can throw in private mode / when storage is full, and we
+ *  don't want a storage failure to crash the dashboard. */
+function loadNodePositions(): Map<string, { x: number; y: number }> {
+  if (typeof window === "undefined") return new Map()
+  try {
+    const raw = window.localStorage.getItem(POS_STORAGE_KEY)
+    if (!raw) return new Map()
+    const parsed = JSON.parse(raw) as Record<string, { x: number; y: number }>
+    const map = new Map<string, { x: number; y: number }>()
+    for (const [id, pos] of Object.entries(parsed)) {
+      if (
+        pos &&
+        typeof pos.x === "number" &&
+        typeof pos.y === "number" &&
+        Number.isFinite(pos.x) &&
+        Number.isFinite(pos.y)
+      ) {
+        map.set(id, { x: pos.x, y: pos.y })
+      }
+    }
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+/** Mirror the overrides back to localStorage. Called from a useEffect on
+ *  every change so a refresh after a drag lands on the same layout. */
+function saveNodePositions(positions: Map<string, { x: number; y: number }>): void {
+  if (typeof window === "undefined") return
+  try {
+    if (positions.size === 0) {
+      window.localStorage.removeItem(POS_STORAGE_KEY)
+      return
+    }
+    const obj: Record<string, { x: number; y: number }> = {}
+    for (const [id, pos] of positions) obj[id] = pos
+    window.localStorage.setItem(POS_STORAGE_KEY, JSON.stringify(obj))
+  } catch {
+    // ignore — quota / private mode
+  }
+}
+
 function HubNode({
   tick,
   label,
   meta,
   peerCount,
   hidden,
+  hubX,
+  hubY,
+  onPointerDown,
 }: {
   tick: number
   label: string
   meta?: string
   peerCount: number
   hidden: number
+  hubX: number
+  hubY: number
+  onPointerDown: (e: React.PointerEvent<SVGGElement>) => void
 }) {
   return (
-    <g transform={`translate(${HUB_X}, ${HUB_Y})`}>
+    <g
+      transform={`translate(${hubX}, ${hubY})`}
+      onPointerDown={onPointerDown}
+      style={{ cursor: "grab" }}
+    >
       <circle r={28 + tick} className="zv-topo-halo" opacity="0.55" />
       <circle r={22} className="zv-topo-halo" opacity="0.85" />
       <circle r={18} className="zv-topo-hub" strokeWidth="1.4" />
@@ -445,7 +695,15 @@ function HubNode({
   )
 }
 
-function PeerNode({ peer }: { peer: LaidOutPeer }) {
+function PeerNode({
+  peer,
+  hubX,
+  onPointerDown,
+}: {
+  peer: LaidOutPeer
+  hubX: number
+  onPointerDown: (e: React.PointerEvent<SVGGElement>) => void
+}) {
   const Shape = shapeFor(peer.device.os)
   const Brand = iconFor(peer.device.os)
   const strokeClass =
@@ -454,10 +712,15 @@ function PeerNode({ peer }: { peer: LaidOutPeer }) {
       : peer.tone === "paused"
         ? "zv-topo-peer-paused"
         : "zv-topo-peer-idle"
-  const labelAnchor: "start" | "end" = peer.x >= HUB_X ? "start" : "end"
+  const labelAnchor: "start" | "end" = peer.x >= hubX ? "start" : "end"
   const labelDx = labelAnchor === "start" ? 18 : -18
   return (
-    <g transform={`translate(${peer.x}, ${peer.y})`} className="zv-topo-peer">
+    <g
+      transform={`translate(${peer.x}, ${peer.y})`}
+      className="zv-topo-peer"
+      onPointerDown={onPointerDown}
+      style={{ cursor: "grab" }}
+    >
       {/* outer ring */}
       <circle r={14} className={strokeClass} strokeWidth="1.2" />
       {/* OS-shape glyph at center */}

@@ -1135,7 +1135,33 @@ function AddDeviceDialog({
               />
             </div>
             {ipMode === "custom" && (
-              <div className="mt-1">
+              <div className="mt-1 flex flex-col gap-2">
+                {serverCidr && (() => {
+                  const range = ipRangeFromCidr(serverCidr)
+                  if (!range) return null
+                  return (
+                    <div className="border-border bg-muted/30 flex items-center justify-between gap-3 border px-3 py-2 font-mono text-[11px]">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-muted-foreground uppercase tracking-[0.08em] text-[10px]">
+                          Usable range
+                        </span>
+                        <span className="text-foreground tabular-nums">
+                          {range.first}
+                          <span className="text-muted-foreground"> → </span>
+                          {range.last}
+                        </span>
+                      </div>
+                      <div className="text-muted-foreground/80 text-right">
+                        <div className="tabular-nums">
+                          {range.total.toLocaleString()}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-[0.08em]">
+                          addresses
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
                 <Input
                   value={ipInput}
                   onChange={(e) => setIpInput(e.target.value)}
@@ -1146,7 +1172,7 @@ function AddDeviceDialog({
                   aria-invalid={!ipLooksValid}
                   autoFocus
                 />
-                <p className="text-muted-foreground mt-1 font-mono text-[11px]">
+                <p className="text-muted-foreground font-mono text-[11px]">
                   IPv4 only. Must be inside{" "}
                   <span className="text-foreground font-mono">
                     {serverCidr ?? "the server's subnet"}
@@ -1422,9 +1448,45 @@ function formatLastSeen(iso: string | null): string {
  *  server's CIDR. We just swap the host portion for `.42` so the user
  *  sees the right network prefix without us pretending to allocate. */
 function ipPlaceholderFor(cidr: string): string {
+  const range = ipRangeFromCidr(cidr)
+  if (!range) return "10.42.0.42"
+  // Use the network's third octet but force the host portion to .42 when
+  // the subnet is /24 or larger; for smaller subnets just hand back the
+  // first usable address as a safe example.
   const slash = cidr.indexOf("/")
-  const net = slash > 0 ? cidr.slice(0, slash) : cidr
-  const parts = net.split(".")
-  if (parts.length !== 4) return "10.42.0.42"
-  return `${parts[0]}.${parts[1]}.${parts[2]}.42`
+  const prefix = slash > 0 ? parseInt(cidr.slice(slash + 1), 10) : 32
+  if (prefix <= 24) {
+    const parts = range.first.split(".")
+    return `${parts[0]}.${parts[1]}.${parts[2]}.42`
+  }
+  return range.first
+}
+
+/** Compute the usable IPv4 address range for a CIDR — i.e. excluding the
+ *  network address, the gateway slot (.1, which the server reserves), and
+ *  the broadcast address. Returns null for malformed input or subnets too
+ *  small to host anything (≤ /30). */
+export function ipRangeFromCidr(cidr: string): {
+  first: string
+  last: string
+  total: number
+} | null {
+  const slash = cidr.indexOf("/")
+  if (slash < 0) return null
+  const net = cidr.slice(0, slash)
+  const prefix = parseInt(cidr.slice(slash + 1), 10)
+  if (isNaN(prefix) || prefix < 0 || prefix > 32) return null
+  const parts = net.split(".").map(Number)
+  if (parts.length !== 4) return null
+  if (parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) return null
+  const base =
+    ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
+  const total = 2 ** (32 - prefix)
+  if (total < 4) return null // /31, /32 don't have a usable peer range
+  // .0 = network, .1 = gateway (server), .N-1 = broadcast — all reserved.
+  const firstU32 = (base + 2) >>> 0
+  const lastU32 = (base + total - 2) >>> 0
+  const u32ToIp = (n: number) =>
+    `${(n >>> 24) & 0xff}.${(n >>> 16) & 0xff}.${(n >>> 8) & 0xff}.${n & 0xff}`
+  return { first: u32ToIp(firstU32), last: u32ToIp(lastU32), total: total - 3 }
 }

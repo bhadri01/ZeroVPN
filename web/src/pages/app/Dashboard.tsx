@@ -301,13 +301,15 @@ export function DashboardPage() {
         )}
       </AnimatePresence>
 
-      {/* Row 2: live topology (1fr) + live event stream (360px) */}
-      {/* Row 2: live topology — full-width hero */}
+      {/* Row 2: live topology — full-width hero. Tall fixed height so the
+          graph has room to breathe and dragged nodes don't bump the canvas
+          edge. The inner LiveTopology has its own toolbar (zoom, pan,
+          fullscreen, reset) and supports per-node drag. */}
       <Panel
         title="Live topology"
-        sub="Worker → ZeroMQ → API → WS · sub-second"
+        sub="Worker → ZeroMQ → API → WS · sub-second · drag nodes to rearrange"
         right={<LiveIndicator />}
-        bodyClassName="p-0 aspect-[21/9] relative"
+        bodyClassName="!p-0 !h-[400px] !flex-none relative overflow-hidden"
       >
         <LiveTopology
           devices={devices}
