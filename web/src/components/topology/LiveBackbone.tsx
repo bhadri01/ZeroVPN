@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 
+import { usePageVisible } from "@/hooks/usePageVisible"
+
 const HUBS = [
   { id: "fra-01", x: 0.30, y: 0.40, label: "fra-01", country: "DE", peers: 14 },
   { id: "ams-02", x: 0.40, y: 0.20, label: "ams-02", country: "NL", peers: 9 },
@@ -48,11 +50,12 @@ interface LiveBackboneProps {
 
 export function LiveBackbone({ live = true }: LiveBackboneProps) {
   const [tick, setTick] = useState(0)
+  const visible = usePageVisible()
   useEffect(() => {
-    if (!live) return
+    if (!live || !visible) return
     const id = setInterval(() => setTick((t) => t + 1), 1000)
     return () => clearInterval(id)
-  }, [live])
+  }, [live, visible])
 
   const livePeers = PEERS.filter((p) => p.live).length
 

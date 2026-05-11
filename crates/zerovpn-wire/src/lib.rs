@@ -47,13 +47,45 @@ pub enum Event {
         dns_names: Vec<String>,
     },
 
-    /// Server-wide health snapshot.
+    /// Server-wide health snapshot. Emitted by the worker every 5 s for
+    /// admin dashboards. CPU%, memory, disk I/O ("real I/O"), network I/O,
+    /// uptime, peer count. All rates are per-second (computed by the
+    /// emitter from cumulative counters). Disk I/O is sourced from
+    /// `/proc/diskstats` on Linux and is 0 on platforms where that file
+    /// doesn't exist.
     ServerHealth {
         server_id: Uuid,
         cpu_pct: f32,
         mem_used_bytes: u64,
         mem_total_bytes: u64,
         active_peers: u32,
+        /// Disk: bytes read per second, host-wide, across all real block
+        /// devices (`/proc/diskstats`, filtered to skip loop/ram/dm).
+        disk_read_bps: u64,
+        /// Disk: bytes written per second, same source.
+        disk_write_bps: u64,
+        /// Network: bytes received per second (host-level, summed across NICs).
+        net_rx_bps: u64,
+        /// Network: bytes transmitted per second.
+        net_tx_bps: u64,
+        /// Process uptime in seconds (the worker's own — used in the
+        /// "uptime dd hh mm ss" sidebar label).
+        uptime_sec: u64,
+        ts_ms: i64,
+    },
+
+    /// Per-server bandwidth + peer-count tick. Emitted once per poll
+    /// round alongside the per-peer `StatsDelta`s. Backed by the
+    /// `server_samples` table (migration 5).
+    ServerSample {
+        server_id: Uuid,
+        total_rx_bytes: u64,
+        total_tx_bytes: u64,
+        rate_rx_bps: u64,
+        rate_tx_bps: u64,
+        peer_count: u32,
+        online_count: u32,
+        handshake_count: u32,
         ts_ms: i64,
     },
 }
@@ -67,13 +99,29 @@ pub enum PeerStatus {
 }
 
 /// MessagePack-encode an event.
+///
+/// Two non-defaults are set on the rmp-serde serializer:
+///   - `with_struct_map()` — equivalent to the old `to_vec_named`: encode
+///     struct fields by name (a map), not positionally (an array). Lets
+///     the JS side decode without a shared schema.
+///   - `with_human_readable()` — tells UUID / IpAddr-style types whose
+///     serde impl branches on `is_human_readable()` to emit strings, not
+///     raw bytes. Without this, `Uuid` lands on the wire as 16 raw bytes
+///     and JS sees a Uint8Array (which stringifies to "1,158,0,168…").
 pub fn encode(event: &Event) -> Result<Vec<u8>, rmp_serde::encode::Error> {
-    rmp_serde::to_vec_named(event)
+    let mut buf = Vec::new();
+    let mut ser = rmp_serde::Serializer::new(&mut buf)
+        .with_struct_map()
+        .with_human_readable();
+    event.serialize(&mut ser)?;
+    Ok(buf)
 }
 
-/// MessagePack-decode an event.
+/// MessagePack-decode an event. Mirrors the human-readable flag set on
+/// the encode side so a round-trip in Rust still works.
 pub fn decode(bytes: &[u8]) -> Result<Event, rmp_serde::decode::Error> {
-    rmp_serde::from_slice(bytes)
+    let mut de = rmp_serde::Deserializer::new(bytes).with_human_readable();
+    Event::deserialize(&mut de)
 }
 
 // ---------------------------------------------------------------------------

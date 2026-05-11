@@ -54,13 +54,15 @@ Full design rationale lives in [`/Users/black/.claude/plans/can-u-list-out-memoi
 ## Persistence
 
 - PostgreSQL 18, single primary. Connection pooling via sqlx (16 max in api, 4 in worker).
-- Time-series `bandwidth_samples` partitioned monthly with `RANGE` partitions. Raw rows dropped at 7 days; aggregates retained per the policy in [retention.md](#) (TBW).
+- Time-series `bandwidth_samples` partitioned monthly with `RANGE` partitions. **Raw rows kept indefinitely by default** (migration 5); set `ZEROVPN_SAMPLE_RETENTION_DAYS=N` to bring back a hard window. Aggregates (`bandwidth_aggregates`) are unbounded regardless. See [runbook.md → Stats pipeline & disk growth](runbook.md#stats-pipeline--disk-growth) for the storage math.
+- Per-server time-series `server_samples` (migration 5) tracks total RX/TX, peer counts, and handshake-rate per poll tick. Same partitioning + retention story as `bandwidth_samples`, gated on `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS`.
 
 ## Privacy & no-logs
 
 - IPs are stored as INET prefixes (`/24` for IPv4, `/48` for IPv6). User agents as sha256 hashes only.
 - No DNS query logs, no traffic content, no destination IP logs anywhere in the stack.
-- The retention purger drops samples older than 7 d and anonymizes audit metadata after policy windows.
+- The retention purger anonymizes audit metadata after policy windows (30 days for IPs) and hard-purges soft-deleted users at +30 days.
+- **Per-tick byte counters (`bandwidth_samples`, `server_samples`) are kept indefinitely by default** as of migration 5. This is a relaxation of the original "raw rows dropped at 7 days" posture. The traffic-content guarantees above still hold — what's logged is byte counts and peer/server identifiers, not destinations, not payloads. If the relaxation isn't what you want, set `ZEROVPN_SAMPLE_RETENTION_DAYS` + `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS` to restore the bounded-window behavior.
 
 ## Obfuscation
 

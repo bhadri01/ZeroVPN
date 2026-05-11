@@ -64,12 +64,20 @@ async fn main() -> Result<()> {
     // `secure: true` requires the cookie to ride only over HTTPS. Caddy
     // terminates TLS for us in production; in dev we serve over plaintext
     // localhost so the flag is off.
+    // Session idle window: 30 minutes in prod (snappy auth turnover), 30
+    // days in dev so a cargo restart or an overnight tab doesn't kick you
+    // back to /login. Each authenticated request refreshes the window.
+    let idle_expiry = if is_production {
+        time::Duration::minutes(30)
+    } else {
+        time::Duration::days(30)
+    };
     let session_layer = SessionManagerLayer::new(session_store)
         .with_secure(is_production)
         .with_http_only(true)
         .with_same_site(tower_sessions::cookie::SameSite::Lax)
         .with_name("zerovpn_session")
-        .with_expiry(Expiry::OnInactivity(time::Duration::minutes(30)));
+        .with_expiry(Expiry::OnInactivity(idle_expiry));
 
     bootstrap::ensure_default_server(&pool)
         .await
@@ -176,6 +184,8 @@ async fn main() -> Result<()> {
                 .route("/devices/{id}/unpause", post(routes::devices::unpause))
                 .route("/devices/{id}/dns", axum::routing::put(routes::dns::set))
                 .route("/devices/{id}/bandwidth", get(routes::bandwidth::for_device))
+                .route("/devices/{id}/history", get(routes::bandwidth::device_history))
+                .route("/servers/{id}/history", get(routes::bandwidth::server_history))
                 .route("/bandwidth", get(routes::bandwidth::for_user))
                 .route("/auth/totp/setup", post(routes::totp::setup))
                 .route("/auth/totp/enable", post(routes::totp::enable))
@@ -373,5 +383,6 @@ fn event_kind(e: &Event) -> &'static str {
         Event::PeerStatusChanged { .. } => "peer_status_changed",
         Event::DnsUpdated { .. } => "dns_updated",
         Event::ServerHealth { .. } => "server_health",
+        Event::ServerSample { .. } => "server_sample",
     }
 }

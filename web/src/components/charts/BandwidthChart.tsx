@@ -10,17 +10,11 @@ import {
 } from "recharts"
 
 import type { BandwidthBucket } from "@/lib/api"
+import { formatBytes } from "@/lib/units"
 
 interface Props {
   buckets: BandwidthBucket[]
   height?: number
-}
-
-function formatBytes(n: number): string {
-  if (n < 1_000) return `${n} B`
-  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)} kB`
-  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)} MB`
-  return `${(n / 1_000_000_000).toFixed(2)} GB`
 }
 
 // Swiss palette: cobalt-blue RX, lime TX. Pulled via CSS vars so the

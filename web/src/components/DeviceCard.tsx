@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import type { PublicDevice } from "@/lib/api"
+import { compactBytes, formatBps } from "@/lib/units"
 import { useLiveStats } from "@/stores/liveStats"
 
 interface Props {
@@ -174,16 +175,3 @@ function RateBlock({
   )
 }
 
-function formatBps(bps: number): string {
-  if (bps < 1_000) return `${Math.round(bps)} bps`
-  if (bps < 1_000_000) return `${(bps / 1_000).toFixed(1)} kbps`
-  if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`
-  return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
-}
-
-function compactBytes(n: number): string {
-  if (n < 1_000) return `${Math.round(n)}`
-  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)}k`
-  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  return `${(n / 1_000_000_000).toFixed(2)}G`
-}

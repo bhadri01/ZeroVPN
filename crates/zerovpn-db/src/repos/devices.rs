@@ -51,6 +51,16 @@ pub async fn list_by_server(pool: &PgPool, server_id: Uuid) -> sqlx::Result<Vec<
     .await
 }
 
+pub async fn count_active_for_server(pool: &PgPool, server_id: Uuid) -> sqlx::Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM devices WHERE server_id = $1 AND status = 'active'",
+    )
+    .bind(server_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
 pub struct NewDevice<'a> {
     pub user_id: Uuid,
     pub server_id: Uuid,
@@ -115,19 +125,21 @@ pub async fn set_dns_names(
     Ok(res.rows_affected())
 }
 
-/// `public_key → (device_id, user_id)` lookup so the WG poller can attribute
-/// each `wg show dump` line.
+/// `public_key → (device_id, user_id, server_id)` lookup so the WG poller
+/// can attribute each `wg show dump` line and roll per-tick stats up to
+/// the owning server.
 pub async fn pubkey_index(
     pool: &PgPool,
-) -> sqlx::Result<std::collections::HashMap<String, (Uuid, Uuid)>> {
-    let rows: Vec<(String, Uuid, Uuid)> = sqlx::query_as(
-        "SELECT public_key, id, user_id FROM devices WHERE status <> 'revoked'",
+) -> sqlx::Result<std::collections::HashMap<String, (Uuid, Uuid, Uuid)>> {
+    let rows: Vec<(String, Uuid, Uuid, Uuid)> = sqlx::query_as(
+        "SELECT public_key, id, user_id, server_id
+           FROM devices WHERE status <> 'revoked'",
     )
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(pk, id, uid)| (pk, (id, uid)))
+        .map(|(pk, id, uid, sid)| (pk, (id, uid, sid)))
         .collect())
 }
 

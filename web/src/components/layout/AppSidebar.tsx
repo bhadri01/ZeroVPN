@@ -14,11 +14,10 @@ import {
   IconUsers,
   IconWebhook,
 } from "@tabler/icons-react"
-import { useMemo } from "react"
 import { Link, NavLink, useLocation } from "react-router"
 
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
-import { LiveDot, Wordmark } from "@/components/swiss"
+import { LiveDot, Logomark, Wordmark } from "@/components/swiss"
 import {
   Sidebar,
   SidebarContent,
@@ -35,7 +34,8 @@ import {
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/stores/auth"
-import { aggregateLiveStats, useLiveStats } from "@/stores/liveStats"
+import { formatBytes } from "@/lib/units"
+import { useLiveStats } from "@/stores/liveStats"
 
 type NavEntry = {
   to: string
@@ -69,17 +69,27 @@ const ADMIN: NavEntry[] = [
 
 export function AppSidebar() {
   const user = useAuth((s) => s.user)
+  const isAdmin = user?.role === "admin"
   const { state } = useSidebar()
   const collapsed = state === "collapsed"
 
   return (
     <Sidebar collapsible="icon" className="border-r">
-      <SidebarHeader className="border-sidebar-border h-12 justify-center border-b px-4 py-0">
+      <SidebarHeader
+        className={cn(
+          "border-sidebar-border h-12 justify-center border-b py-0",
+          // Collapsed sidebar narrows to icon-width; drop the horizontal
+          // padding so the logomark stays centered instead of getting
+          // clipped against the right edge.
+          collapsed ? "px-0" : "px-4",
+        )}
+      >
         <Link
           to="/app"
-          className="flex h-12 items-center font-mono text-xs font-medium tracking-[0.04em]"
+          className="flex h-12 items-center justify-center font-mono text-xs font-medium tracking-[0.04em]"
+          aria-label="ZeroVPN"
         >
-          {collapsed ? <Wordmark size={11} /> : <Wordmark size={12} />}
+          {collapsed ? <Logomark size={18} /> : <Wordmark size={12} />}
         </Link>
       </SidebarHeader>
 
@@ -115,9 +125,8 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="gap-0">
-        {!collapsed && <LivePulse />}
+        {!collapsed && isAdmin && <ServerStats />}
         <CollapseToggle collapsed={collapsed} />
-        {!collapsed && <VersionRow />}
       </SidebarFooter>
 
       <SidebarRail />
@@ -164,60 +173,178 @@ function NavList({ entries }: { entries: NavEntry[] }) {
 }
 
 /**
- * Aggregate live RX/TX sparkline + numeric labels for the sidebar
- * footer. Reads from the shared liveStats store; renders nothing if
- * there's no data yet (avoids a placeholder slab on first paint).
+ * Admin-only server-stats panel. Renders host-level metrics from the
+ * worker's server_health emitter: CPU%, memory used/total, net I/O
+ * sparkline + current rate, and uptime in dd hh mm ss format. Only
+ * mounted when the current user is an admin (the worker's WS filter
+ * drops `server_health` for non-admins anyway).
+ *
+ * If there's no server_health event yet (worker not started, or just
+ * after first boot), shows zero values — the chart fills in within
+ * 5 seconds of the worker coming up.
  */
-function LivePulse() {
-  // Select the stable `devices` reference and memoize the aggregate.
-  // Calling `useLiveStats(aggregateLiveStats)` directly would return a
-  // new object on every read and trip `useSyncExternalStore` into the
-  // "snapshot is not cached" infinite loop (React error #185).
-  const devices = useLiveStats((s) => s.devices)
-  const agg = useMemo(() => aggregateLiveStats(devices), [devices])
+function ServerStats() {
+  const health = useLiveStats((s) => {
+    const ids = Object.keys(s.serverHealth)
+    return ids.length > 0 ? s.serverHealth[ids[0]] : null
+  })
+
+  // Distinguish "haven't received an event yet" (panel waits, no zeros)
+  // from "events arriving, host genuinely idle" (zeros render). The
+  // worker emits server_health every 5 s; if you've been on the page
+  // for >10 s with no values, the worker binary is most likely an old
+  // build without the server_health module — rebuild it.
+  if (!health || health.lastTs === 0) {
+    return (
+      <div className="mx-2 mb-1 space-y-1.5">
+        <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em]">
+          <span className="text-muted-foreground">Server stats</span>
+          <span className="text-muted-foreground inline-flex items-center gap-1.5">
+            <LiveDot />
+            Waiting
+          </span>
+        </div>
+        <p className="text-muted-foreground/70 py-2 font-mono text-[10px] leading-snug">
+          No server_health event yet — worker emits every 5 s. If this
+          persists, the worker binary is missing the new emitter
+          (rebuild required).
+        </p>
+      </div>
+    )
+  }
+
+  const cpuPct = health.cpuPct
+  const memUsed = health.memUsedBytes
+  const memTotal = health.memTotalBytes
+  const memPct = memTotal > 0 ? (memUsed / memTotal) * 100 : 0
+  const diskRead = health.diskReadBps
+  const diskWrite = health.diskWriteBps
+  const netRx = health.netRxBps
+  const netTx = health.netTxBps
+
   return (
-    <div className="border-sidebar-border mx-2 mb-1 space-y-1.5 border p-2">
+    <div className="mx-2 mb-1 space-y-1.5">
       <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em]">
-        <span className="text-muted-foreground">All devices</span>
+        <span className="text-muted-foreground">Server stats</span>
         <span className="text-muted-foreground inline-flex items-center gap-1.5">
           <LiveDot />
-          Live
+          Host
         </span>
       </div>
-      <MiniAreaChart
-        rxHistory={agg.rxHistory}
-        txHistory={agg.txHistory}
-        height={42}
+
+      <ProgressRow label="CPU" pct={cpuPct} value={`${cpuPct.toFixed(0)}%`} />
+      <ProgressRow
+        label="Mem"
+        pct={memPct}
+        value={`${formatBytes(memUsed)} / ${formatBytes(memTotal)}`}
       />
-      <div className="text-muted-foreground flex items-center justify-between font-mono text-[10px] tabular-nums">
-        <span>
-          <span className="text-status-online">↓</span> {formatBps(agg.rxBps)}
-        </span>
-        <span>
-          <span className="text-primary">↑</span> {formatBps(agg.txBps)}
+
+      <div className="pt-1">
+        <div className="text-muted-foreground pb-0.5 font-mono text-[10px] uppercase tracking-[0.08em]">
+          Real I/O
+        </div>
+        <MiniAreaChart
+          rxHistory={health.diskReadHistory}
+          txHistory={health.diskWriteHistory}
+          height={32}
+        />
+        <div className="text-muted-foreground flex items-center justify-between pt-0.5 font-mono text-[10px] tabular-nums">
+          <span>
+            <span className="text-status-online">R</span> {formatBytes(diskRead)}/s
+          </span>
+          <span>
+            <span className="text-primary">W</span> {formatBytes(diskWrite)}/s
+          </span>
+        </div>
+      </div>
+
+      <div className="pt-1">
+        <div className="text-muted-foreground flex items-center justify-between font-mono text-[10px] tabular-nums">
+          <span className="uppercase tracking-[0.08em]">Net I/O</span>
+          <span className="text-foreground">
+            {/* Worker emits net rate in bits/sec to match the rest of the
+                wire format; the sidebar prefers byte units. Divide by 8 to
+                go bits → bytes, then format with formatBytes + "/s". */}
+            <span className="text-status-online">↓</span>{" "}
+            {formatBytes(netRx / 8)}/s
+            <span className="text-muted-foreground px-1">·</span>
+            <span className="text-primary">↑</span>{" "}
+            {formatBytes(netTx / 8)}/s
+          </span>
+        </div>
+      </div>
+
+      <div className="text-muted-foreground flex items-center justify-between pt-1 font-mono text-[10px] tabular-nums">
+        <span>Uptime</span>
+        <span className="text-foreground">
+          {formatUptime(health.uptimeSec)}
         </span>
       </div>
     </div>
   )
 }
 
-function VersionRow() {
+/** Inline label · bar · value row used inside ServerStats. Bar color +
+ * value color tier on the percentage so a glance at the sidebar reads
+ * "healthy / warning / critical" without having to parse the number:
+ *   < 60 % → online (green)
+ *   60–85 % → degraded (amber)
+ *   > 85 % → revoked (red)
+ * Matches the tone scheme used by StatusPill elsewhere in the app. */
+function ProgressRow({
+  label,
+  pct,
+  value,
+}: {
+  label: string
+  pct: number
+  value: string
+}) {
+  const clamped = Math.max(0, Math.min(100, pct))
+  const tone =
+    clamped > 85 ? "revoked" : clamped > 60 ? "degraded" : "online"
+  const fillClass =
+    tone === "revoked"
+      ? "bg-status-revoked"
+      : tone === "degraded"
+        ? "bg-status-degraded"
+        : "bg-status-online"
+  const valueClass =
+    tone === "revoked"
+      ? "text-status-revoked"
+      : tone === "degraded"
+        ? "text-status-degraded"
+        : "text-foreground"
   return (
-    <div className="text-muted-foreground flex items-center justify-between px-3 py-2 font-mono text-[10px]">
-      <span>v1.0.20240310</span>
-      <span className="inline-flex items-center gap-1.5">
-        <LiveDot />
-        live
-      </span>
+    <div className="space-y-0.5">
+      <div className="text-muted-foreground flex items-center justify-between font-mono text-[10px] tabular-nums">
+        <span>{label}</span>
+        <span className={valueClass}>{value}</span>
+      </div>
+      <div className="bg-muted/30 h-1 w-full overflow-hidden">
+        <div
+          className={cn(
+            "h-full transition-[width,background-color] duration-300 ease-out",
+            fillClass,
+          )}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
     </div>
   )
 }
 
-function formatBps(bps: number): string {
-  if (bps < 1_000) return `${Math.round(bps)} bps`
-  if (bps < 1_000_000) return `${(bps / 1_000).toFixed(1)} kbps`
-  if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`
-  return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
+/** Format a duration in seconds as "dd hh mm ss". Days drop when 0 to
+ * keep the line short during the first day of uptime. */
+function formatUptime(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "—"
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = Math.floor(sec % 60)
+  const pad = (n: number) => n.toString().padStart(2, "0")
+  if (d > 0) return `${d}d ${pad(h)}h ${pad(m)}m ${pad(s)}s`
+  return `${pad(h)}h ${pad(m)}m ${pad(s)}s`
 }
 
 /**

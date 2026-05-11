@@ -133,6 +133,38 @@ pub async fn device_daily(
     .await
 }
 
+/// Raw (un-rolled-up) samples for a device. The samples table is
+/// tick-cadence (1s default) so the caller must bound the window — an
+/// unbounded query against a tick table is slow on a busy host.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct RawSample {
+    pub sampled_at: OffsetDateTime,
+    pub rx_bytes: i64,
+    pub tx_bytes: i64,
+}
+
+pub async fn device_raw(
+    pool: &PgPool,
+    device_id: Uuid,
+    from: OffsetDateTime,
+    to: OffsetDateTime,
+    limit: i64,
+) -> sqlx::Result<Vec<RawSample>> {
+    sqlx::query_as::<_, RawSample>(
+        r#"SELECT sampled_at, rx_bytes, tx_bytes
+             FROM bandwidth_samples
+            WHERE device_id = $1 AND sampled_at >= $2 AND sampled_at < $3
+            ORDER BY sampled_at ASC
+            LIMIT $4"#,
+    )
+    .bind(device_id)
+    .bind(from)
+    .bind(to)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
 /// Total aggregated for a user across all devices in a date range.
 pub async fn user_totals(
     pool: &PgPool,

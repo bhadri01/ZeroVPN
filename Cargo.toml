@@ -87,6 +87,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
+# Host metrics for the server_health emitter (CPU%, memory, net I/O, disk I/O, uptime).
+sysinfo = { version = "0.32", default-features = false, features = ["system", "network", "disk"] }
 
 # OpenAPI
 utoipa = { version = "5.5", features = ["axum_extras", "uuid", "time"] }

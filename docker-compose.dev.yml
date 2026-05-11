@@ -33,10 +33,10 @@ services:
     ports:
       - "5555:5555"
     environment:
-      # Faster simulator cadence in dev so the topology graph comes alive
-      # immediately after a device is added. Production drops back to 30s
-      # in docker-compose.prod.yml.
-      ZEROVPN_STATS_INTERVAL_SECS: "5"
+      # 1-second poll cadence: each tick writes a bandwidth_samples row per
+      # device + a server_samples row per server + pushes ServerSample over
+      # the WS. Dial up if disk churn is a problem on this host.
+      ZEROVPN_STATS_INTERVAL_SECS: "1"
 
   db:
     env_file: .env.dev

@@ -365,6 +365,147 @@
 .dark .zv-pill[data-tone="info"] { color: #5a9cff; border-color: color-mix(in oklch, #5a9cff 35%, var(--border)); }
 .zv-pill[data-tone="paused"] { color: var(--status-paused); }
 
+/* Clickable status-pill — used as filter chips on Devices.
+   Visually mirrors .zv-pill but is a button: distinct selected state via
+   solid tone fill, and a trailing count chip for the bucket size. */
+.zv-filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px 0 7px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  background: var(--card);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 100ms, border-color 100ms, background 100ms;
+}
+.zv-filter-pill:hover {
+  color: var(--foreground);
+  border-color: color-mix(in oklch, var(--foreground) 40%, var(--border));
+}
+.zv-filter-pill__count {
+  font-variant-numeric: tabular-nums;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 14px;
+}
+.zv-filter-pill[data-tone="ok"]      { color: var(--status-online); }
+.zv-filter-pill[data-tone="online"]  { color: var(--status-online); }
+.zv-filter-pill[data-tone="offline"] { color: var(--status-offline); }
+.zv-filter-pill[data-tone="paused"]  { color: var(--status-paused); }
+.zv-filter-pill[data-tone="revoked"] { color: var(--destructive); }
+
+/* Selected state: tint the chip in its tone — clearly distinguishes the
+   active filter from the dimmed inactive ones. */
+.zv-filter-pill--on {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 6%, var(--card));
+  border-color: color-mix(in oklch, var(--foreground) 35%, var(--border));
+}
+.zv-filter-pill--on[data-tone="online"] {
+  color: var(--status-online);
+  background: color-mix(in oklch, var(--status-online) 12%, var(--card));
+  border-color: color-mix(in oklch, var(--status-online) 45%, var(--border));
+}
+.zv-filter-pill--on[data-tone="offline"] {
+  color: var(--status-offline);
+  background: color-mix(in oklch, var(--status-offline) 12%, var(--card));
+  border-color: color-mix(in oklch, var(--status-offline) 45%, var(--border));
+}
+.zv-filter-pill--on[data-tone="paused"] {
+  color: var(--status-paused);
+  background: color-mix(in oklch, var(--status-paused) 12%, var(--card));
+  border-color: color-mix(in oklch, var(--status-paused) 45%, var(--border));
+}
+.zv-filter-pill--on[data-tone="revoked"] {
+  color: var(--destructive);
+  background: color-mix(in oklch, var(--destructive) 12%, var(--card));
+  border-color: color-mix(in oklch, var(--destructive) 45%, var(--border));
+}
+.zv-filter-pill--on .zv-filter-pill__count {
+  background: color-mix(in oklch, currentColor 16%, transparent);
+  color: currentColor;
+}
+
+/* Filter dropdown trigger — used on Devices for Connection / Peer
+   multi-selects. Swiss-sharp (2px radius, matches buttons/inputs);
+   gains a tinted bg when any option is selected so it's immediately
+   obvious which filters are active. */
+.zv-filter-dd {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  background: var(--card);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 100ms, border-color 100ms, background 100ms;
+}
+.zv-filter-dd:hover {
+  color: var(--foreground);
+  border-color: color-mix(in oklch, var(--foreground) 40%, var(--border));
+}
+.zv-filter-dd__label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.zv-filter-dd__value {
+  color: var(--foreground);
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zv-filter-dd__badge {
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  border-radius: 2px;
+  background: color-mix(in oklch, var(--primary) 22%, transparent);
+  color: var(--foreground);
+  font-size: 10px;
+  line-height: 16px;
+}
+.zv-filter-dd--on {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 5%, var(--card));
+  border-color: color-mix(in oklch, var(--foreground) 30%, var(--border));
+}
+.zv-filter-dd--on .zv-filter-dd__label { color: var(--foreground); }
+
+/* Checkbox indicator inside the dropdown row — hand-rolled instead of
+   reaching for the shadcn Checkbox so it sits tight with the row layout. */
+.zv-filter-dd__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--primary-foreground);
+  background: var(--card);
+  flex-shrink: 0;
+}
+.zv-filter-dd__check--on {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
 /* Hairline table — replaces shadcn Table when Swiss density is wanted */
 .zv-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .zv-table thead th {

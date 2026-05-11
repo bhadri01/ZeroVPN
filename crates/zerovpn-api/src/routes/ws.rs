@@ -85,7 +85,11 @@ fn visible_to(event: &Event, user_id: Uuid, role: UserRole) -> bool {
         return true;
     }
     match event {
-        Event::Heartbeat { .. } | Event::ServerHealth { .. } => false,
+        // Server-wide telemetry is admin-only (the admin branch above
+        // already covered admins, so non-admins see nothing here).
+        Event::Heartbeat { .. }
+        | Event::ServerHealth { .. }
+        | Event::ServerSample { .. } => false,
         Event::StatsDelta { user_id: u, .. }
         | Event::HandshakeChange { user_id: u, .. }
         | Event::PeerStatusChanged { user_id: u, .. }

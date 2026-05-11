@@ -14,20 +14,20 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use zerovpn_db::{
     PgPool,
-    repos::{bandwidth, devices, users},
+    repos::{bandwidth, devices, server_samples, users},
 };
 use zerovpn_wire::Event;
 
-/// Poll interval. Configurable via env var so smoke tests can run on a
-/// faster cadence than production. Defaults to 10s in dev to make the
-/// topology graph come alive immediately; real-WG poller arrives in 1B-C
-/// and runs at 30s in prod.
+/// Poll interval. Configurable via env var. The default is 1s — the
+/// "trading-style every-tick" cadence the dashboard expects. Bump it up
+/// in resource-constrained deployments where the disk churn becomes a
+/// problem.
 fn poll_interval() -> Duration {
     std::env::var("ZEROVPN_STATS_INTERVAL_SECS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(10))
+        .unwrap_or(Duration::from_secs(1))
 }
 
 pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
@@ -58,10 +58,18 @@ async fn emit_round(
 
     for s in servers {
         let devs = devices::list_by_server(pool, s.id).await?;
+        // Per-server rollup accumulated across this round.
+        let mut srv_rx: u64 = 0;
+        let mut srv_tx: u64 = 0;
+        let mut srv_peers: u32 = 0;
+        let mut srv_online: u32 = 0;
+        let mut srv_handshakes: u32 = 0;
         for d in devs {
+            srv_peers += 1;
             if d.status != zerovpn_core::models::DeviceStatus::Active {
                 continue;
             }
+            srv_online += 1;
             // Generate the random fields in a tight scope so ThreadRng (which
             // isn't Send) is dropped before we cross the next await point.
             let (rx_bytes, tx_bytes, rate_rx_bps, rate_tx_bps) = {
@@ -151,6 +159,13 @@ async fn emit_round(
                 Err(e) => warn!(?e, "monthly usage update failed"),
             }
 
+            // Fold into the per-server tick rollup.
+            srv_rx = srv_rx.saturating_add(rx_bytes);
+            srv_tx = srv_tx.saturating_add(tx_bytes);
+            // Simulator pretends every active peer "handshook" this tick;
+            // the real WG poller computes this from `latest_handshake`.
+            srv_handshakes += 1;
+
             let event = Event::StatsDelta {
                 device_id: d.id,
                 user_id: d.user_id,
@@ -166,6 +181,43 @@ async fn emit_round(
             }
             count += 1;
         }
+
+        // Persist + broadcast the per-server tick. Done after the peer
+        // loop so peer-level events get out first (lower latency on
+        // the visible per-device sparkline path).
+        let secs = interval.as_secs().max(1);
+        let srv_rate_rx = srv_rx / secs * 8;
+        let srv_rate_tx = srv_tx / secs * 8;
+        if let Err(e) = server_samples::insert(
+            pool,
+            s.id,
+            now,
+            srv_rx as i64,
+            srv_tx as i64,
+            srv_peers as i32,
+            srv_online as i32,
+            srv_handshakes as i32,
+        )
+        .await
+        {
+            warn!(server = %s.id, ?e, "server_sample insert failed");
+        }
+        let _ = tx
+            .send((
+                format!("stats.server.{}", s.id),
+                Event::ServerSample {
+                    server_id: s.id,
+                    total_rx_bytes: srv_rx,
+                    total_tx_bytes: srv_tx,
+                    rate_rx_bps: srv_rate_rx,
+                    rate_tx_bps: srv_rate_tx,
+                    peer_count: srv_peers,
+                    online_count: srv_online,
+                    handshake_count: srv_handshakes,
+                    ts_ms: now_ms,
+                },
+            ))
+            .await;
     }
     Ok(count)
 }

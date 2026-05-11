@@ -133,6 +133,38 @@ For age-encrypted backups, set `ZEROVPN_BACKUP_AGE_RECIPIENT` to your age public
 | `dnsmasq: failed to load /etc/dnsmasq.d/zerovpn-peers.conf` | Volume empty before first device | Harmless; the worker writes the file when the first peer's DNS name is set. |
 | `wg0.conf` missing in wg container | Bootstrap couldn't write to shared volume | Verify `wg_config` volume mount on api service; check api logs for "wg0.conf write failed". |
 
+## Stats pipeline & disk growth
+
+ZeroVPN runs in "every-tick kept forever" mode by default (migration 5). At each `ZEROVPN_STATS_INTERVAL_SECS` tick (default 1 second) the worker:
+
+1. Runs `wg show <iface> dump` (or the dev simulator), computes per-peer RX/TX deltas.
+2. Inserts **one row per active peer** into `bandwidth_samples`.
+3. Inserts **one row per server** into `server_samples` (totals + peer/online/handshake counts).
+4. Publishes `Event::StatsDelta` (peer-level, scoped to the owning user) and `Event::ServerSample` (server-level, admin-only) over ZMQ → api broadcast → WS → frontend.
+
+**Disk growth ballpark** (each `bandwidth_samples` row is ~50 bytes including indexes, each `server_samples` row is ~70 bytes):
+
+| Deployment | Daily rows | Daily size | 30-day | 1-year |
+|---|---|---|---|---|
+| 10 peers, 1 Hz | 864k | 43 MB | 1.3 GB | 16 GB |
+| 50 peers, 1 Hz | 4.3M | 215 MB | 6.5 GB | 78 GB |
+| 200 peers, 1 Hz | 17.3M | 860 MB | 26 GB | 314 GB |
+| 50 peers, 5 Hz cadence | 17M | 860 MB | 26 GB | 314 GB |
+
+If that's too much, dial back via one of these knobs (set in `.env.dev` / `.env.prod`):
+
+- **Slower cadence**: `ZEROVPN_STATS_INTERVAL_SECS=5` → 5× less disk
+- **Raw-sample window**: `ZEROVPN_SAMPLE_RETENTION_DAYS=30` → drop per-device samples after 30 days (aggregates still kept forever, so long-term charts unaffected)
+- **Server-sample window**: `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS=90` → independent knob for `server_samples`
+
+Privacy note: prior to migration 5 the system was explicitly "no-logs" (raw samples dropped at 7 days). The current default keeps per-tick history indefinitely, which is a non-trivial change in posture. The retention env vars above let you restore the original behavior in one line. The previously-documented privacy guarantees (no DNS query logs, no traffic content, no destination IPs) still hold — what changed is how long the byte-count time-series is kept.
+
+**API endpoints for the historical data**:
+
+- `GET /api/v1/devices/{id}/history?from=<rfc3339>&to=<rfc3339>&limit=3600` — raw per-tick samples for one device (owner only). Default window: last hour. Hard cap 10 000 rows.
+- `GET /api/v1/servers/{id}/history?from=...&to=...&limit=...` — per-tick server samples (admin only). Same query params.
+- `GET /api/v1/devices/{id}/bandwidth?range=24h|7d|30d` — rolled-up aggregates (existing endpoint, unchanged).
+
 ## Rotating secrets
 
 ```

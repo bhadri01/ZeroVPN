@@ -87,8 +87,10 @@ export interface PublicDevice {
   public_key: string
   allocated_ip: string
   status: DeviceStatus
+  server_id: string
   dns_names: string[]
   allowed_ips_override: string[] | null
+  dns_override: string[] | null
   last_handshake_at: string | null
   created_at: string
 }
@@ -152,7 +154,15 @@ export const listDevices = () => apiFetch<PublicDevice[]>("/devices")
 
 export const getDevice = (id: string) => apiFetch<PublicDevice>(`/devices/${id}`)
 
-export const createDevice = (body: { name: string; os?: DeviceOs }) =>
+export const createDevice = (body: {
+  name: string
+  os?: DeviceOs
+  split_tunnel?: boolean
+  dns_override?: string[]
+  /** Optional manual IPv4 — when set, the server reserves exactly this
+   *  address. Omit to let the allocator pick the next free slot. */
+  allocated_ip?: string
+}) =>
   apiFetch<CreatedDevice>("/devices", {
     method: "POST",
     body: JSON.stringify(body),
@@ -207,6 +217,63 @@ export const userBandwidth = (range: BandwidthRange = "24h") =>
 
 export const deviceBandwidth = (id: string, range: BandwidthRange = "24h") =>
   apiFetch<BandwidthResponse>(`/devices/${id}/bandwidth?range=${range}`)
+
+// --- raw tick-level history (server-side bandwidth_samples / server_samples) ---
+// Used to hydrate the live charts on page load. The chart then continues
+// from `Event::StatsDelta` / `Event::ServerSample` arriving over the WS.
+
+export interface DeviceHistoryPoint {
+  sampled_at: string
+  rx_bytes: number
+  tx_bytes: number
+}
+
+export interface DeviceHistoryResponse {
+  device_id: string
+  from: string
+  to: string
+  samples: DeviceHistoryPoint[]
+}
+
+export interface ServerHistoryPoint {
+  sampled_at: string
+  total_rx_bytes: number
+  total_tx_bytes: number
+  peer_count: number
+  online_count: number
+  handshake_count: number
+}
+
+export interface ServerHistoryResponse {
+  server_id: string
+  from: string
+  to: string
+  samples: ServerHistoryPoint[]
+}
+
+interface HistoryOpts {
+  /** RFC3339 (`new Date(...).toISOString()`). Default: now - 5 min. */
+  from?: string
+  /** RFC3339. Default: now. */
+  to?: string
+  /** Row limit. Hard cap server-side: 10000. */
+  limit?: number
+}
+
+function historyQs(opts?: HistoryOpts): string {
+  const params = new URLSearchParams()
+  if (opts?.from) params.set("from", opts.from)
+  if (opts?.to) params.set("to", opts.to)
+  if (opts?.limit !== undefined) params.set("limit", String(opts.limit))
+  const s = params.toString()
+  return s ? `?${s}` : ""
+}
+
+export const deviceHistory = (id: string, opts?: HistoryOpts) =>
+  apiFetch<DeviceHistoryResponse>(`/devices/${id}/history${historyQs(opts)}`)
+
+export const serverHistory = (id: string, opts?: HistoryOpts) =>
+  apiFetch<ServerHistoryResponse>(`/servers/${id}/history${historyQs(opts)}`)
 
 // --- 2FA -----------------------------------------------------------------
 

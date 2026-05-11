@@ -27,8 +27,12 @@ services:
   worker:
     env_file: .env.prod
     environment:
-      # Real WG poller cadence — matches docs/runbook.md.
-      ZEROVPN_STATS_INTERVAL_SECS: "30"
+      # 1-second poll cadence. Each tick: one wg show dump, one INSERT
+      # per active peer into bandwidth_samples, one INSERT per server into
+      # server_samples, and one ServerSample event broadcast over ZMQ→WS.
+      # Bump this up (5 or 10) on resource-constrained hosts. See
+      # docs/runbook.md → "Disk growth" for the storage math.
+      ZEROVPN_STATS_INTERVAL_SECS: "1"
 
   db:
     env_file: .env.prod

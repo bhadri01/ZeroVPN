@@ -12,6 +12,7 @@ use zerovpn_wire::Event;
 
 mod aggregator;
 mod retention;
+mod server_health;
 mod stats_sim;
 mod wg_poller;
 
@@ -80,6 +81,16 @@ async fn main() -> Result<()> {
         let pool = pool.clone();
         tokio::spawn(async move {
             aggregator::run(pool).await;
+        });
+    }
+
+    // Server-health emitter — every 5s publishes Event::ServerHealth with
+    // host CPU/memory/net/disk/uptime. Admin-only via the WS filter.
+    {
+        let pool = pool.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            server_health::run(pool, tx).await;
         });
     }
 

@@ -9,19 +9,47 @@ export function useBootstrapAuth() {
 
   useEffect(() => {
     let alive = true
+    let attempt = 0
     setLoading(true)
-    me()
-      .then((u) => {
-        if (alive) setUser(u)
-      })
-      .catch((e) => {
-        if (e instanceof ApiError && e.status === 401) {
-          if (alive) setUser(null)
-        }
-      })
-      .finally(() => {
-        if (alive) setLoading(false)
-      })
+
+    const tryMe = () => {
+      me()
+        .then((u) => {
+          if (alive) {
+            setUser(u)
+            setLoading(false)
+          }
+        })
+        .catch((e) => {
+          if (!alive) return
+          if (e instanceof ApiError) {
+            // Definitive 401 from the server: the session really is gone,
+            // drop the user so the route guard can redirect to /login.
+            if (e.status === 401) {
+              setUser(null)
+              setLoading(false)
+              return
+            }
+            // Other API errors (500, maintenance, etc.): leave the user
+            // state alone and stop the loading spinner; ProtectedRoute will
+            // route based on whatever was last known.
+            setLoading(false)
+            return
+          }
+          // Network / fetch failure (typically the dev api is restarting):
+          // back off and retry a few times before giving up. This avoids
+          // the "every cargo restart bounces me to /login" loop.
+          attempt += 1
+          if (attempt <= 4) {
+            const delayMs = Math.min(4000, 250 * 2 ** attempt)
+            setTimeout(tryMe, delayMs)
+            return
+          }
+          setLoading(false)
+        })
+    }
+    tryMe()
+
     return () => {
       alive = false
     }

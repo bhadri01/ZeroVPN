@@ -33,6 +33,21 @@ pub struct CreateBody {
     pub name: String,
     #[garde(skip)]
     pub os: Option<DeviceOs>,
+    /// When true, the generated config restricts AllowedIPs to RFC1918
+    /// private subnets — the user's other traffic exits via their LAN.
+    #[garde(skip)]
+    pub split_tunnel: Option<bool>,
+    /// Optional custom DNS resolvers. Each must parse as an IPv4 or IPv6
+    /// address; rejected if any entry is malformed.
+    #[garde(skip)]
+    pub dns_override: Option<Vec<String>>,
+    /// Optional caller-supplied address. When set, the API tries to
+    /// reserve exactly this IP in the server's CIDR rather than picking
+    /// the next free one. Returns 409 if the address is taken or
+    /// reserved (network / broadcast / gateway), 400 if it parses but
+    /// isn't inside the server's CIDR.
+    #[garde(skip)]
+    pub allocated_ip: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -50,14 +65,20 @@ pub struct PublicDevice {
     pub public_key: String,
     pub allocated_ip: IpAddr,
     pub status: DeviceStatus,
+    pub server_id: Uuid,
     pub dns_names: Vec<String>,
     pub allowed_ips_override: Option<Vec<String>>,
+    pub dns_override: Option<Vec<String>>,
     pub last_handshake_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
 }
 
 impl From<Device> for PublicDevice {
     fn from(d: Device) -> Self {
+        let dns_override = d
+            .dns_override
+            .as_ref()
+            .map(|v| v.iter().map(|n| n.ip().to_string()).collect());
         Self {
             id: d.id,
             name: d.name,
@@ -65,13 +86,20 @@ impl From<Device> for PublicDevice {
             public_key: d.public_key,
             allocated_ip: d.allocated_ip.ip(),
             status: d.status,
+            server_id: d.server_id,
             dns_names: d.dns_names,
             allowed_ips_override: d.allowed_ips_override,
+            dns_override,
             last_handshake_at: d.last_handshake_at,
             created_at: d.created_at,
         }
     }
 }
+
+/// RFC1918 + IPv6 ULA — used when `split_tunnel = true` so only private
+/// subnets route through the tunnel.
+const SPLIT_TUNNEL_ALLOWED_IPS: &str =
+    "10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fd00::/8";
 
 pub async fn list(
     State(state): State<AppState>,
@@ -119,13 +147,56 @@ pub async fn create(
         .allocators
         .get(server.id)
         .ok_or_else(|| ApiError::Internal("server allocator missing".into()))?;
-    let ip = allocate_v4(&alloc)?;
+    let ip = match body.allocated_ip.as_ref() {
+        Some(raw) => reserve_specific(&alloc, raw)?,
+        None => allocate_v4(&alloc)?,
+    };
 
     let private_key = keys::generate_private_key();
     let public_key = keys::derive_public_key(&private_key)
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let amnezia = AmneziaParams::random();
+
+    // Validate optional DNS overrides up-front so we never persist a half-
+    // valid request. We also keep the parsed IPs for the conf below.
+    let dns_override_parsed: Option<Vec<std::net::IpAddr>> = match body.dns_override.as_ref() {
+        Some(list) if !list.is_empty() => {
+            let mut out = Vec::with_capacity(list.len());
+            for s in list {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let ip: std::net::IpAddr = trimmed
+                    .parse()
+                    .map_err(|_| ApiError::Validation(format!("invalid DNS IP: {trimmed}")))?;
+                out.push(ip);
+            }
+            if out.is_empty() { None } else { Some(out) }
+        }
+        _ => None,
+    };
+
+    let split_tunnel = body.split_tunnel.unwrap_or(false);
+    let allowed_ips_override_vec: Option<Vec<String>> = if split_tunnel {
+        Some(
+            SPLIT_TUNNEL_ALLOWED_IPS
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let dns_override_inet: Option<Vec<IpNetwork>> = dns_override_parsed.as_ref().map(|v| {
+        v.iter()
+            .map(|ip| {
+                IpNetwork::new(*ip, if ip.is_ipv4() { 32 } else { 128 })
+                    .expect("valid host prefix")
+            })
+            .collect()
+    });
 
     // Best-effort: persist the device row. If it fails we must release the IP.
     let allocated_cidr = IpNetwork::new(ip, 32).expect("valid /32");
@@ -153,6 +224,24 @@ pub async fn create(
         }
     };
 
+    // Apply per-device overrides chosen at create-time. We do this after
+    // insert so the column is a plain UPDATE — keeps `NewDevice` minimal.
+    if allowed_ips_override_vec.is_some() || dns_override_inet.is_some() {
+        sqlx::query(
+            r#"UPDATE devices
+                  SET allowed_ips_override = $3,
+                      dns_override         = $4
+                WHERE user_id = $1 AND id = $2"#,
+        )
+        .bind(user.id)
+        .bind(device_id)
+        .bind(allowed_ips_override_vec.as_deref())
+        .bind(dns_override_inet.as_deref())
+        .execute(&state.pool)
+        .await
+        .map_err(|e| ApiError::Internal(format!("apply create overrides: {e}")))?;
+    }
+
     audit::record(
         &state.pool,
         audit::AuditEntry {
@@ -160,7 +249,12 @@ pub async fn create(
             action: "device.created",
             target_type: Some("device"),
             target_id: Some(device_id),
-            metadata: json!({ "name": body.name, "server": server.name }),
+            metadata: json!({
+                "name": body.name,
+                "server": server.name,
+                "split_tunnel": split_tunnel,
+                "dns_override": body.dns_override,
+            }),
             ip_prefix: None,
         },
     )
@@ -168,15 +262,26 @@ pub async fn create(
 
     // Render the WG config for the user. The private key is held only here,
     // never persisted.
-    let dns_str = server
-        .dns_servers_ips()
-        .iter()
-        .map(|i| i.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
+    let dns_str = match dns_override_parsed.as_ref() {
+        Some(ips) => ips
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+        None => server
+            .dns_servers_ips()
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
     let endpoint_str = format!("{}:{}", server.endpoint_host, server.endpoint_port);
     let address_str = format!("{}/32", ip);
-    let allowed_ips = "0.0.0.0/0, ::/0".to_string();
+    let allowed_ips = if split_tunnel {
+        SPLIT_TUNNEL_ALLOWED_IPS.to_string()
+    } else {
+        "0.0.0.0/0, ::/0".to_string()
+    };
 
     let cfg = config::PeerConfig {
         private_key: &private_key,
@@ -445,6 +550,45 @@ fn allocate_v4(alloc: &Arc<IpAllocator>) -> ApiResult<IpAddr> {
     match alloc.allocate() {
         Ok(v4) => Ok(IpAddr::V4(v4)),
         Err(_) => Err(ApiError::Conflict("server IP pool exhausted".into())),
+    }
+}
+
+/// Caller-supplied IP path. Parses the string, ensures it's IPv4, then
+/// asks the allocator to atomically claim it inside the server's CIDR.
+/// Maps the four interesting outcomes to specific API errors so the
+/// frontend can render targeted toasts ("already taken" vs "outside
+/// subnet" vs "reserved address").
+fn reserve_specific(
+    alloc: &Arc<IpAllocator>,
+    raw: &str,
+) -> ApiResult<IpAddr> {
+    use zerovpn_wg::ip_alloc::AllocError;
+    let parsed: std::net::IpAddr = raw
+        .trim()
+        .parse()
+        .map_err(|_| ApiError::Validation(format!("invalid IP: {raw}")))?;
+    let v4 = match parsed {
+        std::net::IpAddr::V4(v4) => v4,
+        std::net::IpAddr::V6(_) => {
+            return Err(ApiError::Validation(
+                "only IPv4 addresses are supported for manual allocation".into(),
+            ));
+        }
+    };
+    match alloc.try_reserve(v4) {
+        Ok(()) => Ok(IpAddr::V4(v4)),
+        Err(AllocError::AlreadyAllocated) => Err(ApiError::Conflict(format!(
+            "{v4} is already assigned to another device"
+        ))),
+        Err(AllocError::OutOfRange) => Err(ApiError::Validation(format!(
+            "{v4} is outside the server's subnet"
+        ))),
+        Err(AllocError::Reserved) => Err(ApiError::Validation(format!(
+            "{v4} is a reserved address (network / broadcast / gateway)"
+        ))),
+        Err(AllocError::Exhausted) => {
+            Err(ApiError::Conflict("server IP pool exhausted".into()))
+        }
     }
 }
 

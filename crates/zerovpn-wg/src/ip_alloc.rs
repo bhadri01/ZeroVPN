@@ -11,6 +11,10 @@ pub enum AllocError {
     Exhausted,
     #[error("ip out of range")]
     OutOfRange,
+    #[error("ip already allocated")]
+    AlreadyAllocated,
+    #[error("ip is reserved (network / broadcast / gateway)")]
+    Reserved,
 }
 
 /// In-memory bitmap of allocated IPs within a server's CIDR.
@@ -63,6 +67,28 @@ impl IpAllocator {
     pub fn release(&self, ip: Ipv4Addr) -> Result<(), AllocError> {
         let idx = self.index_of(ip)?;
         self.bits.lock().remove(idx);
+        Ok(())
+    }
+
+    /// Atomically reserve a specific IP supplied by the caller.
+    ///
+    /// Returns `AlreadyAllocated` if the bit is already set, `OutOfRange`
+    /// if the IP isn't in this server's CIDR, and `Reserved` if it's the
+    /// network/broadcast address or the gateway (offset 0, 1, or N-1).
+    /// On success the bit is set, matching the post-state of `allocate()`.
+    pub fn try_reserve(&self, ip: Ipv4Addr) -> Result<(), AllocError> {
+        let idx = self.index_of(ip)?;
+        let mut bits = self.bits.lock();
+        let total = bits.len();
+        // Block the three pre-marked slots specifically so callers can
+        // distinguish them from a contended user allocation.
+        if idx == 0 || idx == 1 || idx == total - 1 {
+            return Err(AllocError::Reserved);
+        }
+        if bits.contains(idx) {
+            return Err(AllocError::AlreadyAllocated);
+        }
+        bits.insert(idx);
         Ok(())
     }
 

@@ -1,24 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { IconSearch } from "@tabler/icons-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
 
+import {
+  LiveIndicator,
+  NetworkMonitorChart,
+} from "@/components/charts/LazyNetworkMonitorChart"
 import { RelativeTime } from "@/components/RelativeTime"
 import { Kpi, KpiStrip, PageHead, Panel, Pill } from "@/components/swiss"
 import { StatusPill, type Status } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import {
   ApiError,
+  type AdminServerRow,
   type AdminUser,
   type UserStatus,
   adminGetMaintenance,
+  adminListServers,
   adminListUsers,
   adminSetMaintenance,
   adminSetUserStatus,
 } from "@/lib/api"
+import { formatBps } from "@/lib/units"
 import { useAuth } from "@/stores/auth"
+import { useLiveStats } from "@/stores/liveStats"
 
 const USER_STATUS_TO_PILL: Record<UserStatus, Status> = {
   active: "active",
@@ -41,6 +50,20 @@ export function AdminOverviewPage() {
     queryKey: ["admin", "maintenance"],
     queryFn: adminGetMaintenance,
   })
+
+  // Server-level live charts: list servers, hydrate each from the
+  // /servers/{id}/history endpoint (5-min lookback so the chart isn't
+  // empty after refresh), then live `ServerSample` events from the WS
+  // keep them rolling forward.
+  const serversQ = useQuery({
+    queryKey: ["admin", "servers", "overview"],
+    queryFn: adminListServers,
+  })
+  const serverIds = useMemo(
+    () => (serversQ.data ?? []).filter((s) => s.is_active).map((s) => s.id),
+    [serversQ.data],
+  )
+  useHistoryHydration({ serverIds, windowSec: 300 })
 
   const setStatusM = useMutation({
     mutationFn: ({ id, status }: { id: string; status: UserStatus }) =>
@@ -129,6 +152,20 @@ export function AdminOverviewPage() {
         )}
       </Panel>
 
+      {(serversQ.data ?? []).length > 0 && (
+        <Panel
+          title="Server live"
+          sub="per-tick RX/TX + peer counts streamed over WS, hydrated from server_samples"
+          right={<LiveIndicator />}
+        >
+          <div className="grid gap-4 md:grid-cols-2">
+            {(serversQ.data ?? []).map((srv) => (
+              <ServerLiveCard key={srv.id} server={srv} />
+            ))}
+          </div>
+        </Panel>
+      )}
+
       <Panel
         flush
         title="Users"
@@ -179,6 +216,61 @@ export function AdminOverviewPage() {
           </tbody>
         </table>
       </Panel>
+    </div>
+  )
+}
+
+function ServerLiveCard({ server }: { server: AdminServerRow }) {
+  const live = useLiveStats((s) => s.servers[server.id])
+  return (
+    <div className="border-border bg-card rounded-md border p-4">
+      <div className="flex items-baseline justify-between gap-3 pb-3">
+        <div className="flex flex-col">
+          <span className="text-foreground font-mono text-sm font-medium">
+            {server.name}
+          </span>
+          <span className="text-muted-foreground font-mono text-[11px]">
+            {server.region} · {server.endpoint_host}:{server.endpoint_port}
+          </span>
+        </div>
+        <Pill tone={server.is_active ? "ok" : "warn"} dot={false}>
+          {server.is_active ? "active" : "disabled"}
+        </Pill>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 pb-3 font-mono text-[11px]">
+        <KpiInline label="Peers" value={live?.peerCount ?? 0} />
+        <KpiInline label="Online" value={live?.onlineCount ?? 0} />
+        <KpiInline label="Hshakes/s" value={live?.handshakeCount ?? 0} />
+      </div>
+
+      <NetworkMonitorChart
+        rxHistory={live?.rxHistory ?? []}
+        txHistory={live?.txHistory ?? []}
+        height={140}
+      />
+
+      <div className="text-muted-foreground flex items-center justify-between pt-2 font-mono text-[11px] tabular-nums">
+        <span>
+          <span className="text-status-online">↓</span>{" "}
+          {formatBps(live?.rxBps ?? 0)}
+        </span>
+        <span>
+          <span className="text-primary">↑</span>{" "}
+          {formatBps(live?.txBps ?? 0)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function KpiInline({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-muted-foreground uppercase tracking-wide text-[10px]">
+        {label}
+      </span>
+      <span className="text-foreground text-sm">{value}</span>
     </div>
   )
 }

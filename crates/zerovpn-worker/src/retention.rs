@@ -12,9 +12,30 @@ use tracing::{info, warn};
 use zerovpn_db::PgPool;
 
 const TICK: Duration = Duration::from_secs(6 * 3600);
-const SAMPLE_RETENTION_DAYS: i64 = 7;
 const VERIFY_TOKEN_RETENTION_HOURS: i64 = 24;
 const SOFT_DELETE_PURGE_DAYS: i64 = 30;
+
+/// Retention window for raw `bandwidth_samples` (per-tick rows). Read from
+/// `ZEROVPN_SAMPLE_RETENTION_DAYS`. **Unset (None) → samples are never
+/// purged.** This is the "trading-style every-tick" default; set a value
+/// (e.g. `30`) to bring back a hard window if disk growth becomes a
+/// problem. See docs/runbook.md → "Sample retention".
+fn sample_retention_days() -> Option<i64> {
+    std::env::var("ZEROVPN_SAMPLE_RETENTION_DAYS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|d| *d > 0)
+}
+
+/// Same as `sample_retention_days` but for `server_samples`. Independent
+/// knob so operators can keep aggregate-shaped server history longer than
+/// per-device samples if they want.
+fn server_sample_retention_days() -> Option<i64> {
+    std::env::var("ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|d| *d > 0)
+}
 
 pub async fn run(pool: PgPool) {
     info!("retention purger started");
@@ -35,17 +56,37 @@ pub async fn run(pool: PgPool) {
 async fn run_once(pool: &PgPool) -> sqlx::Result<()> {
     let now = OffsetDateTime::now_utc();
 
-    // 1. Drop bandwidth_samples rows older than 7d. (Partitions could be
-    //    DROPped instead, but that requires knowing the partition name;
-    //    for v1 a row-level DELETE on the parent table is fine and the
-    //    aggregator has already rolled them up.)
-    let cutoff = now - time::Duration::days(SAMPLE_RETENTION_DAYS);
-    let res = sqlx::query("DELETE FROM bandwidth_samples WHERE sampled_at < $1")
-        .bind(cutoff)
-        .execute(pool)
-        .await?;
-    if res.rows_affected() > 0 {
-        info!(rows = res.rows_affected(), "purged old bandwidth samples");
+    // 1. Drop bandwidth_samples rows older than the configured window.
+    //    Default (env var unset): keep forever — see sample_retention_days.
+    //    Aggregates are unaffected, so the long-term hour/day/month charts
+    //    continue to work regardless of this window.
+    if let Some(days) = sample_retention_days() {
+        let cutoff = now - time::Duration::days(days);
+        let res = sqlx::query("DELETE FROM bandwidth_samples WHERE sampled_at < $1")
+            .bind(cutoff)
+            .execute(pool)
+            .await?;
+        if res.rows_affected() > 0 {
+            info!(
+                rows = res.rows_affected(),
+                days, "purged old bandwidth samples"
+            );
+        }
+    }
+
+    // 1b. Same for server_samples. Independent knob.
+    if let Some(days) = server_sample_retention_days() {
+        let cutoff = now - time::Duration::days(days);
+        let res = sqlx::query("DELETE FROM server_samples WHERE sampled_at < $1")
+            .bind(cutoff)
+            .execute(pool)
+            .await?;
+        if res.rows_affected() > 0 {
+            info!(
+                rows = res.rows_affected(),
+                days, "purged old server samples"
+            );
+        }
     }
 
     // 2. Expire consumed/expired verification tokens that are older than

@@ -16,7 +16,11 @@ use std::{collections::HashMap, time::Duration};
 
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-use zerovpn_db::{PgPool, repos::devices};
+use uuid::Uuid;
+use zerovpn_db::{
+    PgPool,
+    repos::{devices, server_samples, servers},
+};
 use zerovpn_wire::Event;
 
 #[derive(Default, Clone, Copy)]
@@ -36,7 +40,7 @@ fn poll_interval() -> Duration {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(30))
+        .unwrap_or(Duration::from_secs(1))
 }
 
 fn interface() -> String {
@@ -51,7 +55,7 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
     let mut ticker = tokio::time::interval(interval);
     loop {
         ticker.tick().await;
-        match poll_once(&pool, &tx, &iface, &mut last).await {
+        match poll_once(&pool, &tx, &iface, &mut last, interval).await {
             Ok(n) => debug!(peers = n, "wg poll"),
             Err(e) => warn!(?e, "wg poll failed"),
         }
@@ -63,6 +67,7 @@ async fn poll_once(
     tx: &mpsc::Sender<(String, Event)>,
     iface: &str,
     last: &mut HashMap<String, Cumulative>,
+    interval: Duration,
 ) -> anyhow::Result<usize> {
     // Run `wg show <iface> dump`. Output is tab-separated, one peer per line
     // after a header line containing the interface keys. We skip the first
@@ -86,6 +91,12 @@ async fn poll_once(
     // attribute each peer line.
     let pk_index = devices::pubkey_index(pool).await?;
 
+    // Per-server rollup. `wg show dump` is per-interface but a single
+    // ZeroVPN deployment can map multiple servers onto one interface, so
+    // we key by server_id from the pubkey index.
+    let mut srv_totals: HashMap<Uuid, (u64, u64, u32, u32, u32)> = HashMap::new();
+    let secs = interval.as_secs().max(1);
+
     let mut lines = stdout.lines();
     let _interface_line = lines.next();
     for line in lines {
@@ -104,20 +115,39 @@ async fn poll_once(
         let dtx = if tx_total >= prev.tx { tx_total - prev.tx } else { tx_total };
         last.insert(public_key.to_string(), Cumulative { rx: rx_total, tx: tx_total });
 
-        let Some((device_id, user_id)) = pk_index.get(public_key).copied() else {
+        let Some((device_id, user_id, server_id)) = pk_index.get(public_key).copied() else {
             // Peer present in WG but not in our DB — possibly removed
             // mid-cycle. Skip.
             continue;
         };
 
-        // Update last_handshake_at if it changed.
+        // Update last_handshake_at if it changed. Also counts toward the
+        // server's per-tick handshake delta (entries that handshook
+        // *within this poll interval* — useful for change-rate charts).
+        let mut handshake_in_window = false;
         if latest_handshake > 0 {
             let ts = time::OffsetDateTime::from_unix_timestamp(latest_handshake)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
             let _ = devices::touch_handshake(pool, device_id, ts).await;
+            let age = now.unix_timestamp() - latest_handshake;
+            handshake_in_window = age >= 0 && (age as u64) < secs;
         }
 
-        let secs = poll_interval().as_secs().max(1);
+        // Fold into server rollup: (rx, tx, peers, online, handshakes).
+        let entry = srv_totals.entry(server_id).or_default();
+        entry.0 = entry.0.saturating_add(drx);
+        entry.1 = entry.1.saturating_add(dtx);
+        entry.2 += 1; // peer_count
+        // online = handshake within last ~180s (WG default keepalive scope).
+        let online = latest_handshake > 0
+            && (now.unix_timestamp() - latest_handshake) < 180;
+        if online {
+            entry.3 += 1;
+        }
+        if handshake_in_window {
+            entry.4 += 1;
+        }
+
         let event = Event::StatsDelta {
             device_id,
             user_id,
@@ -133,5 +163,46 @@ async fn poll_once(
         }
         peers_seen += 1;
     }
+
+    // Emit per-server tick. Also persists to server_samples. If wg show
+    // returned no peers for a server we still want a zero-tick row so
+    // the chart doesn't get a gap on idle stretches — list all active
+    // servers and zero-fill the ones not in srv_totals.
+    let all_servers = servers::list_active(pool).await.unwrap_or_default();
+    for s in all_servers {
+        let (srv_rx, srv_tx, peers, online, handshakes) =
+            srv_totals.get(&s.id).copied().unwrap_or((0, 0, 0, 0, 0));
+        if let Err(e) = server_samples::insert(
+            pool,
+            s.id,
+            now,
+            srv_rx as i64,
+            srv_tx as i64,
+            peers as i32,
+            online as i32,
+            handshakes as i32,
+        )
+        .await
+        {
+            warn!(server = %s.id, ?e, "server_sample insert failed");
+        }
+        let _ = tx
+            .send((
+                format!("stats.server.{}", s.id),
+                Event::ServerSample {
+                    server_id: s.id,
+                    total_rx_bytes: srv_rx,
+                    total_tx_bytes: srv_tx,
+                    rate_rx_bps: srv_rx / secs * 8,
+                    rate_tx_bps: srv_tx / secs * 8,
+                    peer_count: peers,
+                    online_count: online,
+                    handshake_count: handshakes,
+                    ts_ms: now_ms,
+                },
+            ))
+            .await;
+    }
+
     Ok(peers_seen)
 }

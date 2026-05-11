@@ -47,17 +47,10 @@ import {
   listDevices,
   userBandwidth,
 } from "@/lib/api"
+import { connState } from "@/lib/deviceState"
+import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import { useAuth } from "@/stores/auth"
-import { aggregateLiveStats, useLiveStats } from "@/stores/liveStats"
-
-type Status =
-  | "online"
-  | "active"
-  | "degraded"
-  | "offline"
-  | "paused"
-  | "revoked"
-  | "pending"
+import { useLiveStats } from "@/stores/liveStats"
 
 export function DashboardPage() {
   const queryClient = useQueryClient()
@@ -65,6 +58,18 @@ export function DashboardPage() {
   const isAdmin = user?.role === "admin"
 
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
+  // Hydrate the rolling per-device live history from the server-side
+  // tick-level samples so the chart isn't empty after a refresh. The hook
+  // fires WS-aware merges so any live deltas that landed before the
+  // fetch completed aren't lost.
+  const deviceIds = useMemo(
+    () =>
+      (devicesQ.data ?? [])
+        .filter((d) => d.status === "active" || d.status === "paused")
+        .map((d) => d.id),
+    [devicesQ.data],
+  )
+  useHistoryHydration({ deviceIds, windowSec: 300 })
   const [created, setCreated] = useState<CreatedDevice | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [name, setName] = useState("")
@@ -72,10 +77,6 @@ export function DashboardPage() {
   const [range, setRange] = useState<BandwidthRange>("24h")
 
   const liveDevices = useLiveStats((s) => s.devices)
-  const liveAggregate = useMemo(
-    () => aggregateLiveStats(liveDevices),
-    [liveDevices],
-  )
   const rates = useMemo(() => {
     const m = new Map<string, { rxBps: number; txBps: number }>()
     for (const [id, d] of Object.entries(liveDevices)) {
@@ -117,8 +118,59 @@ export function DashboardPage() {
   const devices = devicesQ.data ?? []
   const active = devices.filter((d) => d.status === "active").length
   const paused = devices.filter((d) => d.status === "paused").length
-  const totalRx = Array.from(rates.values()).reduce((s, v) => s + v.rxBps, 0)
-  const totalTx = Array.from(rates.values()).reduce((s, v) => s + v.txBps, 0)
+
+  // Only currently-online devices contribute to "live" numbers. A device
+  // that's offline / paused / revoked cannot be transmitting RIGHT NOW,
+  // so any rate the WS store still holds for it is stale and dropped.
+  const onlineDeviceIds = useMemo(
+    () => devices.filter((d) => connState(d) === "online").map((d) => d.id),
+    [devices],
+  )
+  const onlineCount = onlineDeviceIds.length
+  const totalRx = useMemo(() => {
+    let s = 0
+    for (const id of onlineDeviceIds) s += rates.get(id)?.rxBps ?? 0
+    return s
+  }, [onlineDeviceIds, rates])
+  const totalTx = useMemo(() => {
+    let s = 0
+    for (const id of onlineDeviceIds) s += rates.get(id)?.txBps ?? 0
+    return s
+  }, [onlineDeviceIds, rates])
+
+  // Sparkline history for the KPI + the side panel monitor: sum per-device
+  // histories only for currently-online devices, right-aligned so a
+  // device that just connected doesn't backfill zeros into the past.
+  const liveHistory = useMemo(() => {
+    const ids = onlineDeviceIds
+    if (ids.length === 0) return { rx: [] as number[], tx: [] as number[] }
+    let maxLen = 0
+    const rxSlices: number[][] = []
+    const txSlices: number[][] = []
+    const window = 32
+    for (const id of ids) {
+      const d = liveDevices[id]
+      if (!d) continue
+      const rx = d.rxHistory.slice(-window)
+      const tx = d.txHistory.slice(-window)
+      if (rx.length === 0 && tx.length === 0) continue
+      rxSlices.push(rx)
+      txSlices.push(tx)
+      maxLen = Math.max(maxLen, rx.length, tx.length)
+    }
+    if (maxLen === 0) return { rx: [], tx: [] }
+    const rx = new Array<number>(maxLen).fill(0)
+    const tx = new Array<number>(maxLen).fill(0)
+    for (const s of rxSlices) {
+      const off = maxLen - s.length
+      for (let i = 0; i < s.length; i++) rx[off + i] += s[i]
+    }
+    for (const s of txSlices) {
+      const off = maxLen - s.length
+      for (let i = 0; i < s.length; i++) tx[off + i] += s[i]
+    }
+    return { rx, tx }
+  }, [onlineDeviceIds, liveDevices])
 
   const servers = serversQ.data ?? []
   const liveHubs = servers.filter((s) => s.is_active).length
@@ -208,16 +260,28 @@ export function DashboardPage() {
         <Kpi
           label="Throughput · TX"
           value={formatRate(totalTx)}
-          spark={liveAggregate.txHistory.slice(-32)}
+          spark={liveHistory.tx}
           sparkColor="var(--primary)"
-          footL={totalTx > 0 ? "live" : "idle"}
+          footL={
+            onlineCount === 0
+              ? "no online devices"
+              : totalTx > 0
+                ? "live"
+                : "idle"
+          }
         />
         <Kpi
           label="Throughput · RX"
           value={formatRate(totalRx)}
-          spark={liveAggregate.rxHistory.slice(-32)}
+          spark={liveHistory.rx}
           sparkColor="var(--chart-1)"
-          footL={totalRx > 0 ? "live" : "idle"}
+          footL={
+            onlineCount === 0
+              ? "no online devices"
+              : totalRx > 0
+                ? "live"
+                : "idle"
+          }
         />
         {isAdmin ? (
           <Kpi
@@ -306,8 +370,8 @@ export function DashboardPage() {
           <NetworkAggregateOrHistorical
             range={range}
             historical={bandwidthQ.data?.buckets ?? []}
-            liveRxHistory={liveAggregate.rxHistory}
-            liveTxHistory={liveAggregate.txHistory}
+            liveRxHistory={liveHistory.rx}
+            liveTxHistory={liveHistory.tx}
           />
         )}
       </Panel>
@@ -365,6 +429,7 @@ export function DashboardPage() {
               <tbody>
                 {devicesQ.data.slice(0, 7).map((d) => {
                   const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
+                  const online = connState(d) === "online"
                   return (
                     <tr key={d.id}>
                       <td>
@@ -373,7 +438,7 @@ export function DashboardPage() {
                           className="hover:text-foreground inline-flex items-center gap-2 font-medium"
                         >
                           <span
-                            className={`size-1.5 rounded-full ${d.status === "active" ? "bg-status-online" : "bg-status-paused"}`}
+                            className={`size-1.5 rounded-full ${online ? "bg-status-online" : d.status === "paused" ? "bg-status-degraded" : "bg-status-offline"}`}
                           />
                           {d.name}
                         </Link>
@@ -381,10 +446,32 @@ export function DashboardPage() {
                       <td className="text-muted-foreground">{d.os}</td>
                       <td className="font-mono">{d.allocated_ip}</td>
                       <td>
-                        <StatusPill status={d.status as Status} />
+                        <StatusPill
+                          status={
+                            d.status === "revoked"
+                              ? "revoked"
+                              : d.status === "paused"
+                                ? "paused"
+                                : online
+                                  ? "online"
+                                  : "offline"
+                          }
+                        />
                       </td>
-                      <td className="zv-num">{formatRate(live.txBps)}</td>
-                      <td className="zv-num">{formatRate(live.rxBps)}</td>
+                      <td className="zv-num">
+                        {online ? (
+                          formatRate(live.txBps)
+                        ) : (
+                          <span className="text-muted-foreground/50">—</span>
+                        )}
+                      </td>
+                      <td className="zv-num">
+                        {online ? (
+                          formatRate(live.rxBps)
+                        ) : (
+                          <span className="text-muted-foreground/50">—</span>
+                        )}
+                      </td>
                     </tr>
                   )
                 })}

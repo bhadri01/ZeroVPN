@@ -41,5 +41,22 @@ export type Event =
       mem_used_bytes: number
       mem_total_bytes: number
       active_peers: number
+      disk_read_bps: number
+      disk_write_bps: number
+      net_rx_bps: number
+      net_tx_bps: number
+      uptime_sec: number
+      ts_ms: number
+    }
+  | {
+      type: "server_sample"
+      server_id: string
+      total_rx_bytes: number
+      total_tx_bytes: number
+      rate_rx_bps: number
+      rate_tx_bps: number
+      peer_count: number
+      online_count: number
+      handshake_count: number
       ts_ms: number
     }

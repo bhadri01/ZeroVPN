@@ -16,7 +16,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useBreadcrumbOverride } from "@/hooks/useBreadcrumbOverride"
+import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import { ApiError, getDevice, patchDevice, setDeviceDns } from "@/lib/api"
+import { formatBps } from "@/lib/units"
 import { useLiveStats } from "@/stores/liveStats"
 
 const FULL_TUNNEL_PRESET = ["0.0.0.0/0", "::/0"]
@@ -33,6 +35,11 @@ export function DeviceDetailPage() {
   useBreadcrumbOverride(deviceQ.data?.name)
 
   const live = useLiveStats((s) => s.devices[id])
+
+  // Backfill the rolling chart with the last 30 min of tick-level history
+  // so a refresh shows real context, not an empty chart. Live WS deltas
+  // continue appending on top.
+  useHistoryHydration({ deviceIds: id ? [id] : [], windowSec: 1800 })
 
   const [tunnel, setTunnel] = useState<"full" | "split">("full")
   const [splitCidrs, setSplitCidrs] = useState("")
@@ -279,9 +286,3 @@ export function DeviceDetailPage() {
   )
 }
 
-function formatBps(bps: number): string {
-  if (bps < 1_000) return `${Math.round(bps)} bps`
-  if (bps < 1_000_000) return `${(bps / 1_000).toFixed(1)} kbps`
-  if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`
-  return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
-}

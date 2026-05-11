@@ -16,7 +16,9 @@ import {
 } from "@tabler/icons-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
+import { usePageVisible } from "@/hooks/usePageVisible"
 import type { DeviceOs, DeviceStatus, PublicDevice } from "@/lib/api"
+import { connState } from "@/lib/deviceState"
 
 interface LiveTopologyProps {
   devices: PublicDevice[]
@@ -71,9 +73,15 @@ function shapeFor(os: DeviceOs): Icon {
   }
 }
 
-function toneFor(status: DeviceStatus, hasTraffic: boolean) {
+/** Visual tone for a peer node. Connection state (live handshake) is the
+ *  source of truth — a device with no recent handshake is `idle`, never
+ *  `live`, even if the store happens to hold a stale non-zero rate from
+ *  before it dropped. Paused / revoked take precedence over connection
+ *  because they're terminal in the lifecycle sense. */
+function toneFor(status: DeviceStatus, online: boolean, hasTraffic: boolean) {
   if (status === "revoked") return "revoked"
   if (status === "paused") return "paused"
+  if (!online) return "idle"
   return hasTraffic ? "live" : "idle"
 }
 
@@ -113,10 +121,14 @@ export function LiveTopology({
   serverMeta,
 }: LiveTopologyProps) {
   const [tick, setTick] = useState(0)
+  const pageVisible = usePageVisible()
   useEffect(() => {
+    // No tick while hidden — the SVG is offscreen, so re-rendering hundreds
+    // of nodes every 1.2 s just bloats memory with stale React fibers.
+    if (!pageVisible) return
     const id = setInterval(() => setTick((t) => (t + 1) % 2), 1200)
     return () => clearInterval(id)
-  }, [])
+  }, [pageVisible])
 
   const svgRef = useRef<SVGSVGElement | null>(null)
   const [view, setView] = useState<View>(INITIAL_VIEW)
@@ -223,10 +235,13 @@ export function LiveTopology({
     // One ring for up to 8, two rings beyond.
     const useTwoRings = n > 8
     return visible.map((d, i) => {
-      const rate = rates.get(d.id)
+      const online = connState(d) === "online"
+      // Offline devices: zero out the rate so animation speed / labels
+      // can't be driven by a stale sample sitting in the store.
+      const rate = online ? rates.get(d.id) : undefined
       const rateBps = (rate?.rxBps ?? 0) + (rate?.txBps ?? 0)
       const hasTraffic = rateBps > 1024
-      const tone = toneFor(d.status, hasTraffic)
+      const tone = toneFor(d.status, online, hasTraffic)
       const onInner = useTwoRings && i % 2 === 0
       const r = useTwoRings ? (onInner ? RING_INNER : RING_OUTER) : SINGLE_RING
       const a = angleFor(d.id, n, i)

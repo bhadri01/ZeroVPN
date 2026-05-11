@@ -38,9 +38,11 @@ const RX_COLOR = "var(--chart-1)"
 const TX_COLOR = "var(--primary)"
 
 /**
- * Live rolling-window dual-area chart. Plots the last 60 frames from
- * `rxHistory` and `txHistory`. Used on Dashboard and DeviceDetail; the
- * BandwidthChart sibling is for historical bucket data instead.
+ * Live rolling-window dual-area chart. Plots whatever `rxHistory` /
+ * `txHistory` arrays are passed in — the live store caps them at
+ * HISTORY_CAP frames (30 min at 1 Hz). Used on Dashboard and DeviceDetail
+ * and admin/Overview; the BandwidthChart sibling is for historical bucket
+ * data instead.
  *
  * Both series share an unlabelled X axis (frames are evenly spaced —
  * the actual interval is whatever the backend emits) and a Y axis
