@@ -3,6 +3,7 @@ import { useCallback } from "react"
 
 import { useWebSocket } from "@/hooks/useWebSocket"
 import type { Event } from "@/lib/wire"
+import { useEventTail } from "@/stores/eventTail"
 import { useLiveStats } from "@/stores/liveStats"
 import { useAuth } from "@/stores/auth"
 
@@ -21,9 +22,11 @@ export function LiveStatsProvider() {
   const user = useAuth((s) => s.user)
   const qc = useQueryClient()
   const applyDelta = useLiveStats((s) => s.applyDelta)
+  const pushTail = useEventTail((s) => s.push)
 
   const onEvent = useCallback(
     (event: Event) => {
+      pushTail(event)
       switch (event.type) {
         case "stats_delta":
           applyDelta(
@@ -41,11 +44,11 @@ export function LiveStatsProvider() {
           void qc.invalidateQueries({ queryKey: ["device", event.device_id] })
           break
         default:
-          // heartbeat, dns_updated, server_health — no-op for now
+          // heartbeat, dns_updated, server_health — tail handled above
           break
       }
     },
-    [applyDelta, qc],
+    [applyDelta, pushTail, qc],
   )
 
   useWebSocket({

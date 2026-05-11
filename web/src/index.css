@@ -640,6 +640,36 @@
   stroke: var(--border);
 }
 
+/* Dashboard live-topology — central hub + radial peer ring with OS icons.
+   Sits in the same .zv-topo namespace as the landing backbone but adds
+   icon styling and per-tone peer rings. */
+.zv-livetopo .zv-topo-hub-icon { color: var(--foreground); }
+.zv-livetopo .zv-topo-peer-icon { color: var(--foreground); opacity: 0.85; }
+.zv-livetopo .zv-topo-peer-brand-bg {
+  fill: var(--card);
+  stroke: var(--border);
+  stroke-width: 0.5;
+}
+.zv-livetopo .zv-topo-peer-brand { color: var(--foreground); opacity: 0.7; }
+.zv-livetopo .zv-topo-peer-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--foreground);
+}
+.zv-livetopo .zv-topo-peer-live {
+  fill: var(--card);
+  stroke: var(--primary);
+}
+.zv-livetopo .zv-topo-peer-idle {
+  fill: var(--card);
+  stroke: color-mix(in oklch, var(--foreground) 25%, transparent);
+}
+.zv-livetopo .zv-topo-peer-paused {
+  fill: var(--card);
+  stroke: color-mix(in oklch, var(--status-degraded) 60%, var(--border));
+}
+.zv-livetopo .zv-topo-peer.live .zv-topo-peer-icon { color: var(--foreground); }
+
 /* Soft radial primary tint — for hero / live-network card backgrounds. */
 .bg-primary-radial {
   background-image:
