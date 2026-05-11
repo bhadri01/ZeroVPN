@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router"
 
 import { adminListAudit, type AuditRow } from "@/lib/api"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useEventTail, type TailLine } from "@/stores/eventTail"
 import { useAuth } from "@/stores/auth"
 
@@ -87,9 +88,13 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
 
   if (isAdmin && auditQ.isLoading) {
     return (
-      <p className="text-muted-foreground px-4 py-3 font-mono text-xs">
-        Loading…
-      </p>
+      <div className="flex flex-col gap-1.5 px-4 py-3">
+        <Skeleton className="h-5 rounded-none" />
+        <Skeleton className="h-5 rounded-none" />
+        <Skeleton className="h-5 rounded-none" />
+        <Skeleton className="h-5 rounded-none" />
+        <Skeleton className="h-5 rounded-none" />
+      </div>
     )
   }
   if (isAdmin && auditQ.isError) {

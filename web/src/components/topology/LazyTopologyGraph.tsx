@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react"
 
+import { Skeleton } from "@/components/ui/skeleton"
 import type { PublicDevice } from "@/lib/api"
 
 const Real = lazy(() =>
@@ -23,12 +24,10 @@ export function TopologyGraph(props: Props) {
   return (
     <Suspense
       fallback={
-        <div
-          className="text-muted-foreground bg-card flex items-center justify-center rounded-lg border text-sm"
+        <Skeleton
+          className="rounded-none"
           style={{ height: props.height ?? 360 }}
-        >
-          Loading network graph…
-        </div>
+        />
       }
     >
       <Real {...props} />

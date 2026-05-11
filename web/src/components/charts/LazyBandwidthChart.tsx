@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react"
 
+import { Skeleton } from "@/components/ui/skeleton"
 import type { BandwidthBucket } from "@/lib/api"
 
 const Real = lazy(() =>
@@ -20,12 +21,10 @@ export function BandwidthChart(props: Props) {
   return (
     <Suspense
       fallback={
-        <div
-          className="text-muted-foreground flex items-center justify-center rounded-lg border text-sm"
+        <Skeleton
+          className="rounded-none"
           style={{ height: props.height ?? 220 }}
-        >
-          Loading chart…
-        </div>
+        />
       }
     >
       <Real {...props} />

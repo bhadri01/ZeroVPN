@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   ApiError,
   type ApiTokenScope,
@@ -189,7 +190,11 @@ export function ApiTokensPage() {
 
       <Panel flush>
         {tokensQ.isLoading && (
-          <p className="text-muted-foreground p-4 font-mono text-sm">Loading…</p>
+          <div className="flex flex-col gap-2 p-4">
+            <Skeleton className="h-10 rounded-none" />
+            <Skeleton className="h-10 rounded-none" />
+            <Skeleton className="h-10 rounded-none" />
+          </div>
         )}
         {!tokensQ.isLoading && tokens.length === 0 && (
           <div className="p-4">

@@ -35,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   ApiError,
   type BandwidthRange,
@@ -346,9 +347,7 @@ export function DashboardPage() {
         }
       >
         {bandwidthQ.isLoading ? (
-          <div className="text-muted-foreground border-border flex h-[220px] items-center justify-center border font-mono text-xs">
-            Loading…
-          </div>
+          <Skeleton className="h-[220px] rounded-none" />
         ) : bandwidthQ.isError ? (
           <div className="text-destructive border-border flex h-[220px] items-center justify-center border font-mono text-xs">
             Failed to load bandwidth.

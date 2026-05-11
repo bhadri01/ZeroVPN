@@ -1,6 +1,7 @@
 import { useEffect } from "react"
 import { Navigate } from "react-router"
 
+import { Skeleton } from "@/components/ui/skeleton"
 import { ApiError, me } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
@@ -59,9 +60,19 @@ export function useBootstrapAuth() {
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, mustChangePassword } = useAuth()
   if (loading) {
+    // Bootstrapping the session cookie — usually < 150 ms. Render a
+    // skeleton shell shaped like the dashboard so the layout doesn't
+    // shift when the real content mounts.
     return (
-      <div className="text-muted-foreground flex min-h-svh items-center justify-center">
-        Loading…
+      <div className="flex min-h-svh flex-col gap-4 p-6">
+        <Skeleton className="h-10 w-64 rounded-none" />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <Skeleton className="h-20 rounded-none" />
+          <Skeleton className="h-20 rounded-none" />
+          <Skeleton className="h-20 rounded-none" />
+          <Skeleton className="h-20 rounded-none" />
+        </div>
+        <Skeleton className="h-[260px] rounded-none" />
       </div>
     )
   }
