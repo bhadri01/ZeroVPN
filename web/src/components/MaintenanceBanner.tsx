@@ -26,11 +26,15 @@ export function MaintenanceBanner() {
     <motion.div
       initial={{ y: -32, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      className="bg-amber-500/15 text-amber-700 dark:text-amber-400 sticky top-0 z-50 border-b border-amber-500/30 px-4 py-2 text-center text-sm"
+      className="sticky top-0 z-50"
     >
-      <strong>Maintenance mode</strong>
-      {q.data.maintenance_message ? ` · ${q.data.maintenance_message}` : ""}
-      {" · writes are temporarily blocked for non-admin users."}
+      <div className="zv-banner rounded-none border-x-0 border-t-0" data-tone="warn">
+        <span className="zv-banner-tag">MAINTENANCE</span>
+        <span className="min-w-0 flex-1 truncate">
+          {q.data.maintenance_message ||
+            "Writes are temporarily blocked for non-admin users."}
+        </span>
+      </div>
     </motion.div>
   )
 }

@@ -2,20 +2,10 @@ import { useQuery } from "@tanstack/react-query"
 import { IconDownload } from "@tabler/icons-react"
 
 import { CopyableCode } from "@/components/CopyableCode"
-import { PageHeader } from "@/components/PageHeader"
 import { RelativeTime } from "@/components/RelativeTime"
-import { Badge } from "@/components/ui/badge"
+import { Kbd, PageHead, Panel } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { adminAuditCsvUrl, adminListAudit } from "@/lib/api"
 
 export function AuditLogPage() {
@@ -25,11 +15,12 @@ export function AuditLogPage() {
   })
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Admin · 03"
         title="Audit log"
-        description="Every administrative action with actor, target, and IP prefix."
-        actions={
+        sub="180-day retention · CSV export · signed via webhook mirror"
+        right={
           <Button asChild variant="outline" size="sm">
             <a href={adminAuditCsvUrl(5000)}>
               <IconDownload />
@@ -39,73 +30,69 @@ export function AuditLogPage() {
         }
       />
 
-      <Card>
-        <CardContent>
-          {auditQ.isLoading && (
-            <div className="space-y-2">
-              <Skeleton className="h-8" />
-              <Skeleton className="h-8" />
-              <Skeleton className="h-8" />
-            </div>
-          )}
-          {auditQ.data && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[200px]">When</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>Metadata</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {auditQ.data.items.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell className="text-muted-foreground whitespace-nowrap text-xs">
-                      <RelativeTime value={row.created_at} />
-                    </TableCell>
-                    <TableCell className="text-muted-foreground font-mono text-xs">
-                      {row.actor_user_id
-                        ? row.actor_user_id.slice(0, 8)
-                        : "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="font-mono text-[11px]">
-                        {row.action}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      {row.target_type ?? "—"}
-                      {row.target_id && (
-                        <span className="text-muted-foreground ml-1 font-mono">
-                          {String(row.target_id).slice(0, 8)}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="max-w-[280px]">
-                      <CopyableCode
-                        value={JSON.stringify(row.metadata)}
-                        truncate
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {auditQ.data.items.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="text-muted-foreground py-8 text-center"
-                    >
-                      No audit entries yet.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <Panel flush>
+        {auditQ.isLoading && (
+          <div className="flex flex-col gap-2 p-4">
+            <Skeleton className="h-8 rounded-none" />
+            <Skeleton className="h-8 rounded-none" />
+            <Skeleton className="h-8 rounded-none" />
+          </div>
+        )}
+        {auditQ.data && (
+          <table className="zv-table">
+            <thead>
+              <tr>
+                <th className="w-[200px]">When</th>
+                <th>Actor</th>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Metadata</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditQ.data.items.map((row) => (
+                <tr key={row.id}>
+                  <td className="text-muted-foreground font-mono text-xs">
+                    <RelativeTime value={row.created_at} />
+                  </td>
+                  <td className="text-muted-foreground font-mono text-xs">
+                    {row.actor_user_id
+                      ? row.actor_user_id.slice(0, 8)
+                      : "—"}
+                  </td>
+                  <td>
+                    <Kbd>{row.action}</Kbd>
+                  </td>
+                  <td className="font-mono text-xs">
+                    {row.target_type ?? "—"}
+                    {row.target_id && (
+                      <span className="text-muted-foreground ml-1">
+                        · {String(row.target_id).slice(0, 8)}
+                      </span>
+                    )}
+                  </td>
+                  <td className="max-w-[280px]">
+                    <CopyableCode
+                      value={JSON.stringify(row.metadata)}
+                      truncate
+                    />
+                  </td>
+                </tr>
+              ))}
+              {auditQ.data.items.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="text-muted-foreground py-8 text-center font-mono text-sm"
+                  >
+                    No audit entries yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </Panel>
     </div>
   )
 }

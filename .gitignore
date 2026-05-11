@@ -18,8 +18,11 @@ web/.vite/
 *.swo
 .DS_Store
 
-# Env / secrets
+# Env / secrets — examples (.env.dev.example, .env.prod.example) are tracked;
+# actual env files (.env.dev, .env.prod) and everything in secrets/ are not.
 .env
+.env.dev
+.env.prod
 .env.local
 .env.*.local
 secrets/
@@ -60,3 +63,8 @@ coverage/
 # Misc
 tmp/
 *.tmp
+
+# Native dev loop scratch (scripts/dev-native.sh writes wg0.conf / dnsmasq
+# hosts file here so the host-mounted volumes the dockerized stack uses
+# aren't touched).
+.dev-native/

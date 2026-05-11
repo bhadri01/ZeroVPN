@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { IconKey, IconPlus, IconTrash } from "@tabler/icons-react"
+import { IconKey, IconPlus } from "@tabler/icons-react"
 import { motion } from "motion/react"
 import { useState } from "react"
 import { toast } from "sonner"
@@ -7,12 +7,16 @@ import { toast } from "sonner"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { EmptyState } from "@/components/EmptyState"
-import { PageHeader } from "@/components/PageHeader"
 import { RelativeTime } from "@/components/RelativeTime"
+import {
+  Banner,
+  Kbd,
+  PageHead,
+  Panel,
+  Pill,
+} from "@/components/swiss"
 import { StatusPill } from "@/components/StatusPill"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogClose,
@@ -76,33 +80,32 @@ export function ApiTokensPage() {
   const tokens = tokensQ.data ?? []
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Account · 05"
         title="API tokens"
-        description="Programmatic access — shown once at creation, hashed at rest."
-        actions={
+        sub="OpenAPI · scoped · one-time plaintext reveal"
+        right={
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
               <Button>
                 <IconPlus />
-                Create token
+                Generate token
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>Create API token</DialogTitle>
                 <DialogDescription>
-                  Use <code className="bg-muted px-1 rounded text-xs">read</code>{" "}
-                  for stats,{" "}
-                  <code className="bg-muted px-1 rounded text-xs">read_write</code>{" "}
-                  for device CRUD,{" "}
-                  <code className="bg-muted px-1 rounded text-xs">admin</code>{" "}
-                  for admin endpoints.
+                  Use <Kbd>read</Kbd> for stats, <Kbd>read_write</Kbd> for
+                  device CRUD, <Kbd>admin</Kbd> for admin endpoints.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="token-name">Label</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="token-name" className="zv-eyebrow">
+                    Label
+                  </Label>
                   <Input
                     id="token-name"
                     value={name}
@@ -111,8 +114,8 @@ export function ApiTokensPage() {
                     autoFocus
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Scope</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="zv-eyebrow">Scope</Label>
                   <Select
                     value={scope}
                     onValueChange={(v) => setScope(v as ApiTokenScope)}
@@ -150,33 +153,46 @@ export function ApiTokensPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.18 }}
         >
-          <Card className="border-status-online/30 bg-status-online/5">
-            <CardHeader>
-              <CardTitle className="text-base">
-                {created.name} · save this token now
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <CopyableCode value={created.plaintext_token} />
-              <div className="flex gap-2">
-                <Button size="sm" onClick={() => setCreated(null)}>
-                  I've saved it
+          <Banner
+            tone="warn"
+            tag="REVEAL · ONE TIME"
+            right={
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(created.plaintext_token)
+                    toast.success("Token copied")
+                  }}
+                >
+                  Copy
                 </Button>
-              </div>
-            </CardContent>
-          </Card>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setCreated(null)}
+                >
+                  Dismiss
+                </Button>
+              </>
+            }
+          >
+            Copy this token now. After this page reload, you'll never see it
+            again.
+          </Banner>
+          <div className="mt-3">
+            <CopyableCode value={created.plaintext_token} />
+          </div>
         </motion.div>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Tokens</CardTitle>
-        </CardHeader>
-        <CardContent className="-mx-2 -mb-2">
-          {tokensQ.isLoading && (
-            <p className="text-muted-foreground p-2 text-sm">Loading…</p>
-          )}
-          {!tokensQ.isLoading && tokens.length === 0 && (
+      <Panel flush>
+        {tokensQ.isLoading && (
+          <p className="text-muted-foreground p-4 font-mono text-sm">Loading…</p>
+        )}
+        {!tokensQ.isLoading && tokens.length === 0 && (
+          <div className="p-4">
             <EmptyState
               icon={IconKey}
               title="No tokens yet"
@@ -188,54 +204,59 @@ export function ApiTokensPage() {
                 </Button>
               }
             />
-          )}
-          {tokens.length > 0 && (
-            <ul className="divide-border divide-y">
+          </div>
+        )}
+        {tokens.length > 0 && (
+          <table className="zv-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Scope</th>
+                <th>Created</th>
+                <th>Last used</th>
+                <th>Status</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
               {tokens.map((t) => (
-                <li
-                  key={t.id}
-                  className="hover:bg-muted/30 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors"
-                >
-                  <span className="bg-muted text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-md">
-                    <IconKey className="size-3.5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{t.name}</p>
-                    <p className="text-muted-foreground flex items-center gap-2 text-xs">
-                      <Badge variant="outline" className="font-mono text-[10px]">
-                        {t.scope}
-                      </Badge>
-                      <span className="hidden sm:inline">
-                        Last used{" "}
-                        <RelativeTime
-                          value={t.last_used_at}
-                          fallback="never"
-                        />
-                      </span>
-                    </p>
-                  </div>
-                  <StatusPill
-                    status={t.revoked_at ? "revoked" : "active"}
-                    className="hidden sm:inline-flex"
-                  />
-                  {!t.revoked_at && (
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      onClick={() => setRevokeId(t.id)}
-                      disabled={revokeM.isPending}
-                      title="Revoke"
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <IconTrash className="size-3.5" />
-                    </Button>
-                  )}
-                </li>
+                <tr key={t.id}>
+                  <td>
+                    <span className="font-medium">{t.name}</span>{" "}
+                    <Kbd className="ml-2">{t.id.slice(0, 8)}</Kbd>
+                  </td>
+                  <td>
+                    <Pill tone="info" dot={false}>
+                      {t.scope}
+                    </Pill>
+                  </td>
+                  <td className="text-muted-foreground font-mono">
+                    {t.created_at?.slice(0, 10) ?? "—"}
+                  </td>
+                  <td className="text-muted-foreground font-mono">
+                    <RelativeTime value={t.last_used_at} fallback="never" />
+                  </td>
+                  <td>
+                    <StatusPill status={t.revoked_at ? "revoked" : "active"} />
+                  </td>
+                  <td className="zv-actions">
+                    {!t.revoked_at && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => setRevokeId(t.id)}
+                        disabled={revokeM.isPending}
+                      >
+                        Revoke
+                      </Button>
+                    )}
+                  </td>
+                </tr>
               ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+            </tbody>
+          </table>
+        )}
+      </Panel>
 
       <ConfirmDialog
         open={!!revokeId}

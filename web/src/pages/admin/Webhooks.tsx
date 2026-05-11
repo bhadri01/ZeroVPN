@@ -1,16 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { IconPlus, IconTrash, IconWebhook } from "@tabler/icons-react"
+import { IconPlus, IconWebhook } from "@tabler/icons-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { EmptyState } from "@/components/EmptyState"
-import { PageHeader } from "@/components/PageHeader"
 import { RelativeTime } from "@/components/RelativeTime"
+import { Kbd, PageHead, Panel } from "@/components/swiss"
 import { StatusPill } from "@/components/StatusPill"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogClose,
@@ -24,14 +22,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   ALL_WEBHOOK_EVENTS,
   adminCreateWebhook,
@@ -97,16 +87,17 @@ export function WebhooksPage() {
   const items = q.data ?? []
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Admin · 05"
         title="Webhooks"
-        description="Outbound HTTP notifications when peers, devices, or quotas change state."
-        actions={
+        sub="signed deliveries · retries · last-200-bodies kept"
+        right={
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
               <Button>
                 <IconPlus />
-                Add webhook
+                New webhook
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-md">
@@ -114,7 +105,8 @@ export function WebhooksPage() {
                 <DialogTitle>Add webhook</DialogTitle>
                 <DialogDescription>
                   POST'd as JSON. Optional secret is hashed at rest and used
-                  to sign deliveries (header <code>X-ZeroVPN-Signature</code>).
+                  to sign deliveries (header{" "}
+                  <Kbd>X-ZeroVPN-Signature</Kbd>).
                 </DialogDescription>
               </DialogHeader>
               <form
@@ -128,39 +120,45 @@ export function WebhooksPage() {
                   create.mutate()
                 }}
               >
-                <div className="space-y-1.5">
-                  <Label htmlFor="wh-name">Name</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="wh-name" className="zv-eyebrow">
+                    Name
+                  </Label>
                   <Input
                     id="wh-name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="My alerter"
+                    placeholder="ops-slack"
                     autoFocus
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="wh-url">URL</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="wh-url" className="zv-eyebrow">
+                    URL
+                  </Label>
                   <Input
                     id="wh-url"
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
-                    placeholder="https://example.com/hook"
+                    placeholder="https://hooks.slack.com/services/…"
                     className="font-mono text-xs"
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="wh-secret">Secret (optional)</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="wh-secret" className="zv-eyebrow">
+                    Signing secret (optional)
+                  </Label>
                   <Input
                     id="wh-secret"
                     type="password"
                     value={secret}
                     onChange={(e) => setSecret(e.target.value)}
-                    placeholder="signing secret"
+                    placeholder="HMAC-SHA256 shared secret"
                     className="font-mono"
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Events</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="zv-eyebrow">Events</Label>
                   <div className="flex flex-wrap gap-1.5">
                     {ALL_WEBHOOK_EVENTS.map((ev) => {
                       const checked = events.has(ev)
@@ -169,10 +167,10 @@ export function WebhooksPage() {
                           key={ev}
                           type="button"
                           onClick={() => toggleEvent(ev)}
-                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                          className={`border px-2.5 py-0.5 font-mono text-[11px] uppercase tracking-[0.06em] transition-colors ${
                             checked
-                              ? "bg-primary/10 text-primary border-primary/30"
-                              : "border-border text-muted-foreground hover:bg-muted/50"
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "border-border text-muted-foreground hover:border-foreground"
                           }`}
                         >
                           {ev.replace(/_/g, " ")}
@@ -197,15 +195,15 @@ export function WebhooksPage() {
         }
       />
 
-      <Card>
-        <CardContent>
-          {q.isLoading && (
-            <div className="space-y-2">
-              <Skeleton className="h-8" />
-              <Skeleton className="h-8" />
-            </div>
-          )}
-          {!q.isLoading && items.length === 0 && (
+      <Panel flush>
+        {q.isLoading && (
+          <div className="flex flex-col gap-2 p-4">
+            <Skeleton className="h-8 rounded-none" />
+            <Skeleton className="h-8 rounded-none" />
+          </div>
+        )}
+        {!q.isLoading && items.length === 0 && (
+          <div className="p-4">
             <EmptyState
               icon={IconWebhook}
               title="No webhooks configured"
@@ -217,76 +215,67 @@ export function WebhooksPage() {
                 </Button>
               }
             />
-          )}
-          {items.length > 0 && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>URL</TableHead>
-                  <TableHead>Events</TableHead>
-                  <TableHead>Last delivery</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((w) => (
-                  <TableRow key={w.id}>
-                    <TableCell className="font-medium">{w.name}</TableCell>
-                    <TableCell className="font-mono text-xs">{w.url}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {w.events.map((e) => (
-                          <Badge
-                            key={e}
-                            variant="outline"
-                            className="text-[10px]"
-                          >
-                            {e.replace(/_/g, " ")}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      {w.last_delivery_at ? (
-                        <span className="flex items-center gap-1.5">
-                          <RelativeTime value={w.last_delivery_at} />
-                          <Badge
-                            variant="outline"
-                            className="font-mono text-[10px]"
-                          >
-                            {w.last_status ?? "?"}
-                          </Badge>
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">never</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <StatusPill
-                        status={w.active ? "active" : "paused"}
-                        label={w.active ? "active" : "off"}
-                      />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        onClick={() => setDeleteId(w.id)}
-                        title="Delete"
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <IconTrash className="size-3.5" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+        {items.length > 0 && (
+          <table className="zv-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>URL</th>
+                <th>Events</th>
+                <th>Last delivery</th>
+                <th>Status</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((w) => (
+                <tr key={w.id}>
+                  <td>
+                    <span className="font-medium">{w.name}</span>
+                  </td>
+                  <td className="text-muted-foreground max-w-[280px] truncate font-mono">
+                    {w.url}
+                  </td>
+                  <td>
+                    <div className="flex flex-wrap gap-1">
+                      {w.events.map((e) => (
+                        <Kbd key={e}>{e.replace(/_/g, " ")}</Kbd>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="font-mono text-xs">
+                    {w.last_delivery_at ? (
+                      <span className="flex items-center gap-1.5">
+                        <RelativeTime value={w.last_delivery_at} />
+                        <Kbd>{w.last_status ?? "?"}</Kbd>
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">never</span>
+                    )}
+                  </td>
+                  <td>
+                    <StatusPill
+                      status={w.active ? "active" : "paused"}
+                      label={w.active ? "active" : "off"}
+                    />
+                  </td>
+                  <td className="zv-actions">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => setDeleteId(w.id)}
+                    >
+                      Delete
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
 
       <ConfirmDialog
         open={!!deleteId}

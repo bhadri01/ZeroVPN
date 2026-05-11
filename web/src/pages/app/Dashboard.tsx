@@ -1,13 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
-  IconDevicesPc,
   IconDeviceTablet,
   IconDownload,
-  IconPlayerPause,
-  IconPlayerPlay,
   IconPlus,
   IconQrcode,
-  IconTrash,
 } from "@tabler/icons-react"
 import { AnimatePresence, motion } from "motion/react"
 import { useMemo, useState } from "react"
@@ -21,18 +17,16 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { EmptyState } from "@/components/EmptyState"
-import { PageHeader } from "@/components/PageHeader"
-import { Stat } from "@/components/Stat"
+import {
+  IconBtn,
+  KpiStrip,
+  Kpi,
+  PageHead,
+  Panel,
+} from "@/components/swiss"
 import { StatusPill } from "@/components/StatusPill"
 import { TopologyGraph } from "@/components/topology/LazyTopologyGraph"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import {
   Dialog,
   DialogClose,
@@ -63,12 +57,10 @@ import {
   pauseDevice,
   unpauseDevice,
 } from "@/lib/api"
-import { listVariants, useReducedMotion } from "@/lib/motion"
 import { aggregateLiveStats, useLiveStats } from "@/stores/liveStats"
 
 export function DashboardPage() {
   const queryClient = useQueryClient()
-  const reduceMotion = useReducedMotion()
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
   const [created, setCreated] = useState<CreatedDevice | null>(null)
   const [addOpen, setAddOpen] = useState(false)
@@ -76,12 +68,6 @@ export function DashboardPage() {
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
   const [revokeId, setRevokeId] = useState<string | null>(null)
 
-  // Live rates come from the shared store fed by LiveStatsProvider in
-  // DashboardLayout. Both `rates` (for the topology graph) and the
-  // aggregate stream (for the bandwidth card) are derived via useMemo
-  // off the stable `devices` reference — calling
-  // `useLiveStats(aggregateLiveStats)` directly would return a fresh
-  // object on every read and trip useSyncExternalStore (React #185).
   const liveDevices = useLiveStats((s) => s.devices)
   const liveAggregate = useMemo(
     () => aggregateLiveStats(liveDevices),
@@ -139,11 +125,12 @@ export function DashboardPage() {
   const totalTx = Array.from(rates.values()).reduce((s, v) => s + v.txBps, 0)
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Workspace · 01"
         title="Dashboard"
-        description="Live network and devices for your account."
-        actions={
+        sub="Live network and devices for your account."
+        right={
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -160,8 +147,10 @@ export function DashboardPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="dev-name">Name</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="dev-name" className="zv-eyebrow">
+                    Name
+                  </Label>
                   <Input
                     id="dev-name"
                     value={name}
@@ -170,8 +159,8 @@ export function DashboardPage() {
                     autoFocus
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Operating system</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="zv-eyebrow">Operating system</Label>
                   <Select
                     value={osChoice}
                     onValueChange={(v) => setOsChoice(v as DeviceOs)}
@@ -207,105 +196,94 @@ export function DashboardPage() {
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Active devices" value={active} />
-        <Stat label="Paused" value={paused} />
-        <Stat
-          label="RX total"
-          value={totalRx}
-          format={formatBps}
-          unit="now"
+      <KpiStrip>
+        <Kpi
+          label="Devices · live"
+          value={active}
+          unit={`/ ${devices.length}`}
+          footL="up · this hour"
+          footR="updated now"
+          deltaTone="up"
         />
-        <Stat
-          label="TX total"
-          value={totalTx}
-          format={formatBps}
-          unit="now"
+        <Kpi label="Paused" value={paused} footL="—" />
+        <Kpi
+          label="Throughput · TX"
+          value={formatRate(totalTx)}
+          spark={liveAggregate.txHistory.slice(-32)}
+          sparkColor="var(--primary)"
         />
-      </div>
+        <Kpi
+          label="Throughput · RX"
+          value={formatRate(totalRx)}
+          spark={liveAggregate.rxHistory.slice(-32)}
+          sparkColor="var(--chart-1)"
+        />
+      </KpiStrip>
 
       <AnimatePresence>
-        {created && <CreatedDeviceCard data={created} onClose={() => setCreated(null)} />}
+        {created && (
+          <CreatedDeviceCard data={created} onClose={() => setCreated(null)} />
+        )}
       </AnimatePresence>
 
       <div className="grid gap-6 lg:grid-cols-5">
-        <Card className="bg-primary-radial relative isolate overflow-hidden lg:col-span-3">
-          {/* Faint dotted-grid backdrop layered under the canvas */}
-          <span
-            aria-hidden
-            className="bg-dot-grid pointer-events-none absolute inset-0 -z-10 opacity-40"
-          />
-          <CardHeader className="flex-row items-start justify-between space-y-0">
-            <div className="space-y-1">
-              <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-[0.08em]">
-                Topology
-              </p>
-              <CardTitle className="text-lg tracking-tight">
-                Live network
-              </CardTitle>
-              <CardDescription>
-                Particles flow in the direction of traffic; density scales
-                with rate.
-              </CardDescription>
-            </div>
-            <LiveIndicator />
-          </CardHeader>
-          <CardContent>
-            <TopologyGraph devices={devices} rates={rates} />
-          </CardContent>
-        </Card>
+        <Panel
+          title="Live topology"
+          sub="Worker → ZeroMQ → API → WS · sub-second"
+          right={<LiveIndicator />}
+          className="lg:col-span-3"
+        >
+          <TopologyGraph devices={devices} rates={rates} />
+        </Panel>
 
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex-row items-start justify-between space-y-0">
-            <div className="space-y-1">
-              <p className="text-muted-foreground text-[10px] font-semibold uppercase tracking-[0.08em]">
-                Throughput
-              </p>
-              <CardTitle className="text-lg tracking-tight">
-                Network traffic
-              </CardTitle>
-              <CardDescription>
-                Aggregate RX/TX, last 60 frames.{" "}
-                <Link
-                  to="/app/bandwidth"
-                  className="hover:text-foreground underline"
-                >
-                  Historical →
-                </Link>
-              </CardDescription>
-            </div>
-            <LiveIndicator />
-          </CardHeader>
-          <CardContent>
-            <NetworkMonitorChart
-              rxHistory={liveAggregate.rxHistory}
-              txHistory={liveAggregate.txHistory}
-              variant="combined"
-              height={220}
-            />
-          </CardContent>
-        </Card>
+        <Panel
+          title="Network traffic"
+          sub={
+            <>
+              Aggregate RX/TX, last 60 frames.{" "}
+              <Link
+                to="/app/bandwidth"
+                className="hover:text-foreground underline"
+              >
+                Historical →
+              </Link>
+            </>
+          }
+          right={<LiveIndicator />}
+          className="lg:col-span-2"
+        >
+          <NetworkMonitorChart
+            rxHistory={liveAggregate.rxHistory}
+            txHistory={liveAggregate.txHistory}
+            variant="combined"
+            height={220}
+          />
+        </Panel>
       </div>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-base">Devices</CardTitle>
-            <CardDescription>
-              Per-device status and live throughput.
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {devicesQ.isLoading && (
-            <p className="text-muted-foreground text-sm">Loading…</p>
-          )}
-          {devicesQ.isError && (
-            <p className="text-destructive text-sm">
-              Failed to load devices.
-            </p>
-          )}
-          {devicesQ.data && devicesQ.data.length === 0 && (
+      <Panel
+        title="Devices"
+        sub={`${devices.length} total · ${active} live`}
+        flush
+        right={
+          <Link
+            to="/app/devices"
+            className="text-muted-foreground hover:text-foreground font-mono text-xs"
+          >
+            View all ↗
+          </Link>
+        }
+      >
+        {devicesQ.isLoading && (
+          <p className="text-muted-foreground p-4 font-mono text-sm">Loading…</p>
+        )}
+        {devicesQ.isError && (
+          <p className="text-destructive p-4 font-mono text-sm">
+            Failed to load devices.
+          </p>
+        )}
+        {devicesQ.data && devicesQ.data.length === 0 && (
+          <div className="p-4">
             <EmptyState
               icon={IconDeviceTablet}
               title="No devices yet"
@@ -317,35 +295,45 @@ export function DashboardPage() {
                 </Button>
               }
             />
-          )}
-          {devicesQ.data && devicesQ.data.length > 0 && (
-            <ul className="divide-border -mx-1 divide-y">
-              <AnimatePresence initial={false}>
-                {devicesQ.data.map((d) => {
-                  const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
-                  return (
-                    <motion.li
-                      key={d.id}
-                      layout={!reduceMotion}
-                      variants={listVariants}
-                      initial="initial"
-                      animate="animate"
-                      exit="exit"
-                      className="hover:bg-muted/30 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors"
-                    >
-                      <span className="bg-muted text-muted-foreground flex size-7 shrink-0 items-center justify-center rounded-md">
-                        <IconDevicesPc className="size-3.5" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{d.name}</p>
-                        <p className="text-muted-foreground truncate text-xs">
-                          {d.os} · {d.allocated_ip}
-                        </p>
-                      </div>
-                      <span className="text-muted-foreground hidden text-xs tabular-nums sm:inline">
-                        ↑ {formatBps(live.txBps)} · ↓ {formatBps(live.rxBps)}
-                      </span>
+          </div>
+        )}
+        {devicesQ.data && devicesQ.data.length > 0 && (
+          <table className="zv-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>OS</th>
+                <th>IP</th>
+                <th>Status</th>
+                <th className="zv-num">TX</th>
+                <th className="zv-num">RX</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {devicesQ.data.map((d) => {
+                const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
+                return (
+                  <tr key={d.id}>
+                    <td>
+                      <Link
+                        to={`/app/devices/${d.id}`}
+                        className="hover:text-foreground inline-flex items-center gap-2 font-medium"
+                      >
+                        <span
+                          className={`size-1.5 rounded-full ${d.status === "active" ? "bg-status-online" : "bg-status-paused"}`}
+                        />
+                        {d.name}
+                      </Link>
+                    </td>
+                    <td className="text-muted-foreground">{d.os}</td>
+                    <td className="font-mono">{d.allocated_ip}</td>
+                    <td>
                       <StatusPill status={d.status as Status} />
+                    </td>
+                    <td className="zv-num">{formatRate(live.txBps)}</td>
+                    <td className="zv-num">{formatRate(live.rxBps)}</td>
+                    <td className="zv-actions">
                       <DeviceActions
                         status={d.status}
                         onPause={() => pauseM.mutate(d.id)}
@@ -353,14 +341,14 @@ export function DashboardPage() {
                         onRevoke={() => setRevokeId(d.id)}
                         pending={pauseM.isPending || unpauseM.isPending}
                       />
-                    </motion.li>
-                  )
-                })}
-              </AnimatePresence>
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </Panel>
 
       <ConfirmDialog
         open={!!revokeId}
@@ -399,40 +387,25 @@ function DeviceActions({
   pending: boolean
 }) {
   return (
-    <div className="flex items-center gap-1">
+    <span className="inline-flex items-center justify-end gap-1">
       {status === "active" && (
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          onClick={onPause}
-          disabled={pending}
-          title="Pause"
-        >
-          <IconPlayerPause className="size-3.5" />
-        </Button>
+        <IconBtn onClick={onPause} title="Pause">
+          ⏸
+        </IconBtn>
       )}
       {status === "paused" && (
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          onClick={onUnpause}
-          disabled={pending}
-          title="Unpause"
-        >
-          <IconPlayerPlay className="size-3.5" />
-        </Button>
+        <IconBtn onClick={onUnpause} title="Unpause">
+          ▶
+        </IconBtn>
       )}
-      <Button
-        size="icon-sm"
-        variant="ghost"
+      <IconBtn
         onClick={onRevoke}
-        disabled={status === "revoked"}
-        title="Revoke"
-        className="text-muted-foreground hover:text-destructive"
+        title={pending ? "Working…" : "Revoke"}
+        className="hover:text-destructive hover:border-destructive"
       >
-        <IconTrash className="size-3.5" />
-      </Button>
-    </div>
+        ×
+      </IconBtn>
+    </span>
   )
 }
 
@@ -451,72 +424,63 @@ function CreatedDeviceCard({
       exit={{ opacity: 0, y: -4 }}
       transition={{ duration: 0.18 }}
     >
-      <Card className="border-status-online/30 bg-status-online/5">
-        <CardHeader>
-          <CardTitle className="text-base">
-            {data.device.name} · ready
-          </CardTitle>
-          <CardDescription>
-            Save this config now — the private key isn't stored on the
-            server.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-[auto_1fr]">
-            <div className="flex shrink-0 items-center justify-center rounded-md bg-white p-2">
-              <span
-                className="block size-32"
-                dangerouslySetInnerHTML={{ __html: data.qr_svg }}
-              />
-            </div>
-            <div className="min-w-0 space-y-2">
-              <p className="text-sm">
-                Allocated IP:{" "}
-                <code className="bg-muted rounded px-1 text-xs">
-                  {data.device.allocated_ip}
-                </code>
-              </p>
-              <CopyableCode value={data.config} multiline />
-            </div>
+      <Panel
+        title={`${data.device.name} · ready`}
+        sub="Save this config now — the private key isn't stored on the server."
+        className="border-status-online/40 bg-status-online/5"
+      >
+        <div className="grid gap-4 sm:grid-cols-[auto_1fr]">
+          <div className="zv-qr-box bg-card flex shrink-0 items-center justify-center">
+            <span
+              className="block size-32"
+              dangerouslySetInnerHTML={{ __html: data.qr_svg }}
+            />
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              onClick={() => {
-                const blob = new Blob([data.config], { type: "text/plain" })
-                const url = URL.createObjectURL(blob)
-                const a = document.createElement("a")
-                a.href = url
-                a.download = `${data.device.name}.conf`
-                a.click()
-                URL.revokeObjectURL(url)
-              }}
-            >
-              <IconDownload />
-              Download .conf
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                void navigator.clipboard.writeText(data.config)
-                toast.success("Config copied")
-              }}
-            >
-              <IconQrcode />
-              Copy config
-            </Button>
-            <Button size="sm" variant="ghost" onClick={onClose}>
-              Done
-            </Button>
+          <div className="min-w-0 space-y-2">
+            <p className="text-sm">
+              Allocated IP:{" "}
+              <span className="zv-kbd">{data.device.allocated_ip}</span>
+            </p>
+            <CopyableCode value={data.config} multiline />
           </div>
-        </CardContent>
-      </Card>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            onClick={() => {
+              const blob = new Blob([data.config], { type: "text/plain" })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement("a")
+              a.href = url
+              a.download = `${data.device.name}.conf`
+              a.click()
+              URL.revokeObjectURL(url)
+            }}
+          >
+            <IconDownload />
+            Download .conf
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              void navigator.clipboard.writeText(data.config)
+              toast.success("Config copied")
+            }}
+          >
+            <IconQrcode />
+            Copy config
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      </Panel>
     </motion.div>
   )
 }
 
-function formatBps(bps: number): string {
+function formatRate(bps: number): string {
   if (bps < 1_000) return `${Math.round(bps)} bps`
   if (bps < 1_000_000) return `${(bps / 1_000).toFixed(1)} kbps`
   if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`

@@ -1,8 +1,10 @@
-import { IconChevronRight, IconSearch } from "@tabler/icons-react"
+import { IconSearch } from "@tabler/icons-react"
+import { useEffect, useState } from "react"
 import { Link, useMatches } from "react-router"
 
-import { ModeToggle } from "@/components/mode-toggle"
 import { UserMenu } from "@/components/layout/UserMenu"
+import { ModeToggle } from "@/components/mode-toggle"
+import { Kbd, LiveDot } from "@/components/swiss"
 import { useBreadcrumbStore } from "@/stores/breadcrumb"
 
 type Crumb = { to?: string; label: string }
@@ -22,8 +24,6 @@ function useBreadcrumbs(): Crumb[] {
     if (!isCrumbHandle(m.handle)) continue
     const b = m.handle.breadcrumb
     if (b == null) continue
-    // Page-set override wins over the static handle label, e.g. the
-    // actual device name instead of "Device".
     const fallback =
       typeof b === "function"
         ? b((m.params ?? {}) as Record<string, string>)
@@ -42,10 +42,10 @@ export function TopBar({
 }) {
   const crumbs = useBreadcrumbs()
   return (
-    <header className="bg-background/80 supports-[backdrop-filter]:bg-background/60 sticky top-0 z-30 flex h-14 items-center gap-3 border-b px-3 backdrop-blur md:px-4">
+    <header className="bg-background sticky top-0 z-30 flex h-12 items-center gap-4 border-b px-4">
       <nav
         aria-label="breadcrumb"
-        className="text-muted-foreground flex min-w-0 items-center text-sm"
+        className="text-muted-foreground flex min-w-0 items-center gap-2 font-mono text-[12px]"
       >
         {crumbs.length === 0 ? (
           <span className="text-foreground truncate font-medium">ZeroVPN</span>
@@ -53,9 +53,9 @@ export function TopBar({
           crumbs.map((c, i) => {
             const last = i === crumbs.length - 1
             return (
-              <span key={`${c.to}-${i}`} className="flex items-center">
+              <span key={`${c.to}-${i}`} className="flex items-center gap-2">
                 {i > 0 && (
-                  <IconChevronRight className="text-muted-foreground/50 mx-1 size-3 shrink-0" />
+                  <span className="text-muted-foreground/50 shrink-0">/</span>
                 )}
                 {last || !c.to ? (
                   <span className="text-foreground truncate font-medium">
@@ -75,8 +75,9 @@ export function TopBar({
         )}
       </nav>
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="ml-auto flex items-center gap-2">
         <SearchTrigger onClick={onOpenCommand} />
+        <LivePill />
         <ModeToggle />
         <UserMenu />
       </div>
@@ -84,24 +85,36 @@ export function TopBar({
   )
 }
 
-/**
- * Input-styled trigger for the command palette. Looks like a search bar
- * but is a button — clicking it (or pressing Cmd+K anywhere) opens the
- * cmdk palette which IS the search input.
- */
 function SearchTrigger({ onClick }: { onClick?: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="text-muted-foreground border-input bg-background hover:bg-muted/50 hover:border-border focus-visible:ring-ring/40 focus-visible:border-ring flex h-8 w-44 items-center gap-2 rounded-md border px-2.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 md:w-64"
+      className="text-muted-foreground border-border bg-background hover:border-foreground focus-visible:ring-ring focus-visible:border-foreground flex h-7 w-44 items-center gap-2 border px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 md:w-64"
       aria-label="Open search"
     >
       <IconSearch className="size-3.5 shrink-0" />
-      <span className="flex-1 text-left text-xs">Search…</span>
-      <kbd className="bg-muted text-muted-foreground pointer-events-none hidden h-5 select-none items-center gap-1 rounded border px-1.5 font-mono text-[10px] font-medium md:inline-flex">
-        ⌘K
-      </kbd>
+      <span className="flex-1 text-left">Search · jump…</span>
+      <Kbd className="hidden md:inline-flex">⌘K</Kbd>
     </button>
+  )
+}
+
+/** Live status pill — pulsing dot + UTC clock. Matches the design's
+ * topbar live-pill exactly. Updates every second on a local interval. */
+function LivePill() {
+  const [t, setT] = useState(() => new Date())
+  useEffect(() => {
+    const id = setInterval(() => setT(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const time = `${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}:${pad(t.getUTCSeconds())} UTC`
+  return (
+    <span className="border-border text-muted-foreground hidden h-7 items-center gap-1.5 border px-2 font-mono text-[11px] md:inline-flex">
+      <LiveDot />
+      <span>connected</span>
+      <span className="text-muted-foreground/70">· {time}</span>
+    </span>
   )
 }

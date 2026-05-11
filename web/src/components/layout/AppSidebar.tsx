@@ -9,7 +9,6 @@ import {
   IconLayoutSidebarLeftCollapse,
   IconRouter,
   IconShield,
-  IconSparkles,
   IconUser,
   IconUserShield,
   IconUsers,
@@ -19,6 +18,7 @@ import { useMemo } from "react"
 import { Link, NavLink, useLocation } from "react-router"
 
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
+import { LiveDot, Wordmark } from "@/components/swiss"
 import {
   Sidebar,
   SidebarContent,
@@ -33,6 +33,7 @@ import {
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { cn } from "@/lib/utils"
 import { useAuth } from "@/stores/auth"
 import { aggregateLiveStats, useLiveStats } from "@/stores/liveStats"
 
@@ -40,25 +41,30 @@ type NavEntry = {
   to: string
   label: string
   icon: React.ComponentType<{ className?: string }>
+  /** Mono key hint shown to the right of the label, e.g. "D". */
+  k?: string
   end?: boolean
 }
 
 const WORKSPACE: NavEntry[] = [
-  { to: "/app", label: "Dashboard", icon: IconLayoutDashboard, end: true },
-  { to: "/app/devices", label: "Devices", icon: IconDevices },
-  { to: "/app/bandwidth", label: "Bandwidth", icon: IconChartLine },
-  { to: "/app/api-tokens", label: "API tokens", icon: IconKey },
-  { to: "/app/security", label: "Security", icon: IconShield },
-  { to: "/app/account", label: "Account", icon: IconUser },
+  { to: "/app", label: "Dashboard", icon: IconLayoutDashboard, k: "D", end: true },
+  { to: "/app/devices", label: "Devices", icon: IconDevices, k: "V" },
+  { to: "/app/bandwidth", label: "Bandwidth", icon: IconChartLine, k: "B" },
+]
+
+const ACCOUNT: NavEntry[] = [
+  { to: "/app/security", label: "Security", icon: IconShield, k: "S" },
+  { to: "/app/api-tokens", label: "API tokens", icon: IconKey, k: "T" },
+  { to: "/app/account", label: "Account", icon: IconUser, k: "A" },
 ]
 
 const ADMIN: NavEntry[] = [
-  { to: "/admin", label: "Overview", icon: IconUserShield, end: true },
-  { to: "/admin/servers", label: "Servers", icon: IconRouter },
-  { to: "/admin/webhooks", label: "Webhooks", icon: IconWebhook },
-  { to: "/admin/audit", label: "Audit log", icon: IconClipboardList },
-  { to: "/admin/failed-logins", label: "Failed logins", icon: IconCircleDashedX },
-  { to: "/admin/users", label: "Users", icon: IconUsers },
+  { to: "/admin", label: "Overview", icon: IconUserShield, k: "1", end: true },
+  { to: "/admin/users", label: "Users", icon: IconUsers, k: "2" },
+  { to: "/admin/audit", label: "Audit log", icon: IconClipboardList, k: "3" },
+  { to: "/admin/failed-logins", label: "Failed logins", icon: IconCircleDashedX, k: "4" },
+  { to: "/admin/webhooks", label: "Webhooks", icon: IconWebhook, k: "5" },
+  { to: "/admin/servers", label: "Servers", icon: IconRouter, k: "6" },
 ]
 
 export function AppSidebar() {
@@ -68,29 +74,39 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r">
-      <SidebarHeader className="px-3 py-3">
+      <SidebarHeader className="border-sidebar-border h-12 justify-center border-b px-4 py-0">
         <Link
           to="/app"
-          className="flex items-center gap-2 text-sm font-semibold tracking-tight"
+          className="flex h-12 items-center font-mono text-xs font-medium tracking-[0.04em]"
         >
-          <span className="bg-primary/10 text-primary flex size-7 items-center justify-center rounded-md">
-            <IconSparkles className="size-4" />
-          </span>
-          {!collapsed && <span>ZeroVPN</span>}
+          {collapsed ? <Wordmark size={11} /> : <Wordmark size={12} />}
         </Link>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="gap-0">
         <SidebarGroup>
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+          <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-[0.1em]">
+            Workspace
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <NavList entries={WORKSPACE} />
           </SidebarGroupContent>
         </SidebarGroup>
 
+        <SidebarGroup>
+          <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-[0.1em]">
+            Account
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <NavList entries={ACCOUNT} />
+          </SidebarGroupContent>
+        </SidebarGroup>
+
         {user?.role === "admin" && (
           <SidebarGroup>
-            <SidebarGroupLabel>Admin</SidebarGroupLabel>
+            <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-[0.1em]">
+              Admin
+            </SidebarGroupLabel>
             <SidebarGroupContent>
               <NavList entries={ADMIN} />
             </SidebarGroupContent>
@@ -98,9 +114,10 @@ export function AppSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarFooter>
+      <SidebarFooter className="gap-0">
         {!collapsed && <LivePulse />}
         <CollapseToggle collapsed={collapsed} />
+        {!collapsed && <VersionRow />}
       </SidebarFooter>
 
       <SidebarRail />
@@ -114,20 +131,29 @@ function NavList({ entries }: { entries: NavEntry[] }) {
     <SidebarMenu>
       {entries.map((entry) => {
         const Icon = entry.icon
+        const isActive = entry.end
+          ? location.pathname === entry.to
+          : location.pathname.startsWith(entry.to)
         return (
           <SidebarMenuItem key={entry.to}>
             <SidebarMenuButton
               asChild
-              isActive={
-                entry.end
-                  ? location.pathname === entry.to
-                  : location.pathname.startsWith(entry.to)
-              }
+              isActive={isActive}
               tooltip={entry.label}
+              className={cn(
+                "relative h-8 rounded-none text-[13px]",
+                isActive &&
+                  "before:bg-primary before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:content-['']",
+              )}
             >
               <NavLink to={entry.to} end={entry.end}>
                 <Icon className="size-4" />
                 <span>{entry.label}</span>
+                {entry.k && (
+                  <span className="text-muted-foreground/70 ml-auto font-mono text-[10px]">
+                    ⌘{entry.k}
+                  </span>
+                )}
               </NavLink>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -150,13 +176,11 @@ function LivePulse() {
   const devices = useLiveStats((s) => s.devices)
   const agg = useMemo(() => aggregateLiveStats(devices), [devices])
   return (
-    <div className="border-sidebar-border bg-sidebar-accent/30 mx-2 mb-1 space-y-1.5 rounded-md border p-2">
-      <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider">
+    <div className="border-sidebar-border mx-2 mb-1 space-y-1.5 border p-2">
+      <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em]">
         <span className="text-muted-foreground">All devices</span>
-        <span className="text-muted-foreground inline-flex items-center gap-1">
-          <span className="bg-status-online relative size-1 rounded-full">
-            <span className="bg-status-online absolute inline-flex size-1 animate-ping rounded-full opacity-75" />
-          </span>
+        <span className="text-muted-foreground inline-flex items-center gap-1.5">
+          <LiveDot />
           Live
         </span>
       </div>
@@ -165,7 +189,7 @@ function LivePulse() {
         txHistory={agg.txHistory}
         height={42}
       />
-      <div className="text-muted-foreground flex items-center justify-between text-[10px] tabular-nums">
+      <div className="text-muted-foreground flex items-center justify-between font-mono text-[10px] tabular-nums">
         <span>
           <span className="text-status-online">↓</span> {formatBps(agg.rxBps)}
         </span>
@@ -173,6 +197,18 @@ function LivePulse() {
           <span className="text-primary">↑</span> {formatBps(agg.txBps)}
         </span>
       </div>
+    </div>
+  )
+}
+
+function VersionRow() {
+  return (
+    <div className="text-muted-foreground flex items-center justify-between px-3 py-2 font-mono text-[10px]">
+      <span>v1.0.20240310</span>
+      <span className="inline-flex items-center gap-1.5">
+        <LiveDot />
+        live
+      </span>
     </div>
   )
 }
@@ -190,9 +226,7 @@ function formatBps(bps: number): string {
  */
 function CollapseToggle({ collapsed }: { collapsed: boolean }) {
   const { toggleSidebar } = useSidebar()
-  const Icon = collapsed
-    ? IconLayoutSidebar
-    : IconLayoutSidebarLeftCollapse
+  const Icon = collapsed ? IconLayoutSidebar : IconLayoutSidebarLeftCollapse
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -200,6 +234,7 @@ function CollapseToggle({ collapsed }: { collapsed: boolean }) {
           onClick={toggleSidebar}
           tooltip={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className="h-8 rounded-none text-[13px]"
         >
           <Icon className="size-4" />
           <span>{collapsed ? "Expand" : "Collapse"}</span>

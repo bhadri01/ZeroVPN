@@ -1,0 +1,37 @@
+# Production overrides. Layered on top of docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   # or equivalently:
+#   make up-prod
+#
+# Differs from docker-compose.dev.yml in: real-domain Caddyfile with Let's
+# Encrypt, no exposed internal ports (db/redis/api/worker stay on the
+# backend network only), no MailHog, prod env file, prod secrets directory,
+# prod-cadence stats poll.
+#
+# Compose merges sequences by REPLACEMENT, not append — so each `volumes:`
+# block below carries the full set the service needs.
+name: zerovpn
+
+services:
+  caddy:
+    env_file: .env.prod
+    volumes:
+      - ./deploy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  api:
+    env_file: .env.prod
+
+  worker:
+    env_file: .env.prod
+    environment:
+      # Real WG poller cadence — matches docs/runbook.md.
+      ZEROVPN_STATS_INTERVAL_SECS: "30"
+
+  db:
+    env_file: .env.prod
+    volumes:
+      - pg_data:/var/lib/postgresql
+      - ./secrets/prod/db_password.txt:/run/secrets/db_password:ro

@@ -1,31 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { IconSearch, IconShieldCheck } from "@tabler/icons-react"
+import { IconSearch } from "@tabler/icons-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { PageHeader } from "@/components/PageHeader"
 import { RelativeTime } from "@/components/RelativeTime"
-import { Stat } from "@/components/Stat"
+import { Kpi, KpiStrip, PageHead, Panel, Pill } from "@/components/swiss"
 import { StatusPill, type Status } from "@/components/StatusPill"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   ApiError,
   type AdminUser,
@@ -87,100 +70,115 @@ export function AdminOverviewPage() {
   const active = items.filter((u) => u.status === "active").length
   const suspended = items.filter((u) => u.status === "suspended").length
   const totalDevices = items.reduce((s, u) => s + u.device_count, 0)
+  const maintOn = !!maintQ.data?.maintenance_mode
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Admin overview"
-        description="Operate the deployment: users, maintenance, audit, servers."
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Admin · 01"
+        title="Overview"
+        sub="health · users · activity · trust surfaces"
+        right={
+          <Button
+            variant={maintOn ? "destructive" : "outline"}
+            onClick={() => setMaintM.mutate(!maintOn)}
+            disabled={setMaintM.isPending || maintQ.isLoading}
+          >
+            {maintOn ? "● Maintenance ON" : "Toggle maintenance"}
+          </Button>
+        }
       />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Total users" value={total} />
-        <Stat label="Active" value={active} />
-        <Stat label="Suspended" value={suspended} />
-        <Stat label="Devices" value={totalDevices} />
-      </div>
+      <KpiStrip>
+        <Kpi label="Total users" value={total} footL={`${active} active`} />
+        <Kpi
+          label="Suspended"
+          value={suspended}
+          footL="locked out"
+          deltaTone={suspended > 0 ? "dn" : undefined}
+        />
+        <Kpi label="Devices" value={totalDevices} footL="WireGuard peers" />
+        <Kpi
+          label="Maintenance"
+          value={maintOn ? "ON" : "OFF"}
+          footL={maintOn ? "writes blocked" : "writes allowed"}
+        />
+      </KpiStrip>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <IconShieldCheck className="size-4" />
-            Maintenance mode
-          </CardTitle>
-          <CardDescription>
-            When ON, the API rejects writes with 503 and the UI shows a
-            site-wide banner.
-            {maintQ.data?.maintenance_mode && (
-              <span className="text-status-degraded ml-1 font-medium">
-                Currently ON.
-              </span>
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+      <Panel
+        title="Maintenance mode"
+        sub="When ON, the API rejects writes with 503 and the UI shows a site-wide banner."
+        right={
           <Switch
-            checked={!!maintQ.data?.maintenance_mode}
+            checked={maintOn}
             onCheckedChange={(v) => setMaintM.mutate(v)}
             disabled={setMaintM.isPending || maintQ.isLoading}
             aria-label="Maintenance mode"
           />
-        </CardContent>
-      </Card>
+        }
+      >
+        {maintOn && (
+          <p className="text-status-degraded font-mono text-xs">
+            Currently ON · all non-admin writes returning 503.
+          </p>
+        )}
+        {!maintOn && (
+          <p className="text-muted-foreground font-mono text-xs">
+            Toggle on the right to flip the kill-switch.
+          </p>
+        )}
+      </Panel>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
-          <div>
-            <CardTitle className="text-base">Users</CardTitle>
-            <CardDescription>
-              Search, suspend, unsuspend. {total.toLocaleString()} total.
-            </CardDescription>
-          </div>
-          <div className="relative w-72">
+      <Panel
+        flush
+        title="Users"
+        sub={`${total.toLocaleString()} total · search, suspend, unsuspend`}
+        right={
+          <div className="relative w-64">
             <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by email…"
-              className="pl-8"
+              placeholder="Filter email…"
+              className="h-8 pl-8"
             />
           </div>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>2FA</TableHead>
-                <TableHead className="text-right">Devices</TableHead>
-                <TableHead>Last login</TableHead>
-                <TableHead className="text-right"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((u) => (
-                <UserRow
-                  key={u.id}
-                  u={u}
-                  isSelf={u.id === me?.id}
-                  onSet={(status) =>
-                    setStatusM.mutate({ id: u.id, status })
-                  }
-                />
-              ))}
-              {!usersQ.isLoading && items.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
-                    No users match.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+        }
+      >
+        <table className="zv-table">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>2FA</th>
+              <th className="zv-num">Devices</th>
+              <th>Last login</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((u) => (
+              <UserRow
+                key={u.id}
+                u={u}
+                isSelf={u.id === me?.id}
+                onSet={(status) => setStatusM.mutate({ id: u.id, status })}
+              />
+            ))}
+            {!usersQ.isLoading && items.length === 0 && (
+              <tr>
+                <td
+                  colSpan={7}
+                  className="text-muted-foreground py-8 text-center font-mono text-sm"
+                >
+                  No users match.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </Panel>
     </div>
   )
 }
@@ -195,39 +193,46 @@ function UserRow({
   onSet: (status: UserStatus) => void
 }) {
   return (
-    <TableRow>
-      <TableCell className="font-medium">
-        {u.email}
+    <tr>
+      <td>
+        <span className="font-medium">{u.email}</span>
         {isSelf && (
-          <Badge variant="outline" className="ml-2 text-[10px]">
+          <span className="text-muted-foreground/60 ml-2 font-mono text-[10px] uppercase">
             you
-          </Badge>
+          </span>
         )}
-      </TableCell>
-      <TableCell>
-        <Badge variant="outline" className="capitalize">
-          {u.role}
-        </Badge>
-      </TableCell>
-      <TableCell>
-        <StatusPill status={USER_STATUS_TO_PILL[u.status] ?? "pending"} label={u.status.replace(/_/g, " ")} />
-      </TableCell>
-      <TableCell>
-        {u.totp_enabled ? (
-          <Badge variant="outline" className="text-status-online">
-            on
-          </Badge>
+      </td>
+      <td>
+        {u.role === "admin" ? (
+          <Pill tone="info" dot={false}>
+            admin
+          </Pill>
         ) : (
-          <span className="text-muted-foreground">—</span>
+          <span className="text-muted-foreground">user</span>
         )}
-      </TableCell>
-      <TableCell className="text-right tabular-nums">
-        {u.device_count}
-      </TableCell>
-      <TableCell className="text-xs">
+      </td>
+      <td>
+        <StatusPill
+          status={USER_STATUS_TO_PILL[u.status] ?? "pending"}
+          label={u.status.replace(/_/g, " ")}
+        />
+      </td>
+      <td>
+        {u.totp_enabled ? (
+          <Pill tone="ok" dot={false}>
+            on
+          </Pill>
+        ) : (
+          <Pill tone="warn" dot={false}>
+            off
+          </Pill>
+        )}
+      </td>
+      <td className="zv-num">{u.device_count}</td>
+      <td className="text-muted-foreground font-mono text-xs">
         <RelativeTime value={u.last_login_at} fallback="Never" />
-      </TableCell>
-      <TableCell className="text-right">
+      </td>
+      <td className="zv-actions">
         {!isSelf && u.status === "active" && (
           <Button size="sm" variant="outline" onClick={() => onSet("suspended")}>
             Suspend
@@ -238,7 +243,7 @@ function UserRow({
             Unsuspend
           </Button>
         )}
-      </TableCell>
-    </TableRow>
+      </td>
+    </tr>
   )
 }

@@ -32,8 +32,10 @@ function formatRate(n: number, unit: "bps" | "Bps"): string {
   return `${(n / 1_000_000_000).toFixed(2)} ${g}`
 }
 
-const RX_COLOR = "var(--color-status-online)"
-const TX_COLOR = "var(--color-primary)"
+// Swiss palette: cobalt RX, lime TX. Aligns with BandwidthChart so a
+// glance at any chart in the app reads the same way.
+const RX_COLOR = "var(--chart-1)"
+const TX_COLOR = "var(--primary)"
 
 /**
  * Live rolling-window dual-area chart. Plots the last 60 frames from
@@ -68,7 +70,7 @@ export function NetworkMonitorChart({
   if (data.length === 0) {
     return (
       <div
-        className="text-muted-foreground flex items-center justify-center rounded-md border text-xs"
+        className="text-muted-foreground border-border flex items-center justify-center border font-mono text-xs"
         style={{ height }}
       >
         Waiting for live data…
@@ -92,8 +94,10 @@ export function NetworkMonitorChart({
         <XAxis dataKey="i" hide />
         <YAxis
           tickFormatter={(v: number) => formatRate(v, unit).replace(" ", "")}
-          stroke="rgba(120,120,120,0.5)"
+          stroke="var(--muted-foreground)"
           fontSize={10}
+          tickLine={false}
+          axisLine={false}
           width={56}
         />
         <Tooltip
@@ -105,13 +109,15 @@ export function NetworkMonitorChart({
             ] as [string, string]
           }
           contentStyle={{
-            background: "var(--popover)",
-            color: "var(--popover-foreground)",
+            background: "var(--card)",
+            color: "var(--foreground)",
             border: "1px solid var(--border)",
-            borderRadius: "var(--radius-md)",
-            fontSize: 12,
+            borderRadius: 2,
+            fontSize: 11,
+            fontFamily: "var(--font-mono)",
             padding: "4px 8px",
           }}
+          cursor={{ stroke: "var(--muted-foreground)", strokeDasharray: "2 2" }}
         />
         {(variant === "combined" || variant === "rx") && (
           <Area
@@ -146,11 +152,8 @@ export function NetworkMonitorChart({
  */
 export function LiveIndicator() {
   return (
-    <span className="text-muted-foreground inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider">
-      <span className="relative flex size-1.5">
-        <span className="bg-status-online absolute inline-flex size-full animate-ping rounded-full opacity-75" />
-        <span className="bg-status-online relative inline-flex size-1.5 rounded-full" />
-      </span>
+    <span className="text-muted-foreground inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.06em]">
+      <span className="zv-live-dot" />
       Live
     </span>
   )

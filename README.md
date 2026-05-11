@@ -6,11 +6,11 @@ Self-hosted WireGuard VPN management platform. Rust backend + React frontend, si
 
 Phase 1A (foundation). See [TODO.md](TODO.md) and [CHANGELOG.md](CHANGELOG.md) for current state.
 
-## Quickstart
+## Quickstart (dev)
 
 ```bash
-make setup     # one-time: copies .env.example, generates secrets, builds images
-make up        # start the full stack
+make setup     # one-time: copies .env.dev.example → .env.dev, generates dev secrets, builds images
+make up        # start the dev stack
 make logs      # tail logs
 make migrate   # run pending DB migrations
 make bootstrap-admin EMAIL=admin@example.com   # create the first admin (will prompt for password)
@@ -19,9 +19,22 @@ make clean     # nuke volumes (destructive)
 ```
 
 After `make up`:
-- Web UI: <https://localhost> (self-signed cert in dev; LE in prod)
-- MailHog (dev only): <http://localhost:8025>
-- Grafana (Phase 1C): <https://localhost/grafana>
+- Web UI: <https://localhost> (self-signed cert from Caddy's local CA)
+- MailHog: <http://localhost:8025>
+- Grafana (with observability profile): <https://localhost/grafana>
+
+## Quickstart (production)
+
+```bash
+make setup-prod                                  # copies .env.prod.example → .env.prod
+$EDITOR .env.prod                                # fill in ZEROVPN_DOMAIN, SMTP relay
+./scripts/init-secrets.sh prod                   # generates random secrets
+make up-prod                                     # starts the prod stack
+make migrate ENV=prod
+make bootstrap-admin EMAIL=admin@your-domain ENV=prod
+```
+
+Production differs from dev in: real Let's Encrypt TLS against `ZEROVPN_DOMAIN`, no exposed internal ports, no MailHog, separate `.env.prod` + `secrets/prod/` so dev secrets never leak in. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
 
 ## Architecture
 

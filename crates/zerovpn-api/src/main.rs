@@ -34,7 +34,14 @@ async fn main() -> Result<()> {
     if let Err(e) = routes::metrics::install_global_recorder() {
         warn!(?e, "prometheus recorder install failed; /metrics will return 503");
     }
-    info!(version = env!("CARGO_PKG_VERSION"), "zerovpn-api starting");
+
+    let is_production = env::var("ZEROVPN_ENVIRONMENT").as_deref() == Ok("production");
+    validate_production_config(is_production)?;
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        environment = if is_production { "production" } else { "dev" },
+        "zerovpn-api starting"
+    );
 
     let bind_addr =
         env::var("ZEROVPN_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
@@ -54,8 +61,11 @@ async fn main() -> Result<()> {
     // Tower-sessions session store + its own migration.
     let session_store = PostgresStore::new(pool.clone());
     session_store.migrate().await.context("session store migrate")?;
+    // `secure: true` requires the cookie to ride only over HTTPS. Caddy
+    // terminates TLS for us in production; in dev we serve over plaintext
+    // localhost so the flag is off.
     let session_layer = SessionManagerLayer::new(session_store)
-        .with_secure(false) // dev only; flip in prod
+        .with_secure(is_production)
         .with_http_only(true)
         .with_same_site(tower_sessions::cookie::SameSite::Lax)
         .with_name("zerovpn_session")
@@ -261,6 +271,54 @@ fn init_tracing() {
         .with(filter)
         .with(fmt::layer().json())
         .init();
+}
+
+/// Refuse to boot in production with default / weak / dev-style config.
+/// Catches the "you forgot to swap `.env.dev` for `.env.prod`" failure mode
+/// before the api ever binds a port.
+fn validate_production_config(is_production: bool) -> Result<()> {
+    if !is_production {
+        return Ok(());
+    }
+
+    let session = env::var("ZEROVPN_SESSION_SECRET").unwrap_or_default();
+    if session == "CHANGEME" || session.len() < 32 {
+        anyhow::bail!(
+            "production: ZEROVPN_SESSION_SECRET must be a 32+ byte base64 random; \
+             run ./scripts/init-secrets.sh prod"
+        );
+    }
+
+    let kek = env::var("ZEROVPN_KEK").unwrap_or_default();
+    if kek == "CHANGEME" || kek.len() < 32 {
+        anyhow::bail!(
+            "production: ZEROVPN_KEK must be a 32-byte base64 random; \
+             run ./scripts/init-secrets.sh prod"
+        );
+    }
+
+    let domain = env::var("ZEROVPN_DOMAIN").unwrap_or_default();
+    if domain.is_empty()
+        || domain == "localhost"
+        || domain.starts_with("REPLACE")
+    {
+        anyhow::bail!(
+            "production: ZEROVPN_DOMAIN must be a real public domain (got '{}'); \
+             Caddy needs it for Let's Encrypt issuance",
+            domain
+        );
+    }
+
+    let smtp_host = env::var("ZEROVPN_SMTP__HOST").unwrap_or_default();
+    if smtp_host == "mailhog" || smtp_host.starts_with("smtp.REPLACE") {
+        anyhow::bail!(
+            "production: ZEROVPN_SMTP__HOST is still pointing at a dev / placeholder \
+             relay ('{}'); set a real SMTP host or unset to disable mail",
+            smtp_host
+        );
+    }
+
+    Ok(())
 }
 
 async fn shutdown_signal() {

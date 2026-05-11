@@ -41,7 +41,7 @@ export function CopyableCode({
       onClick={onCopy}
       title="Click to copy"
       className={cn(
-        "group relative inline-flex w-full items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-left font-mono text-xs transition-colors hover:bg-muted/60",
+        "group border-border bg-muted relative inline-flex w-full items-start gap-2 border px-3 py-2 text-left font-mono text-xs transition-colors hover:border-foreground",
         multiline ? "items-start" : "items-center",
         className,
       )}
@@ -65,7 +65,7 @@ export function CopyableCode({
         )}
       </span>
       {copied && (
-        <span className="bg-status-online text-primary-foreground pointer-events-none absolute -top-2 right-2 rounded px-1.5 py-0.5 text-[10px] font-medium leading-none">
+        <span className="bg-status-online text-background pointer-events-none absolute -top-2 right-2 px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase leading-none tracking-[0.06em]">
           Copied
         </span>
       )}

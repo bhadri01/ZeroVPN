@@ -198,9 +198,7 @@ export function CommandPalette({
                     <Icon />
                     <span>{item.label}</span>
                     {item.chord && (
-                      <kbd className="ml-auto text-[10px] tracking-wide">
-                        {item.chord}
-                      </kbd>
+                      <span className="zv-kbd ml-auto">{item.chord}</span>
                     )}
                   </CommandItem>
                 )

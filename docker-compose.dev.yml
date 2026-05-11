@@ -1,25 +1,50 @@
-# Dev overrides: bind-mounted source for hot reload, MailHog, exposed dev ports.
+# Development overrides. Layered on top of docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   # or equivalently:
+#   make up
+#
+# Differs from docker-compose.prod.yml in: localhost-friendly Caddyfile with
+# auto_https off, exposed db/redis/api/worker ports for direct host access,
+# MailHog instead of a real SMTP relay, dev env file and dev secrets
+# directory, fast stats-simulator cadence.
+#
+# Compose merges sequences by REPLACEMENT, not append — so each `volumes:`
+# block below carries the full set the service needs.
 name: zerovpn
 
 services:
+  caddy:
+    env_file: .env.dev
+    volumes:
+      - ./deploy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
   api:
+    env_file: .env.dev
     ports:
       - "8080:8080"
     environment:
       RUST_LOG: "debug,zerovpn=trace"
 
   worker:
+    env_file: .env.dev
     ports:
       - "5555:5555"
     environment:
       # Faster simulator cadence in dev so the topology graph comes alive
       # immediately after a device is added. Production drops back to 30s
-      # once the real WG poller (Phase 1B-C) replaces the simulator.
+      # in docker-compose.prod.yml.
       ZEROVPN_STATS_INTERVAL_SECS: "5"
 
-  # Non-standard host ports for db/redis so we don't fight any other local
-  # Postgres/Redis instances already bound to the conventional ports.
   db:
+    env_file: .env.dev
+    volumes:
+      - pg_data:/var/lib/postgresql
+      - ./secrets/dev/db_password.txt:/run/secrets/db_password:ro
+    # Non-standard host ports for db/redis so we don't fight any other local
+    # Postgres/Redis instances already bound to the conventional ports.
     ports:
       - "55432:5432"
 
@@ -29,6 +54,7 @@ services:
 
   mailhog:
     image: mailhog/mailhog:latest
+    platform: linux/amd64
     restart: unless-stopped
     ports:
       - "8025:8025"  # web UI

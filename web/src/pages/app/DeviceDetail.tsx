@@ -8,28 +8,15 @@ import {
   NetworkMonitorChart,
 } from "@/components/charts/LazyNetworkMonitorChart"
 import { CopyableCode } from "@/components/CopyableCode"
-import { PageHeader } from "@/components/PageHeader"
 import { RelativeTime } from "@/components/RelativeTime"
-import { Stat } from "@/components/Stat"
+import { Kpi, KpiStrip, PageHead, Panel, Seg } from "@/components/swiss"
 import { StatusPill, type Status } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useBreadcrumbOverride } from "@/hooks/useBreadcrumbOverride"
-import {
-  ApiError,
-  getDevice,
-  patchDevice,
-  setDeviceDns,
-} from "@/lib/api"
+import { ApiError, getDevice, patchDevice, setDeviceDns } from "@/lib/api"
 import { useLiveStats } from "@/stores/liveStats"
 
 const FULL_TUNNEL_PRESET = ["0.0.0.0/0", "::/0"]
@@ -43,7 +30,6 @@ export function DeviceDetailPage() {
     enabled: id.length > 0,
   })
 
-  // Push the actual device name into the breadcrumb in place of "Device".
   useBreadcrumbOverride(deviceQ.data?.name)
 
   const live = useLiveStats((s) => s.devices[id])
@@ -117,10 +103,10 @@ export function DeviceDetailPage() {
 
   if (deviceQ.isLoading || !deviceQ.data) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-32" />
-        <Skeleton className="h-64" />
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-8 w-48 rounded-none" />
+        <Skeleton className="h-32 rounded-none" />
+        <Skeleton className="h-64 rounded-none" />
       </div>
     )
   }
@@ -129,117 +115,91 @@ export function DeviceDetailPage() {
   const txHistory = live?.txHistory ?? []
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow={`Devices · ${d.id.slice(0, 8).toUpperCase()}`}
         title={d.name}
-        description={
-          <>
-            {d.os} · {d.allocated_ip}
-          </>
-        }
-        actions={<StatusPill status={d.status as Status} />}
+        sub={`${d.os} · ${d.allocated_ip}`}
+        right={<StatusPill status={d.status as Status} />}
       />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="IP" value={0} format={() => d.allocated_ip} hint="WireGuard address" />
-        <Stat
-          label="RX rate"
-          value={live?.rxBps ?? 0}
-          format={formatBps}
-          hint="now"
+      <KpiStrip>
+        <Kpi
+          label="VPN IP"
+          value={<span className="font-mono text-xl">{d.allocated_ip}</span>}
+          footL="WireGuard address"
         />
-        <Stat
-          label="TX rate"
-          value={live?.txBps ?? 0}
-          format={formatBps}
-          hint="now"
+        <Kpi
+          label="RX · live"
+          value={formatBps(live?.rxBps ?? 0)}
+          spark={rxHistory.slice(-32)}
+          sparkColor="var(--chart-1)"
+          footL={d.status === "active" ? "▲ live" : "—"}
         />
-        <LastHandshakeStat ts={d.last_handshake_at} />
-      </div>
+        <Kpi
+          label="TX · live"
+          value={formatBps(live?.txBps ?? 0)}
+          spark={txHistory.slice(-32)}
+          sparkColor="var(--primary)"
+          footL={d.status === "active" ? "▲ live" : "—"}
+        />
+        <Kpi
+          label="Last handshake"
+          value={<RelativeTime value={d.last_handshake_at} fallback="Never" />}
+          footL="tunnel keepalive"
+        />
+      </KpiStrip>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
-            <div>
-              <CardTitle className="text-base">Combined RX + TX</CardTitle>
-              <CardDescription>Last 60 frames</CardDescription>
-            </div>
-            <LiveIndicator />
-          </CardHeader>
-          <CardContent>
-            <NetworkMonitorChart
-              rxHistory={rxHistory}
-              txHistory={txHistory}
-              variant="combined"
-              height={180}
-            />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
-            <div>
-              <CardTitle className="text-base">RX</CardTitle>
-              <CardDescription>Inbound</CardDescription>
-            </div>
-            <LiveIndicator />
-          </CardHeader>
-          <CardContent>
-            <NetworkMonitorChart
-              rxHistory={rxHistory}
-              txHistory={[]}
-              variant="rx"
-              height={180}
-            />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex-row items-start justify-between space-y-0 pb-2">
-            <div>
-              <CardTitle className="text-base">TX</CardTitle>
-              <CardDescription>Outbound</CardDescription>
-            </div>
-            <LiveIndicator />
-          </CardHeader>
-          <CardContent>
-            <NetworkMonitorChart
-              rxHistory={[]}
-              txHistory={txHistory}
-              variant="tx"
-              height={180}
-            />
-          </CardContent>
-        </Card>
+        <Panel
+          title="Combined RX + TX"
+          sub="Last 60 frames"
+          right={<LiveIndicator />}
+        >
+          <NetworkMonitorChart
+            rxHistory={rxHistory}
+            txHistory={txHistory}
+            variant="combined"
+            height={180}
+          />
+        </Panel>
+        <Panel title="RX" sub="Inbound" right={<LiveIndicator />}>
+          <NetworkMonitorChart
+            rxHistory={rxHistory}
+            txHistory={[]}
+            variant="rx"
+            height={180}
+          />
+        </Panel>
+        <Panel title="TX" sub="Outbound" right={<LiveIndicator />}>
+          <NetworkMonitorChart
+            rxHistory={[]}
+            txHistory={txHistory}
+            variant="tx"
+            height={180}
+          />
+        </Panel>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Routing</CardTitle>
-            <CardDescription>
-              Choose what traffic is sent through the tunnel. Re-download
-              the .conf afterwards.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant={tunnel === "full" ? "default" : "outline"}
-                onClick={() => setTunnel("full")}
-              >
-                Full tunnel
-              </Button>
-              <Button
-                size="sm"
-                variant={tunnel === "split" ? "default" : "outline"}
-                onClick={() => setTunnel("split")}
-              >
-                Split tunnel
-              </Button>
-            </div>
+        <Panel
+          title="Routing"
+          sub="Choose what traffic is sent through the tunnel. Re-download the .conf afterwards."
+        >
+          <div className="flex flex-col gap-3">
+            <Seg
+              value={tunnel}
+              options={[
+                { value: "full" as const, label: "Full tunnel" },
+                { value: "split" as const, label: "Split tunnel" },
+              ]}
+              onChange={(v) => setTunnel(v)}
+            />
             {tunnel === "split" && (
-              <div className="space-y-1.5">
-                <Label htmlFor="cidrs">Allowed CIDRs</Label>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="cidrs" className="zv-eyebrow">
+                  Allowed CIDRs
+                </Label>
                 <Input
                   id="cidrs"
                   value={splitCidrs}
@@ -247,13 +207,15 @@ export function DeviceDetailPage() {
                   placeholder="10.0.0.0/8, 192.168.0.0/16"
                   className="font-mono"
                 />
-                <p className="text-muted-foreground text-xs">
+                <p className="text-muted-foreground font-mono text-[11px]">
                   Only listed networks will be tunnelled.
                 </p>
               </div>
             )}
-            <div className="space-y-1.5">
-              <Label htmlFor="dns">Custom DNS (optional)</Label>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="dns" className="zv-eyebrow">
+                Custom DNS (optional)
+              </Label>
               <Input
                 id="dns"
                 value={customDns}
@@ -261,33 +223,35 @@ export function DeviceDetailPage() {
                 placeholder="1.1.1.1, 9.9.9.9"
                 className="font-mono"
               />
-              <p className="text-muted-foreground text-xs">
+              <p className="text-muted-foreground font-mono text-[11px]">
                 Leave empty to use the server's DNS.
               </p>
             </div>
-            <Button
-              onClick={() => saveTunnelM.mutate()}
-              disabled={saveTunnelM.isPending}
-            >
-              {saveTunnelM.isPending ? "Saving…" : "Save tunnel + DNS"}
-            </Button>
-          </CardContent>
-        </Card>
+            <div>
+              <Button
+                onClick={() => saveTunnelM.mutate()}
+                disabled={saveTunnelM.isPending}
+              >
+                {saveTunnelM.isPending ? "Saving…" : "Save tunnel + DNS"}
+              </Button>
+            </div>
+          </div>
+        </Panel>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">DNS names</CardTitle>
-            <CardDescription>
+        <Panel
+          title="DNS names"
+          sub={
+            <>
               Reach this peer from other peers via{" "}
-              <code className="bg-muted rounded px-1 text-xs">
-                name.vpn.local
-              </code>
-              .
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="dns-names">Hostnames</Label>
+              <span className="zv-kbd">name.vpn.local</span>.
+            </>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="dns-names" className="zv-eyebrow">
+                Hostnames
+              </Label>
               <Input
                 id="dns-names"
                 value={dnsNames}
@@ -296,46 +260,22 @@ export function DeviceDetailPage() {
                 className="font-mono"
               />
             </div>
-            <Button
-              onClick={() => saveDnsNamesM.mutate()}
-              disabled={saveDnsNamesM.isPending}
-            >
-              {saveDnsNamesM.isPending ? "Saving…" : "Save DNS names"}
-            </Button>
-          </CardContent>
-        </Card>
+            <div>
+              <Button
+                onClick={() => saveDnsNamesM.mutate()}
+                disabled={saveDnsNamesM.isPending}
+              >
+                {saveDnsNamesM.isPending ? "Saving…" : "Save DNS names"}
+              </Button>
+            </div>
+          </div>
+        </Panel>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Public key</CardTitle>
-          <CardDescription>The peer's WireGuard pubkey.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <CopyableCode value={d.public_key} />
-        </CardContent>
-      </Card>
+      <Panel title="Public key" sub="The peer's WireGuard pubkey.">
+        <CopyableCode value={d.public_key} />
+      </Panel>
     </div>
-  )
-}
-
-function LastHandshakeStat({
-  ts,
-}: {
-  ts: string | null | undefined
-}) {
-  return (
-    <Card>
-      <CardContent className="space-y-1 px-4 py-3">
-        <p className="text-muted-foreground text-[11px] font-medium uppercase tracking-wider">
-          Last handshake
-        </p>
-        <p className="text-base font-semibold tracking-tight">
-          <RelativeTime value={ts} fallback="Never" />
-        </p>
-        <p className="text-muted-foreground text-xs">tunnel keepalive</p>
-      </CardContent>
-    </Card>
   )
 }
 

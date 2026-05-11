@@ -1,5 +1,12 @@
 name: zerovpn
 
+# Shared baseline. Not runnable on its own — pick a mode override:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml  up -d
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# The overrides supply env_file (.env.dev / .env.prod), the right Caddyfile,
+# and the right secrets/ subdirectory mount. See Makefile for the wrapper.
+
 # Reusable bits
 x-restart: &default-restart
   restart: unless-stopped
@@ -19,10 +26,6 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
     networks:
       - web
     depends_on:
@@ -59,7 +62,6 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.api
     <<: [*default-restart, *default-logging]
-    env_file: .env
     environment:
       ZEROVPN_BIND_ADDRESS: 0.0.0.0:8080
     networks:
@@ -87,7 +89,6 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.worker
     <<: [*default-restart, *default-logging]
-    env_file: .env
     networks:
       - backend
     depends_on:
@@ -110,10 +111,8 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
     # Postgres 18+ images expect the volume at /var/lib/postgresql (parent),
     # so pg_upgrade --link works without crossing mount boundaries. Data
-    # lands in /var/lib/postgresql/<major>/.
-    volumes:
-      - pg_data:/var/lib/postgresql
-      - ./secrets/db_password.txt:/run/secrets/db_password:ro
+    # lands in /var/lib/postgresql/<major>/. The secrets/<env>/db_password.txt
+    # mount is added by the dev/prod override.
     networks:
       - backend
     healthcheck:
@@ -188,6 +187,7 @@ services:
 
   dnsmasq:
     image: jpillora/dnsmasq:latest
+    platform: linux/amd64
     <<: [*default-restart, *default-logging]
     cap_add:
       - NET_ADMIN

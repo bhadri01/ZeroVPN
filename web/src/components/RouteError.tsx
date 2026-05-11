@@ -1,24 +1,21 @@
-import {
-  IconAlertOctagon,
-  IconArrowLeft,
-  IconExclamationCircle,
-  IconHome,
-} from "@tabler/icons-react"
+import { IconArrowLeft, IconHome } from "@tabler/icons-react"
 import { isRouteErrorResponse, Link, useRouteError } from "react-router"
 
+import { Eyebrow } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 
 /**
  * Route-level error element. Catches `throw redirect()`s and any uncaught
- * render error in the matched route. We render a calm, branded page rather
- * than the React Router default "Hey developer 👋" splash.
+ * render error in the matched route. Swiss-styled — eyebrow status code,
+ * h1 with monospace heading, terse description, two ghost CTAs. No
+ * Card chrome — sits flush inside the dashboard outlet.
  */
 export function RouteError() {
   const error = useRouteError()
   let status: number | null = null
   let title = "Something went wrong"
-  let detail = "An unexpected error occurred. Try the navigation in the sidebar."
+  let detail =
+    "An unexpected error occurred. Try the navigation in the sidebar."
 
   if (isRouteErrorResponse(error)) {
     status = error.status
@@ -43,42 +40,29 @@ export function RouteError() {
     detail = error.message
   }
 
-  const Icon = status === 404 ? IconExclamationCircle : IconAlertOctagon
-
   return (
-    <div className="mx-auto max-w-md py-16">
-      <Card>
-        <CardContent className="space-y-6 pt-6 text-center">
-          <span className="bg-muted text-muted-foreground mx-auto flex size-12 items-center justify-center rounded-full">
-            <Icon className="size-5" />
-          </span>
-          <div className="space-y-1">
-            {status && (
-              <p className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
-                Error {status}
-              </p>
-            )}
-            <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-            <p className="text-muted-foreground mx-auto max-w-sm text-sm">
-              {detail}
-            </p>
-          </div>
-          <div className="flex flex-wrap justify-center gap-2">
-            <Button asChild variant="outline">
-              <Link to=".." relative="path">
-                <IconArrowLeft />
-                Back
-              </Link>
-            </Button>
-            <Button asChild>
-              <Link to="/app">
-                <IconHome />
-                Dashboard
-              </Link>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="mx-auto flex w-full max-w-xl flex-col gap-6 px-6 py-20">
+      <Eyebrow num={status ?? "—"}>error · route</Eyebrow>
+      <h1 className="font-heading text-4xl font-medium tracking-tight">
+        {title}
+      </h1>
+      <p className="text-muted-foreground max-w-prose text-sm leading-relaxed">
+        {detail}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button asChild variant="outline">
+          <Link to=".." relative="path">
+            <IconArrowLeft />
+            Back
+          </Link>
+        </Button>
+        <Button asChild>
+          <Link to="/app">
+            <IconHome />
+            Dashboard
+          </Link>
+        </Button>
+      </div>
     </div>
   )
 }
@@ -105,31 +89,22 @@ export function PublicRouteError() {
 
   return (
     <div className="flex min-h-svh items-center justify-center p-6">
-      <div className="w-full max-w-md">
-        <Card>
-          <CardContent className="space-y-6 pt-6 text-center">
-            <span className="bg-muted text-muted-foreground mx-auto flex size-12 items-center justify-center rounded-full">
-              <IconExclamationCircle className="size-5" />
-            </span>
-            <div className="space-y-1">
-              {status && (
-                <p className="text-muted-foreground text-xs font-medium uppercase tracking-wider">
-                  Error {status}
-                </p>
-              )}
-              <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-              <p className="text-muted-foreground text-sm">{detail}</p>
-            </div>
-            <div className="flex justify-center">
-              <Button asChild>
-                <Link to="/">
-                  <IconHome />
-                  Home
-                </Link>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex w-full max-w-xl flex-col gap-6">
+        <Eyebrow num={status ?? "—"}>error · public</Eyebrow>
+        <h1 className="font-heading text-4xl font-medium tracking-tight">
+          {title}
+        </h1>
+        <p className="text-muted-foreground max-w-prose text-sm leading-relaxed">
+          {detail}
+        </p>
+        <div>
+          <Button asChild>
+            <Link to="/">
+              <IconHome />
+              Home
+            </Link>
+          </Button>
+        </div>
       </div>
     </div>
   )

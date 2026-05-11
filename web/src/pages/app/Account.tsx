@@ -4,16 +4,8 @@ import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { PageHeader } from "@/components/PageHeader"
+import { PageHead, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { ApiError, deleteAccount, exportData } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
@@ -62,58 +54,58 @@ export function AccountPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Account · 06"
         title="Account"
-        description="Profile, data export, and account deletion."
+        sub="profile · data · lifecycle"
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Profile</CardTitle>
-          <CardDescription>Account email and role.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
-            <dt className="text-muted-foreground">Email</dt>
-            <dd className="font-medium">{user?.email}</dd>
-            <dt className="text-muted-foreground">Role</dt>
-            <dd className="capitalize">{user?.role}</dd>
-          </dl>
-        </CardContent>
-      </Card>
+      <Panel title="Profile">
+        <div className="flex flex-col gap-3 text-sm">
+          <Row label="Email">
+            <span className="font-medium">{user?.email}</span>
+          </Row>
+          <Row label="Role">
+            {user?.role === "admin" ? (
+              <Pill tone="info">admin</Pill>
+            ) : (
+              <span className="text-muted-foreground capitalize">
+                {user?.role}
+              </span>
+            )}
+          </Row>
+        </div>
+      </Panel>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Your data</CardTitle>
-          <CardDescription>
-            Download a JSON copy of everything we hold for {user?.email}:
-            account metadata, devices, and audit-log entries you originated.
-            Password hashes, TOTP secrets, and other sensitive fields are
-            excluded.
-          </CardDescription>
-        </CardHeader>
-        <CardFooter>
+      <Panel
+        title="Data export"
+        sub="GDPR-shaped · ndjson"
+      >
+        <p className="text-muted-foreground max-w-[60ch] text-[13px] leading-relaxed">
+          Download a JSON copy of everything we hold for {user?.email}: account
+          metadata, devices, and audit-log entries you originated. Password
+          hashes, TOTP secrets, and other sensitive fields are excluded.
+        </p>
+        <div className="mt-3">
           <Button onClick={handleExport} disabled={exporting}>
             <IconDownload />
             {exporting ? "Preparing…" : "Download data export"}
           </Button>
-        </CardFooter>
-      </Card>
+        </div>
+      </Panel>
 
-      <Card className="border-destructive/30">
-        <CardHeader>
-          <CardTitle className="text-destructive text-base">
-            Delete account
-          </CardTitle>
-          <CardDescription>
-            Soft-deletes your account, revokes every device + session, nulls
-            personally-identifying fields, and signs you out. Reversible by
-            an administrator within 30 days; after that, the row is
-            hard-purged.
-          </CardDescription>
-        </CardHeader>
-        <CardFooter>
+      <Panel
+        title="Delete account"
+        sub="soft-delete · 30-day grace period"
+        className="border-destructive/40"
+      >
+        <p className="text-destructive max-w-[60ch] text-[13px] leading-relaxed">
+          Soft-deletes your account, revokes every device + session, nulls
+          personally-identifying fields, and signs you out. Reversible by an
+          administrator within 30 days; after that, the row is hard-purged.
+        </p>
+        <div className="mt-3">
           <Button
             variant="destructive"
             onClick={() => setDeleteOpen(true)}
@@ -121,8 +113,8 @@ export function AccountPage() {
           >
             {deleting ? "Deleting…" : "Delete my account"}
           </Button>
-        </CardFooter>
-      </Card>
+        </div>
+      </Panel>
 
       <ConfirmDialog
         open={deleteOpen}
@@ -138,6 +130,21 @@ export function AccountPage() {
           void handleDelete()
         }}
       />
+    </div>
+  )
+}
+
+function Row({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2">
+      <span className="zv-eyebrow self-center">{label}</span>
+      <span className="self-center">{children}</span>
     </div>
   )
 }

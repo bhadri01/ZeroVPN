@@ -7,8 +7,9 @@ interface Props {
   height?: number
 }
 
-const RX_COLOR = "var(--color-status-online)"
-const TX_COLOR = "var(--color-primary)"
+// Swiss palette — cobalt RX, lime TX, matched to BandwidthChart.
+const RX_COLOR = "var(--chart-1)"
+const TX_COLOR = "var(--primary)"
 
 /**
  * Tiny presentational sparkline. No axes, no grid, no tooltip — just two
@@ -30,13 +31,7 @@ export function MiniAreaChart({
   }, [rxHistory, txHistory])
 
   if (data.length === 0) {
-    return (
-      <div
-        className="bg-muted/30 rounded-md"
-        style={{ height }}
-        aria-hidden
-      />
-    )
+    return <div className="bg-muted/40" style={{ height }} aria-hidden />
   }
 
   return (

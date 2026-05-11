@@ -1,8 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import {
-  IconDeviceTablet,
-  IconPlus,
-} from "@tabler/icons-react"
+import { IconDeviceTablet, IconPlus } from "@tabler/icons-react"
 import { AnimatePresence, motion } from "motion/react"
 import { useState } from "react"
 import { toast } from "sonner"
@@ -11,10 +8,8 @@ import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { DeviceCard } from "@/components/DeviceCard"
 import { EmptyState } from "@/components/EmptyState"
-import { PageHeader } from "@/components/PageHeader"
-import { Stat } from "@/components/Stat"
+import { Kpi, KpiStrip, PageHead, Panel } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogClose,
@@ -100,11 +95,12 @@ export function DevicesPage() {
   const revoked = devices.filter((d) => d.status === "revoked").length
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Workspace · 02"
         title="Devices"
-        description="Every WireGuard peer attached to your account."
-        actions={
+        sub={`${devices.length} total · ${active} live`}
+        right={
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -121,8 +117,10 @@ export function DevicesPage() {
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="dev-name">Name</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="dev-name" className="zv-eyebrow">
+                    Name
+                  </Label>
                   <Input
                     id="dev-name"
                     value={name}
@@ -131,8 +129,8 @@ export function DevicesPage() {
                     autoFocus
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label>Operating system</Label>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="zv-eyebrow">Operating system</Label>
                   <Select
                     value={osChoice}
                     onValueChange={(v) => setOsChoice(v as DeviceOs)}
@@ -168,11 +166,12 @@ export function DevicesPage() {
         }
       />
 
-      <div className="grid grid-cols-3 gap-3">
-        <Stat label="Active" value={active} />
-        <Stat label="Paused" value={paused} />
-        <Stat label="Revoked" value={revoked} />
-      </div>
+      <KpiStrip>
+        <Kpi label="Active" value={active} footL="streaming now" />
+        <Kpi label="Paused" value={paused} footL="—" />
+        <Kpi label="Revoked" value={revoked} footL="hard-removed" />
+        <Kpi label="Total" value={devices.length} footL="all states" />
+      </KpiStrip>
 
       <AnimatePresence>
         {created && (
@@ -183,51 +182,44 @@ export function DevicesPage() {
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.18 }}
           >
-            <Card className="border-status-online/30 bg-status-online/5">
-              <CardContent className="space-y-4 pt-6">
-                <div>
-                  <p className="text-sm font-medium">
-                    {created.device.name} · ready
-                  </p>
-                  <p className="text-muted-foreground text-xs">
-                    Save this config now — the private key isn't stored on
-                    the server.
-                  </p>
+            <Panel
+              title={`${created.device.name} · ready`}
+              sub="Save this config now — the private key isn't stored on the server."
+              className="border-status-online/40 bg-status-online/5"
+            >
+              <div className="grid gap-4 sm:grid-cols-[auto_1fr]">
+                <div className="zv-qr-box bg-card flex shrink-0 items-center justify-center">
+                  <span
+                    className="block size-32"
+                    dangerouslySetInnerHTML={{ __html: created.qr_svg }}
+                  />
                 </div>
-                <div className="grid gap-4 sm:grid-cols-[auto_1fr]">
-                  <div className="flex shrink-0 items-center justify-center rounded-md bg-white p-2">
-                    <span
-                      className="block size-32"
-                      dangerouslySetInnerHTML={{ __html: created.qr_svg }}
-                    />
-                  </div>
-                  <div className="min-w-0 space-y-2">
-                    <CopyableCode value={created.config} multiline />
-                  </div>
+                <div className="min-w-0 space-y-2">
+                  <CopyableCode value={created.config} multiline />
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      const blob = new Blob([created.config], {
-                        type: "text/plain",
-                      })
-                      const url = URL.createObjectURL(blob)
-                      const a = document.createElement("a")
-                      a.href = url
-                      a.download = `${created.device.name}.conf`
-                      a.click()
-                      URL.revokeObjectURL(url)
-                    }}
-                  >
-                    Download .conf
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setCreated(null)}>
-                    Done
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const blob = new Blob([created.config], {
+                      type: "text/plain",
+                    })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement("a")
+                    a.href = url
+                    a.download = `${created.device.name}.conf`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                >
+                  Download .conf
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setCreated(null)}>
+                  Done
+                </Button>
+              </div>
+            </Panel>
           </motion.div>
         )}
       </AnimatePresence>
@@ -235,12 +227,14 @@ export function DevicesPage() {
       {devicesQ.isLoading && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-56" />
+            <Skeleton key={i} className="h-56 rounded-none" />
           ))}
         </div>
       )}
       {devicesQ.isError && (
-        <p className="text-destructive text-sm">Failed to load devices.</p>
+        <p className="text-destructive font-mono text-sm">
+          Failed to load devices.
+        </p>
       )}
       {devicesQ.data && devicesQ.data.length === 0 && (
         <EmptyState

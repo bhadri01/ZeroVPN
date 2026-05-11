@@ -1,14 +1,15 @@
-import {
-  IconCircleCheck,
-  IconCircleX,
-  IconLoader2,
-  IconMail,
-} from "@tabler/icons-react"
+import { IconLoader2 } from "@tabler/icons-react"
 import { useEffect, useState } from "react"
 import { Link, useSearchParams } from "react-router"
 
+import {
+  AuthForm,
+  AuthFooterRule,
+  AuthHeading,
+  AuthShell,
+} from "@/components/layout/AuthShell"
+import { CodeBlock, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { ApiError, verifyEmail } from "@/lib/api"
 
 type Status = "pending" | "ok" | "fail"
@@ -36,9 +37,7 @@ export function VerifyEmailPage() {
       .catch((e) => {
         if (alive) {
           setStatus("fail")
-          setMessage(
-            e instanceof ApiError ? e.message : "Verification failed",
-          )
+          setMessage(e instanceof ApiError ? e.message : "Verification failed")
         }
       })
     return () => {
@@ -46,54 +45,67 @@ export function VerifyEmailPage() {
     }
   }, [token])
 
-  const Icon =
-    status === "ok"
-      ? IconCircleCheck
-      : status === "fail"
-        ? IconCircleX
-        : IconLoader2
-  const tone =
-    status === "ok"
-      ? "bg-status-online/10 text-status-online"
-      : status === "fail"
-        ? "bg-status-revoked/10 text-status-revoked"
-        : "bg-primary/10 text-primary"
-
   return (
-    <div className="flex min-h-svh items-center justify-center p-6">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="text-center">
-          <span className="bg-primary/10 text-primary mx-auto mb-3 flex size-9 items-center justify-center rounded-md">
-            <IconMail className="size-4" />
-          </span>
-          <h1 className="text-xl font-semibold tracking-tight">
-            Email verification
-          </h1>
+    <AuthShell>
+      <AuthForm>
+        <AuthHeading eyebrow="02 · Verify email">
+          {status === "pending"
+            ? "Verifying…"
+            : status === "ok"
+              ? "Check passed."
+              : "Verification failed."}
+        </AuthHeading>
+
+        <div className="flex items-center gap-3">
+          <Pill
+            tone={
+              status === "ok" ? "ok" : status === "fail" ? "err" : "warn"
+            }
+          >
+            {status === "ok"
+              ? "verified"
+              : status === "fail"
+                ? "failed"
+                : "pending"}
+          </Pill>
+          {status === "pending" && (
+            <IconLoader2 className="size-4 animate-spin text-muted-foreground" />
+          )}
         </div>
-        <Card>
-          <CardContent className="space-y-4 text-center">
-            <span
-              className={`mx-auto flex size-9 items-center justify-center rounded-full ${tone}`}
-            >
-              <Icon
-                className={
-                  status === "pending"
-                    ? "size-4 animate-spin"
-                    : "size-4"
-                }
-              />
-            </span>
-            <p className="text-sm">
-              {status === "pending" ? "Verifying…" : message}
-            </p>
-          </CardContent>
-          <CardFooter>
-            <Button asChild className="w-full">
-              <Link to="/login">Continue to sign in</Link>
+
+        {!token ? (
+          <p className="text-muted-foreground text-sm leading-relaxed">
+            We sent a token-link to your inbox. Click it to finish creating
+            your account.
+          </p>
+        ) : (
+          <p className="text-sm leading-relaxed">{message}</p>
+        )}
+
+        {!token && (
+          <CodeBlock>{`From: ZeroVPN <noreply@your-domain.tld>
+Subject: Verify your account
+
+→ https://your-host.tld/verify-email?token=eyJhbGciOi…  (24h)`}</CodeBlock>
+        )}
+
+        <div className="flex gap-2">
+          <Button asChild>
+            <Link to="/login">Continue to sign in</Link>
+          </Button>
+          {status === "fail" && (
+            <Button asChild variant="ghost">
+              <Link to="/register">Try again</Link>
             </Button>
-          </CardFooter>
-        </Card>
-      </div>
-    </div>
+          )}
+        </div>
+
+        <AuthFooterRule>
+          <Link to="/" className="hover:text-foreground">
+            ← Home
+          </Link>
+        </AuthFooterRule>
+      </AuthForm>
+    </AuthShell>
   )
 }

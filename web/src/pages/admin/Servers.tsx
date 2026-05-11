@@ -6,17 +6,9 @@ import { toast } from "sonner"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { EmptyState } from "@/components/EmptyState"
-import { PageHeader } from "@/components/PageHeader"
+import { PageHead, Panel } from "@/components/swiss"
 import { StatusPill } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -34,15 +26,16 @@ export function ServersPage() {
   })
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Admin · 06"
         title="Servers"
-        description="WireGuard servers under management. Edit endpoint, MTU, DNS, or rotate keys."
+        sub="hubs · keypairs · rotation · drain"
       />
       {q.isLoading && (
-        <div className="space-y-3">
-          <Skeleton className="h-48" />
-          <Skeleton className="h-48" />
+        <div className="flex flex-col gap-3">
+          <Skeleton className="h-48 rounded-none" />
+          <Skeleton className="h-48 rounded-none" />
         </div>
       )}
       {q.data && q.data.length === 0 && (
@@ -52,7 +45,7 @@ export function ServersPage() {
           description="Bootstrap creates a default server on first boot."
         />
       )}
-      <div className="space-y-4">
+      <div className="flex flex-col gap-4">
         {q.data?.map((s) => <ServerEditor key={s.id} server={s} />)}
       </div>
     </div>
@@ -96,81 +89,84 @@ function ServerEditor({ server }: { server: AdminServerRow }) {
   })
 
   return (
-    <Card>
-      <CardHeader className="flex-row items-start justify-between">
-        <div>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <IconRouter className="size-4" />
-            {server.name}
-          </CardTitle>
-          <CardDescription>
-            {server.region} · {server.cidr}
-          </CardDescription>
+    <Panel
+      title={
+        <span className="inline-flex items-center gap-2">
+          <IconRouter className="size-4" />
+          {server.name}
+        </span>
+      }
+      sub={`${server.region} · ${server.cidr}`}
+      right={<StatusPill status={server.is_active ? "active" : "offline"} />}
+      footer={
+        <div className="flex w-full justify-between">
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => setRotateOpen(true)}
+            disabled={rotate.isPending}
+          >
+            <IconKey />
+            {rotate.isPending ? "Rotating…" : "Rotate keys"}
+          </Button>
         </div>
-        <StatusPill status={server.is_active ? "active" : "offline"} />
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Public key</Label>
-          <CopyableCode value={server.public_key} />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor={`eh-${server.id}`}>Endpoint host</Label>
-            <Input
-              id={`eh-${server.id}`}
-              value={endpointHost}
-              onChange={(e) => setEndpointHost(e.target.value)}
-              className="font-mono"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor={`ep-${server.id}`}>Endpoint port</Label>
-            <Input
-              id={`ep-${server.id}`}
-              type="number"
-              value={endpointPort}
-              onChange={(e) => setEndpointPort(e.target.value)}
-              className="font-mono"
-            />
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor={`mtu-${server.id}`}>MTU</Label>
-          <Input
-            id={`mtu-${server.id}`}
-            type="number"
-            value={mtu}
-            onChange={(e) => setMtu(e.target.value)}
-            className="font-mono"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor={`dns-${server.id}`}>
-            DNS servers (comma-separated IPs)
+      }
+    >
+      <div className="flex flex-col gap-1.5">
+        <Label className="zv-eyebrow">Public key</Label>
+        <CopyableCode value={server.public_key} />
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`eh-${server.id}`} className="zv-eyebrow">
+            Endpoint host
           </Label>
           <Input
-            id={`dns-${server.id}`}
-            value={dnsServers}
-            onChange={(e) => setDnsServers(e.target.value)}
-            placeholder="10.10.0.1, 1.1.1.1"
+            id={`eh-${server.id}`}
+            value={endpointHost}
+            onChange={(e) => setEndpointHost(e.target.value)}
             className="font-mono"
           />
         </div>
-      </CardContent>
-      <CardFooter className="flex justify-between">
-        <Button onClick={() => save.mutate()} disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save"}
-        </Button>
-        <Button
-          variant="destructive"
-          onClick={() => setRotateOpen(true)}
-          disabled={rotate.isPending}
-        >
-          <IconKey />
-          {rotate.isPending ? "Rotating…" : "Rotate keys"}
-        </Button>
-      </CardFooter>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`ep-${server.id}`} className="zv-eyebrow">
+            Endpoint port
+          </Label>
+          <Input
+            id={`ep-${server.id}`}
+            type="number"
+            value={endpointPort}
+            onChange={(e) => setEndpointPort(e.target.value)}
+            className="font-mono"
+          />
+        </div>
+      </div>
+      <div className="mt-3 flex flex-col gap-1.5">
+        <Label htmlFor={`mtu-${server.id}`} className="zv-eyebrow">
+          MTU
+        </Label>
+        <Input
+          id={`mtu-${server.id}`}
+          type="number"
+          value={mtu}
+          onChange={(e) => setMtu(e.target.value)}
+          className="font-mono"
+        />
+      </div>
+      <div className="mt-3 flex flex-col gap-1.5">
+        <Label htmlFor={`dns-${server.id}`} className="zv-eyebrow">
+          DNS servers (comma-separated IPs)
+        </Label>
+        <Input
+          id={`dns-${server.id}`}
+          value={dnsServers}
+          onChange={(e) => setDnsServers(e.target.value)}
+          placeholder="10.10.0.1, 1.1.1.1"
+          className="font-mono"
+        />
+      </div>
       <ConfirmDialog
         open={rotateOpen}
         onOpenChange={setRotateOpen}
@@ -182,6 +178,6 @@ function ServerEditor({ server }: { server: AdminServerRow }) {
         pending={rotate.isPending}
         onConfirm={() => rotate.mutate()}
       />
-    </Card>
+    </Panel>
   )
 }

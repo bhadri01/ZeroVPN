@@ -54,7 +54,7 @@ export function DashboardLayout() {
                 animate="animate"
                 exit="exit"
                 variants={reduceMotion ? undefined : pageVariants}
-                className="px-4 py-6 md:px-6 md:py-8"
+                className="flex flex-col gap-6 px-6 py-6"
               >
                 <Suspense fallback={<RoutePending />}>
                   <Outlet />
@@ -74,15 +74,18 @@ export function DashboardLayout() {
 
 function RoutePending() {
   return (
-    <div className="space-y-4">
-      <Skeleton className="h-8 w-48" />
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24" />
+    <div className="flex flex-col gap-6">
+      <Skeleton className="h-8 w-48 rounded-none" />
+      <div className="zv-kpi-strip">
+        {[0, 1, 2, 3].map((i) => (
+          <div className="zv-kpi" key={i}>
+            <Skeleton className="h-3 w-20 rounded-none" />
+            <Skeleton className="h-7 w-24 rounded-none" />
+            <Skeleton className="h-[26px] w-full rounded-none" />
+          </div>
+        ))}
       </div>
-      <Skeleton className="h-64" />
+      <Skeleton className="h-64 rounded-none" />
     </div>
   )
 }

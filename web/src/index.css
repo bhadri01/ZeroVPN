@@ -1,95 +1,126 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/roboto";
-@import "@fontsource-variable/figtree";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 
 @custom-variant dark (&:is(.dark *));
 
+/* ── ZeroVPN — Swiss/utilitarian system ─────────────────────────────────
+   Tokens map the design's --bg / --surface / --ink / --line / --accent
+   layers onto shadcn's --background / --card / --foreground / --border /
+   --primary surface so every existing shadcn primitive picks up the new
+   look without a rewrite. Sharp 2px radius, paper off-white in light, ink
+   black in dark, lime accent across both. */
+
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.141 0.005 285.823);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.141 0.005 285.823);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.141 0.005 285.823);
-    --primary: oklch(0.491 0.27 292.581);
-    --primary-foreground: oklch(0.969 0.016 293.756);
-    --secondary: oklch(0.967 0.001 286.375);
-    --secondary-foreground: oklch(0.21 0.006 285.885);
-    --muted: oklch(0.967 0.001 286.375);
-    --muted-foreground: oklch(0.552 0.016 285.938);
-    --accent: oklch(0.967 0.001 286.375);
-    --accent-foreground: oklch(0.21 0.006 285.885);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.92 0.004 286.32);
-    --input: oklch(0.92 0.004 286.32);
-    --ring: oklch(0.705 0.015 286.067);
-    --chart-1: oklch(0.811 0.111 293.571);
-    --chart-2: oklch(0.606 0.25 292.717);
-    --chart-3: oklch(0.541 0.281 293.009);
-    --chart-4: oklch(0.491 0.27 292.581);
-    --chart-5: oklch(0.432 0.232 292.759);
-    --radius: 0.45rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.141 0.005 285.823);
-    --sidebar-primary: oklch(0.541 0.281 293.009);
-    --sidebar-primary-foreground: oklch(0.969 0.016 293.756);
-    --sidebar-accent: oklch(0.967 0.001 286.375);
-    --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-    --sidebar-border: oklch(0.92 0.004 286.32);
-    --sidebar-ring: oklch(0.705 0.015 286.067);
+    /* paper + ink */
+    --background: #fafaf7;       /* bg     */
+    --foreground: #0a0a0a;       /* ink    */
+    --card: #ffffff;             /* surface */
+    --card-foreground: #0a0a0a;
+    --popover: #ffffff;
+    --popover-foreground: #0a0a0a;
+
+    /* lime accent — same value light + dark, ink as foreground */
+    --primary: #c6ff3d;
+    --primary-foreground: #0a0a0a;
+
+    /* surface-2 layer = secondary / accent / muted bg */
+    --secondary: #f7f7f3;
+    --secondary-foreground: #0a0a0a;
+    --muted: #f7f7f3;
+    --muted-foreground: #6b6b66;
+    --accent: #f7f7f3;
+    --accent-foreground: #0a0a0a;
+
+    /* err */
+    --destructive: #c5283d;
+
+    /* hairlines */
+    --border: #e2e2dc;
+    --input: #e2e2dc;
+    --ring: #0a0a0a;
+
+    /* chart series — RX cobalt, TX lime, plus warn/err/info anchors */
+    --chart-1: #1e5fcc;
+    --chart-2: #1f8a3f;
+    --chart-3: #b86a00;
+    --chart-4: #c5283d;
+    --chart-5: #6b6b66;
+
+    /* Swiss = sharp. 2px base maps to design --r-1. */
+    --radius: 2px;
+
+    /* sidebar surface = paper bg, with surface-2 hover state */
+    --sidebar: #fafaf7;
+    --sidebar-foreground: #2a2a2a;
+    --sidebar-primary: #c6ff3d;
+    --sidebar-primary-foreground: #0a0a0a;
+    --sidebar-accent: #f7f7f3;
+    --sidebar-accent-foreground: #0a0a0a;
+    --sidebar-border: #e2e2dc;
+    --sidebar-ring: #0a0a0a;
+
     /* Semantic status palette — used by StatusPill, never reuse --primary
-       for "online" etc. Light-mode values; .dark overrides below. */
-    --status-online: oklch(0.62 0.18 152);     /* green-600 */
-    --status-degraded: oklch(0.74 0.16 75);    /* amber-500 */
-    --status-offline: oklch(0.7 0.01 286);     /* zinc-400 */
-    --status-paused: oklch(0.83 0.01 286);     /* zinc-300 */
-    --status-revoked: oklch(0.577 0.245 27.325); /* destructive */
+       for "online" etc. Mapped to the Swiss ok/warn/paused/err anchors. */
+    --status-online: #1f8a3f;       /* ok    */
+    --status-degraded: #b86a00;     /* warn  */
+    --status-offline: #9a9a93;      /* muted-2 */
+    --status-paused: #8a8a82;       /* paused */
+    --status-revoked: #c5283d;      /* err   */
 }
 
 .dark {
-    --background: oklch(0.141 0.005 285.823);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.21 0.006 285.885);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.21 0.006 285.885);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.432 0.232 292.759);
-    --primary-foreground: oklch(0.969 0.016 293.756);
-    --secondary: oklch(0.274 0.006 286.033);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.274 0.006 286.033);
-    --muted-foreground: oklch(0.705 0.015 286.067);
-    --accent: oklch(0.274 0.006 286.033);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.552 0.016 285.938);
-    --chart-1: oklch(0.811 0.111 293.571);
-    --chart-2: oklch(0.606 0.25 292.717);
-    --chart-3: oklch(0.541 0.281 293.009);
-    --chart-4: oklch(0.491 0.27 292.581);
-    --chart-5: oklch(0.432 0.232 292.759);
-    --sidebar: oklch(0.21 0.006 285.885);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.606 0.25 292.717);
-    --sidebar-primary-foreground: oklch(0.969 0.016 293.756);
-    --sidebar-accent: oklch(0.274 0.006 286.033);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.552 0.016 285.938);
-    --status-online: oklch(0.74 0.18 152);
-    --status-degraded: oklch(0.79 0.17 75);
-    --status-offline: oklch(0.55 0.01 286);
-    --status-paused: oklch(0.4 0.005 286);
-    --status-revoked: oklch(0.704 0.191 22.216);
+    --background: #0a0a0a;
+    --foreground: #f5f5f0;
+    --card: #111111;
+    --card-foreground: #f5f5f0;
+    --popover: #111111;
+    --popover-foreground: #f5f5f0;
+
+    --primary: #c6ff3d;
+    --primary-foreground: #0a0a0a;
+
+    --secondary: #161616;
+    --secondary-foreground: #f5f5f0;
+    --muted: #161616;
+    --muted-foreground: #8a8a82;
+    --accent: #161616;
+    --accent-foreground: #f5f5f0;
+
+    --destructive: #ff4f5e;
+
+    --border: #1f1f1f;
+    --input: #2a2a2a;
+    --ring: #f5f5f0;
+
+    --chart-1: #5a9cff;
+    --chart-2: #4fe07a;
+    --chart-3: #f2a33c;
+    --chart-4: #ff4f5e;
+    --chart-5: #8a8a82;
+
+    --sidebar: #0a0a0a;
+    --sidebar-foreground: #d8d8d0;
+    --sidebar-primary: #c6ff3d;
+    --sidebar-primary-foreground: #0a0a0a;
+    --sidebar-accent: #161616;
+    --sidebar-accent-foreground: #f5f5f0;
+    --sidebar-border: #1f1f1f;
+    --sidebar-ring: #f5f5f0;
+
+    --status-online: #4fe07a;
+    --status-degraded: #f2a33c;
+    --status-offline: #6b6b65;
+    --status-paused: #6b6b65;
+    --status-revoked: #ff4f5e;
 }
 
 @theme inline {
-    --font-sans: 'Roboto Variable', sans-serif;
-    --font-heading: 'Figtree Variable', sans-serif;
+    --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-heading: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -121,13 +152,15 @@
     --color-card: var(--card);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+    /* Swiss radius scale — all very tight, with 2px base.
+       md/lg pin near the base so shadcn primitives stay sharp. */
+    --radius-sm: 0px;
+    --radius-md: 2px;
+    --radius-lg: 2px;
+    --radius-xl: 4px;
+    --radius-2xl: 6px;
+    --radius-3xl: 8px;
+    --radius-4xl: 10px;
     --color-status-online: var(--status-online);
     --color-status-degraded: var(--status-degraded);
     --color-status-offline: var(--status-offline);
@@ -181,6 +214,432 @@
   background-size: 16px 16px;
 }
 
+/* ── ZeroVPN Swiss kit ─────────────────────────────────────────────────
+   Recurring building blocks from the design prototype, exposed as plain
+   class names so JSX stays terse. Everything resolves through the same
+   tokens defined above; no hard-coded values that need follow-up themes. */
+
+.zv-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+}
+
+.zv-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+.zv-kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--muted) 65%, var(--background));
+  white-space: nowrap;
+}
+
+.zv-hrule { height: 1px; background: var(--border); width: 100%; }
+
+.zv-page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.zv-page-head h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.zv-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.zv-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+}
+.zv-panel-head h3 { margin: 0; font-size: 13px; font-weight: 500; }
+.zv-panel-sub { font-family: var(--font-mono); font-size: 11px; color: var(--muted-foreground); }
+.zv-panel-body { padding: 16px; flex: 1; min-height: 0; }
+.zv-panel-body.flush { padding: 0; }
+
+/* KPI strip — Swiss labelled blocks, four-up by default */
+.zv-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 2px;
+}
+@media (max-width: 880px) {
+  .zv-kpi-strip { grid-template-columns: repeat(2, 1fr); }
+}
+.zv-kpi {
+  padding: 16px 18px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.zv-kpi:last-child { border-right: 0; }
+.zv-kpi-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+  display: flex;
+  justify-content: space-between;
+}
+.zv-kpi-val {
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.zv-kpi-val sup {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-weight: 400;
+  margin-left: 4px;
+  vertical-align: super;
+}
+.zv-kpi-foot {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.zv-delta-up { color: var(--status-online); }
+.zv-delta-dn { color: var(--destructive); }
+
+/* Pill — outline by default; data-tone selects color */
+.zv-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  background: var(--card);
+  white-space: nowrap;
+}
+.zv-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+.zv-pill[data-tone="ok"]   { color: var(--status-online); border-color: color-mix(in oklch, var(--status-online) 30%, var(--border)); }
+.zv-pill[data-tone="warn"] { color: var(--status-degraded); border-color: color-mix(in oklch, var(--status-degraded) 30%, var(--border)); }
+.zv-pill[data-tone="err"]  { color: var(--destructive); border-color: color-mix(in oklch, var(--destructive) 35%, var(--border)); }
+.zv-pill[data-tone="info"] { color: #1e5fcc; border-color: color-mix(in oklch, #1e5fcc 35%, var(--border)); }
+.dark .zv-pill[data-tone="info"] { color: #5a9cff; border-color: color-mix(in oklch, #5a9cff 35%, var(--border)); }
+.zv-pill[data-tone="paused"] { color: var(--status-paused); }
+
+/* Hairline table — replaces shadcn Table when Swiss density is wanted */
+.zv-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.zv-table thead th {
+  text-align: left;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+}
+.zv-table tbody td {
+  padding: 0 14px;
+  height: 36px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.zv-table tbody tr:hover td { background: var(--muted); }
+.zv-table tbody tr[data-selected="1"] td {
+  background: color-mix(in oklch, var(--primary) 14%, var(--card));
+}
+.zv-table .zv-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+.zv-table .zv-actions { text-align: right; }
+.zv-table .zv-actions .zv-icon-btn { opacity: 0; transition: opacity 120ms; }
+.zv-table tbody tr:hover .zv-actions .zv-icon-btn { opacity: 1; }
+
+/* Icon button — 28px hairline square */
+.zv-icon-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.zv-icon-btn:hover { color: var(--foreground); border-color: var(--foreground); }
+
+/* Segmented control — used a lot for filters / chart kind */
+.zv-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--card);
+}
+.zv-seg button {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+}
+.zv-seg button:last-child { border-right: 0; }
+.zv-seg button[data-active="1"] {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+/* Live dot — pulsing green status indicator */
+.zv-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-online);
+  box-shadow: 0 0 0 0 var(--status-online);
+  animation: zv-pulse 1.6s ease-out infinite;
+}
+.zv-live-dot[data-state="offline"] { background: var(--status-offline); animation: none; }
+.zv-live-dot[data-state="warn"] { background: var(--status-degraded); }
+@keyframes zv-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in oklch, var(--status-online) 60%, transparent); }
+  60%  { box-shadow: 0 0 0 8px color-mix(in oklch, var(--status-online) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--status-online) 0%, transparent); }
+}
+
+/* Code block — preformatted, monospace, dim background */
+.zv-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 16px;
+  white-space: pre;
+  overflow: auto;
+  color: var(--foreground);
+}
+
+/* Timeline — audit log / event stream */
+.zv-timeline { padding: 8px 0; }
+.zv-tl-item {
+  display: grid;
+  grid-template-columns: 100px 24px 1fr auto;
+  gap: 12px;
+  padding: 10px 16px;
+  align-items: start;
+  border-bottom: 1px solid var(--border);
+}
+.zv-tl-item:last-child { border-bottom: 0; }
+.zv-tl-time { font-family: var(--font-mono); font-size: 11px; color: var(--muted-foreground); padding-top: 2px; }
+.zv-tl-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 4px;
+  height: 100%;
+}
+.zv-tl-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--foreground); }
+.zv-tl-dot[data-tone="ok"]   { background: var(--status-online); }
+.zv-tl-dot[data-tone="warn"] { background: var(--status-degraded); }
+.zv-tl-dot[data-tone="err"]  { background: var(--destructive); }
+.zv-tl-dot[data-tone="info"] { background: #5a9cff; }
+.zv-tl-line {
+  width: 1px;
+  flex: 1;
+  background: var(--border);
+  margin-top: 4px;
+  min-height: 8px;
+}
+.zv-tl-body strong { font-weight: 500; }
+.zv-tl-meta {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+/* Bar — for quota usage / progress lines */
+.zv-bar-track {
+  height: 4px;
+  background: var(--border);
+  border-radius: 0;
+  overflow: hidden;
+}
+.zv-bar-fill { height: 100%; background: var(--primary); }
+.zv-bar-fill[data-tone="warn"] { background: var(--status-degraded); }
+.zv-bar-fill[data-tone="err"]  { background: var(--destructive); }
+
+/* Grid background — fine 32px graph paper for hero/auth */
+.zv-grid-bg {
+  background-image:
+    linear-gradient(color-mix(in oklch, var(--foreground) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklch, var(--foreground) 4%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Banner — full-bleed status bar (maintenance, token reveal) */
+.zv-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.zv-banner[data-tone="warn"] {
+  background: color-mix(in oklch, var(--status-degraded) 10%, var(--background));
+  border-color: color-mix(in oklch, var(--status-degraded) 35%, var(--border));
+  color: var(--status-degraded);
+}
+.zv-banner[data-tone="err"] {
+  background: color-mix(in oklch, var(--destructive) 10%, var(--background));
+  border-color: color-mix(in oklch, var(--destructive) 35%, var(--border));
+  color: var(--destructive);
+}
+.zv-banner[data-tone="info"] {
+  background: color-mix(in oklch, #5a9cff 10%, var(--background));
+  color: #1e5fcc;
+}
+.dark .zv-banner[data-tone="info"] { color: #5a9cff; }
+.zv-banner-tag {
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* QR frame */
+.zv-qr-box {
+  padding: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* Topology — animated SVG backbone for landing hero (FIG. 01). Mirrors the
+   design's --line / --line-2 / --accent / --accent-soft hairlines using the
+   project's tokens. Pure CSS classes so the SVG stays terse. */
+.zv-topo { width: 100%; height: 100%; display: block; }
+.zv-topo-meta {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: color-mix(in oklch, var(--muted-foreground) 70%, transparent);
+}
+.zv-topo-meta-ink { fill: var(--muted-foreground); }
+.zv-topo-hub-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--foreground);
+}
+.zv-topo-backbone {
+  stroke: color-mix(in oklch, var(--foreground) 18%, transparent);
+  fill: none;
+}
+.zv-topo-edge {
+  stroke: var(--border);
+  stroke-opacity: 0.6;
+  fill: none;
+}
+.zv-topo-edge-live {
+  stroke: var(--primary);
+  stroke-opacity: 0.4;
+  fill: none;
+}
+.zv-topo-flow {
+  stroke: var(--primary);
+  fill: none;
+  animation: zv-topo-flow 1.6s linear infinite;
+}
+.zv-topo-flow-static { stroke: var(--primary); fill: none; }
+@keyframes zv-topo-flow { to { stroke-dashoffset: -36; } }
+.zv-topo-node {
+  fill: var(--card);
+  stroke: color-mix(in oklch, var(--foreground) 22%, transparent);
+}
+.zv-topo-node-live {
+  fill: var(--card);
+  stroke: var(--primary);
+}
+.zv-topo-hub {
+  fill: var(--card);
+  stroke: var(--foreground);
+}
+.zv-topo-hub-dot { fill: var(--primary); }
+.zv-topo-hub-tag {
+  fill: var(--card);
+  stroke: var(--border);
+}
+.zv-topo-halo {
+  fill: color-mix(in oklch, var(--primary) 16%, transparent);
+}
+.zv-topo-legend {
+  fill: var(--card);
+  stroke: var(--border);
+}
+
 /* Soft radial primary tint — for hero / live-network card backgrounds. */
 .bg-primary-radial {
   background-image:
@@ -195,7 +654,9 @@
     }
   body {
     @apply bg-background text-foreground antialiased;
-    font-feature-settings: "cv11", "ss01"; /* slashed zeros + better digits */
+    /* tabular numerals + slashed zero everywhere — data UIs want this on
+       by default so columns line up without per-cell .tabular-nums. */
+    font-feature-settings: "tnum" 1, "zero" 1, "ss01" 1, "cv11" 1;
     }
   html {
     @apply font-sans;

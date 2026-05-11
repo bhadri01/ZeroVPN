@@ -5,20 +5,18 @@
  * + `/auth/reset-password` flow to set a new password (the link gets
  * auto-emailed; in dev MailHog catches it).
  */
-import {
-  IconCircleCheck,
-  IconKey,
-} from "@tabler/icons-react"
 import { useState } from "react"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
-import { Button } from "@/components/ui/button"
 import {
-  Card,
-  CardContent,
-  CardFooter,
-} from "@/components/ui/card"
+  AuthForm,
+  AuthFooterRule,
+  AuthHeading,
+  AuthShell,
+} from "@/components/layout/AuthShell"
+import { Banner, Kbd } from "@/components/swiss"
+import { Button } from "@/components/ui/button"
 import { ApiError, forgotPassword, logout } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
@@ -50,63 +48,36 @@ export function ChangePasswordPage() {
   }
 
   return (
-    <div className="flex min-h-svh items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-6">
-        <div className="text-center">
-          <span className="bg-primary/10 text-primary mx-auto mb-3 flex size-9 items-center justify-center rounded-md">
-            <IconKey className="size-4" />
-          </span>
-          <h1 className="text-xl font-semibold tracking-tight">
-            Change your password
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            You're signed in with a bootstrap or temporary password.
+    <AuthShell>
+      <AuthForm>
+        <AuthHeading eyebrow="— · Change password">
+          Set a new password.
+        </AuthHeading>
+
+        {sent ? (
+          <Banner tone="info" tag="SENT">
+            We've emailed a reset link to <Kbd>{user?.email}</Kbd>. Click the
+            link, set a new password, then sign in again.
+          </Banner>
+        ) : (
+          <p className="text-sm leading-relaxed">
+            You're signed in with a bootstrap or temporary password. We'll
+            email a one-time reset link to{" "}
+            <span className="text-foreground font-medium">{user?.email}</span>.
           </p>
-        </div>
-        <Card>
-          <CardContent className="space-y-4 text-sm">
-            {sent ? (
-              <div className="bg-status-online/10 text-status-online flex items-start gap-3 rounded-md p-3">
-                <IconCircleCheck className="mt-0.5 size-4 shrink-0" />
-                <p>
-                  We've emailed a password-reset link to{" "}
-                  <code className="bg-background/50 rounded px-1">
-                    {user?.email}
-                  </code>
-                  . Click the link, set a new password, then sign in again.
-                </p>
-              </div>
-            ) : (
-              <p className="text-muted-foreground">
-                For security, set a new password before continuing. We'll
-                email a one-time reset link to{" "}
-                <span className="text-foreground font-medium">
-                  {user?.email}
-                </span>
-                .
-              </p>
-            )}
-          </CardContent>
-          <CardFooter className="flex-col gap-2">
-            {!sent && (
-              <Button
-                onClick={handleSendLink}
-                disabled={sending}
-                className="w-full"
-              >
-                {sending ? "Sending…" : "Email me a reset link"}
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              onClick={handleSignOut}
-              className="w-full"
-            >
-              Sign out
-            </Button>
-          </CardFooter>
-        </Card>
-      </div>
-    </div>
+        )}
+
+        {!sent && (
+          <Button onClick={handleSendLink} disabled={sending} size="lg">
+            {sending ? "Sending…" : "Email me a reset link"}
+          </Button>
+        )}
+        <Button variant="ghost" onClick={handleSignOut}>
+          Sign out
+        </Button>
+
+        <AuthFooterRule />
+      </AuthForm>
+    </AuthShell>
   )
 }

@@ -2,17 +2,8 @@ import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 
 import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
-import { PageHeader } from "@/components/PageHeader"
-import { Stat } from "@/components/Stat"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Kpi, KpiStrip, PageHead, Panel, Seg } from "@/components/swiss"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { type BandwidthRange, userBandwidth } from "@/lib/api"
 
 export function BandwidthPage() {
@@ -31,66 +22,57 @@ export function BandwidthPage() {
   const peakTx = buckets.reduce((m, b) => Math.max(m, b.tx_bytes), 0)
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Workspace · 03"
         title="Bandwidth"
-        description="Aggregate RX/TX across all your devices."
-        actions={
-          <Tabs
+        sub="Aggregated samples · 1m → 5m → 1h roll-ups"
+        right={
+          <Seg
             value={range}
-            onValueChange={(v) => setRange(v as BandwidthRange)}
-          >
-            <TabsList className="h-8">
-              <TabsTrigger value="24h">24h</TabsTrigger>
-              <TabsTrigger value="7d">7d</TabsTrigger>
-              <TabsTrigger value="30d">30d</TabsTrigger>
-            </TabsList>
-          </Tabs>
+            options={["24h", "7d", "30d"] as const}
+            onChange={(v) => setRange(v)}
+          />
         }
       />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat
-          label="RX total"
-          value={totalRx}
-          format={formatBytes}
-          hint="received"
+      <KpiStrip>
+        <Kpi
+          label={`RX · total · ${range}`}
+          value={formatBytes(totalRx)}
+          spark={buckets.slice(-32).map((b) => b.rx_bytes)}
+          sparkColor="var(--chart-1)"
+          footL="received"
         />
-        <Stat
-          label="TX total"
-          value={totalTx}
-          format={formatBytes}
-          hint="sent"
+        <Kpi
+          label={`TX · total · ${range}`}
+          value={formatBytes(totalTx)}
+          spark={buckets.slice(-32).map((b) => b.tx_bytes)}
+          sparkColor="var(--primary)"
+          footL="sent"
         />
-        <Stat
+        <Kpi
           label="RX peak"
-          value={peakRx}
-          format={formatBytes}
-          hint="single bucket"
+          value={formatBytes(peakRx)}
+          footL="single bucket"
         />
-        <Stat
+        <Kpi
           label="TX peak"
-          value={peakTx}
-          format={formatBytes}
-          hint="single bucket"
+          value={formatBytes(peakTx)}
+          footL="single bucket"
         />
-      </div>
+      </KpiStrip>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Throughput</CardTitle>
-          <CardDescription>
-            RX and TX over the selected window.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {bwQ.isLoading ? (
-            <Skeleton className="h-64" />
-          ) : (
-            <BandwidthChart buckets={buckets} />
-          )}
-        </CardContent>
-      </Card>
+      <Panel
+        title={`Throughput · ${range}`}
+        sub={`${buckets.length} samples`}
+      >
+        {bwQ.isLoading ? (
+          <Skeleton className="h-64 rounded-none" />
+        ) : (
+          <BandwidthChart buckets={buckets} height={320} />
+        )}
+      </Panel>
     </div>
   )
 }
@@ -99,6 +81,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${Math.round(bytes)} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  if (bytes < 1024 ** 4) return `${(bytes / (1024 ** 3)).toFixed(2)} GB`
+  if (bytes < 1024 ** 4) return `${(bytes / 1024 ** 3).toFixed(2)} GB`
   return `${(bytes / 1024 ** 4).toFixed(2)} TB`
 }

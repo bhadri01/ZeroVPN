@@ -1,18 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 
-import { PageHeader } from "@/components/PageHeader"
 import { RelativeTime } from "@/components/RelativeTime"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
+import { Kpi, KpiStrip, PageHead, Panel, Pill } from "@/components/swiss"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { adminListFailedLogins } from "@/lib/api"
 
 export function FailedLoginsPage() {
@@ -21,61 +11,108 @@ export function FailedLoginsPage() {
     queryFn: () => adminListFailedLogins(200, 0),
   })
 
+  const items = q.data?.items ?? []
+  const total = items.length
+  const rateLimited = items.filter((i) => i.reason === "rate_limited").length
+  const totpBad = items.filter((i) => i.reason === "totp_incorrect").length
+  const noUser = items.filter((i) => i.reason === "no_such_user").length
+
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Admin · 04"
         title="Failed logins"
-        description="Authentication attempts that didn't succeed in the last 30 days. IPs stored as /24 prefixes only."
+        sub="brute-force mitigation · rate-limit at 10/min/IP · /24 prefixes only"
       />
 
-      <Card>
-        <CardContent>
-          {q.isLoading && (
-            <div className="space-y-2">
-              <Skeleton className="h-8" />
-              <Skeleton className="h-8" />
-            </div>
-          )}
-          {q.data && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[180px]">When</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Reason</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {q.data.items.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell className="text-muted-foreground text-xs">
-                      <RelativeTime value={row.attempted_at} />
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {row.email_attempted ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="font-mono text-[11px]">
-                        {row.reason.replace(/_/g, " ")}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {q.data.items.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={3}
-                      className="text-muted-foreground py-8 text-center"
-                    >
-                      No failed-login attempts yet.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <KpiStrip>
+        <Kpi
+          label="Failed · 30d"
+          value={total}
+          footL="across all addresses"
+          deltaTone={total > 0 ? "dn" : undefined}
+        />
+        <Kpi
+          label="Rate-limited"
+          value={rateLimited}
+          footL="auto-expire 1h"
+        />
+        <Kpi label="TOTP wrong" value={totpBad} footL="invalid 2FA code" />
+        <Kpi label="No-such-user" value={noUser} footL="email not in DB" />
+      </KpiStrip>
+
+      <Panel title="Recent failures" sub="last 200 attempts" flush>
+        {q.isLoading && (
+          <div className="flex flex-col gap-2 p-4">
+            <Skeleton className="h-8 rounded-none" />
+            <Skeleton className="h-8 rounded-none" />
+          </div>
+        )}
+        {q.data && (
+          <table className="zv-table">
+            <thead>
+              <tr>
+                <th className="w-[180px]">When</th>
+                <th>Email</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row) => (
+                <tr key={row.id}>
+                  <td className="text-muted-foreground font-mono text-xs">
+                    <RelativeTime value={row.attempted_at} />
+                  </td>
+                  <td className="font-mono text-xs">
+                    {row.email_attempted ?? (
+                      <span className="text-muted-foreground">(no user)</span>
+                    )}
+                  </td>
+                  <td>
+                    {reasonPill(row.reason)}
+                  </td>
+                </tr>
+              ))}
+              {items.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={3}
+                    className="text-muted-foreground py-8 text-center font-mono text-sm"
+                  >
+                    No failed-login attempts yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </Panel>
     </div>
+  )
+}
+
+function reasonPill(reason: string) {
+  if (reason === "rate_limited")
+    return (
+      <Pill tone="err" dot={false}>
+        rate-limited
+      </Pill>
+    )
+  if (reason === "totp_incorrect")
+    return (
+      <Pill tone="warn" dot={false}>
+        totp
+      </Pill>
+    )
+  if (reason === "no_such_user")
+    return (
+      <Pill tone="info" dot={false}>
+        no-user
+      </Pill>
+    )
+  return (
+    <Pill tone="warn" dot={false}>
+      {reason.replace(/_/g, "-")}
+    </Pill>
   )
 }

@@ -40,10 +40,10 @@ export function UserMenu() {
         <Button
           variant="ghost"
           size="icon-sm"
-          className="rounded-full"
+          className="rounded-none"
           aria-label={`Open user menu for ${user.email}`}
         >
-          <span className="bg-muted text-muted-foreground flex size-7 items-center justify-center rounded-full text-xs font-semibold">
+          <span className="bg-muted text-muted-foreground border-border flex size-7 items-center justify-center border font-mono text-[11px] font-medium uppercase">
             {initial}
           </span>
         </Button>

@@ -4,22 +4,12 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { PageHeader } from "@/components/PageHeader"
 import { RelativeTime } from "@/components/RelativeTime"
+import { PageHead, Panel, Pill } from "@/components/swiss"
 import { StatusPill, type Status } from "@/components/StatusPill"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   ApiError,
   type AdminUser,
@@ -64,127 +54,131 @@ export function UsersPage() {
   const items = usersQ.data?.items ?? []
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <PageHead
+        eyebrow="Admin · 02"
         title="Users"
-        description="Search, suspend, unsuspend. Bulk operations land in v2."
+        sub={`${usersQ.data?.total ?? 0} total · ${items.filter((u) => u.status === "active").length} active`}
+        right={
+          <div className="relative w-64">
+            <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter email…"
+              className="h-8 pl-8"
+            />
+          </div>
+        }
       />
 
-      <Card>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="relative w-full max-w-sm">
-              <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by email…"
-                className="pl-8"
-              />
-            </div>
-            <p className="text-muted-foreground text-xs whitespace-nowrap">
-              {usersQ.data?.total ?? 0} total
-            </p>
+      <Panel flush>
+        {usersQ.isLoading && (
+          <div className="flex flex-col gap-2 p-4">
+            <Skeleton className="h-10 rounded-none" />
+            <Skeleton className="h-10 rounded-none" />
+            <Skeleton className="h-10 rounded-none" />
           </div>
-
-          {usersQ.isLoading && (
-            <div className="space-y-2">
-              <Skeleton className="h-10" />
-              <Skeleton className="h-10" />
-              <Skeleton className="h-10" />
-            </div>
-          )}
-          {usersQ.data && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>2FA</TableHead>
-                  <TableHead className="text-right">Devices</TableHead>
-                  <TableHead>Last login</TableHead>
-                  <TableHead className="text-right"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((u) => {
-                  const isSelf = u.id === me?.id
-                  return (
-                    <TableRow key={u.id}>
-                      <TableCell className="font-medium">
-                        {u.email}
-                        {isSelf && (
-                          <Badge variant="outline" className="ml-2 text-[10px]">
-                            you
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="capitalize">
-                          {u.role}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <StatusPill
-                          status={USER_STATUS_TO_PILL[u.status] ?? "pending"}
-                          label={u.status.replace(/_/g, " ")}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        {u.totp_enabled ? (
-                          <Badge variant="outline" className="text-status-online">
-                            on
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {u.device_count}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        <RelativeTime value={u.last_login_at} fallback="Never" />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {!isSelf && u.status === "active" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setSuspendTarget(u)}
-                          >
-                            Suspend
-                          </Button>
-                        )}
-                        {!isSelf && u.status === "suspended" && (
-                          <Button
-                            size="sm"
-                            onClick={() =>
-                              setStatusM.mutate({ id: u.id, status: "active" })
-                            }
-                          >
-                            Unsuspend
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-                {!usersQ.isLoading && items.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={7}
-                      className="text-muted-foreground py-8 text-center"
-                    >
-                      No users match.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+        )}
+        {usersQ.data && (
+          <table className="zv-table">
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>2FA</th>
+                <th className="zv-num">Devices</th>
+                <th>Last login</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((u) => {
+                const isSelf = u.id === me?.id
+                return (
+                  <tr key={u.id}>
+                    <td>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="bg-muted border-border text-muted-foreground flex size-5 items-center justify-center border font-mono text-[10px] uppercase">
+                          {u.email.slice(0, 2)}
+                        </span>
+                        <span className="font-medium">{u.email}</span>
+                      </span>
+                      {isSelf && (
+                        <span className="text-muted-foreground/60 ml-2 font-mono text-[10px] uppercase">
+                          you
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      {u.role === "admin" ? (
+                        <Pill tone="info" dot={false}>
+                          admin
+                        </Pill>
+                      ) : (
+                        <span className="text-muted-foreground">user</span>
+                      )}
+                    </td>
+                    <td>
+                      <StatusPill
+                        status={USER_STATUS_TO_PILL[u.status] ?? "pending"}
+                        label={u.status.replace(/_/g, " ")}
+                      />
+                    </td>
+                    <td>
+                      {u.totp_enabled ? (
+                        <Pill tone="ok" dot={false}>
+                          on
+                        </Pill>
+                      ) : (
+                        <Pill tone="warn" dot={false}>
+                          off
+                        </Pill>
+                      )}
+                    </td>
+                    <td className="zv-num">{u.device_count}</td>
+                    <td className="text-muted-foreground font-mono text-xs">
+                      <RelativeTime value={u.last_login_at} fallback="Never" />
+                    </td>
+                    <td className="zv-actions">
+                      {!isSelf && u.status === "active" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSuspendTarget(u)}
+                        >
+                          Suspend
+                        </Button>
+                      )}
+                      {!isSelf && u.status === "suspended" && (
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            setStatusM.mutate({ id: u.id, status: "active" })
+                          }
+                        >
+                          Unsuspend
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+              {!usersQ.isLoading && items.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="text-muted-foreground py-8 text-center font-mono text-sm"
+                  >
+                    No users match.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </Panel>
 
       <ConfirmDialog
         open={!!suspendTarget}

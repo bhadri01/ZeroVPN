@@ -1,0 +1,523 @@
+import * as React from "react"
+
+import { cn } from "@/lib/utils"
+
+/* ── Logomark / Wordmark ───────────────────────────────────────────────
+   ZeroVPN brand: a square 0-with-a-slash drawn from hairlines. The "0"
+   in ZER0VPN tints to accent so the mark reads even at 12px. */
+
+export function Logomark({
+  size = 18,
+  className,
+}: {
+  size?: number
+  className?: string
+}) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 18 18"
+      fill="none"
+      className={cn("shrink-0", className)}
+      aria-hidden
+    >
+      <rect
+        x="1.5"
+        y="1.5"
+        width="15"
+        height="15"
+        rx="0"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+      <line x1="5" y1="1.5" x2="5" y2="16.5" stroke="currentColor" strokeWidth="1" />
+      <line x1="13" y1="1.5" x2="13" y2="16.5" stroke="currentColor" strokeWidth="1" />
+      <line
+        x1="1.5"
+        y1="14.5"
+        x2="16.5"
+        y2="3.5"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+    </svg>
+  )
+}
+
+export function Wordmark({
+  size = 14,
+  className,
+}: {
+  size?: number
+  className?: string
+}) {
+  return (
+    <span className={cn("inline-flex items-center gap-2", className)}>
+      <Logomark size={size + 4} />
+      <span
+        className="font-mono font-medium tracking-[0.04em]"
+        style={{ fontSize: size }}
+      >
+        ZER<span className="text-primary">0</span>VPN
+      </span>
+    </span>
+  )
+}
+
+/* ── Eyebrow ────────────────────────────────────────────────────────────
+   Small monospace label that anchors a page / section. Optional numeric
+   prefix matches the design's "01" / "02" rhythm. */
+
+export function Eyebrow({
+  num,
+  children,
+  className,
+}: {
+  num?: React.ReactNode
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn("zv-eyebrow flex items-center gap-2", className)}>
+      {num != null && <span className="opacity-60">{num}</span>}
+      <span>{children}</span>
+    </div>
+  )
+}
+
+/* ── PageHead ──────────────────────────────────────────────────────────
+   Title slab — eyebrow + h1 + sub + right-side actions, hairline divider. */
+
+export function PageHead({
+  eyebrow,
+  title,
+  sub,
+  right,
+  children,
+}: {
+  eyebrow?: React.ReactNode
+  title: React.ReactNode
+  sub?: React.ReactNode
+  right?: React.ReactNode
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="zv-page-head">
+      <div className="flex flex-col gap-1 min-w-0">
+        {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
+        <h1 className="font-heading">{title}</h1>
+        {sub && (
+          <div className="text-muted-foreground text-[13px] mt-1">{sub}</div>
+        )}
+        {children}
+      </div>
+      {right && (
+        <div className="flex items-center gap-2 shrink-0">{right}</div>
+      )}
+    </div>
+  )
+}
+
+/* ── Panel ─────────────────────────────────────────────────────────────
+   The bread-and-butter Swiss card: hairline border, optional head with
+   title/sub/actions, body padding togglable via `flush`. */
+
+export function Panel({
+  title,
+  sub,
+  right,
+  footer,
+  flush,
+  className,
+  bodyClassName,
+  children,
+}: {
+  title?: React.ReactNode
+  sub?: React.ReactNode
+  right?: React.ReactNode
+  footer?: React.ReactNode
+  flush?: boolean
+  className?: string
+  bodyClassName?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className={cn("zv-panel", className)}>
+      {(title || right) && (
+        <div className="zv-panel-head">
+          <div className="flex flex-col gap-0.5 min-w-0">
+            {title && <h3>{title}</h3>}
+            {sub && <div className="zv-panel-sub truncate">{sub}</div>}
+          </div>
+          {right && (
+            <div className="flex items-center gap-2 shrink-0">{right}</div>
+          )}
+        </div>
+      )}
+      <div className={cn("zv-panel-body", flush && "flush", bodyClassName)}>
+        {children}
+      </div>
+      {footer && (
+        <div className="zv-panel-head border-b-0 border-t border-border">
+          {footer}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── Pill ──────────────────────────────────────────────────────────────
+   Outlined status capsule — `tone` selects color via CSS data-attr. */
+
+export type PillTone = "ok" | "warn" | "err" | "info" | "paused" | "neutral"
+
+export function Pill({
+  tone = "neutral",
+  dot = true,
+  children,
+  className,
+}: {
+  tone?: PillTone
+  dot?: boolean
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <span
+      className={cn("zv-pill", className)}
+      data-tone={tone === "neutral" ? undefined : tone}
+    >
+      {dot && <span className="zv-pill-dot" />}
+      <span>{children}</span>
+    </span>
+  )
+}
+
+/* ── Sparkline ─────────────────────────────────────────────────────────
+   Tiny inline chart for KPIs. SVG-only, vector-effect non-scaling so the
+   stroke stays 1.2-1.4px regardless of container width. */
+
+export function Sparkline({
+  data,
+  height = 26,
+  kind = "area",
+  color = "var(--primary)",
+}: {
+  data: readonly number[]
+  height?: number
+  kind?: "area" | "line" | "bar"
+  color?: string
+}) {
+  const w = 100
+  const h = height
+  if (data.length === 0) return <svg width={w} height={h} />
+  const max = Math.max(...data, 1)
+  const min = Math.min(...data, 0)
+  const range = max - min || 1
+  const pts = data.map((v, i) => {
+    const x = (i / Math.max(1, data.length - 1)) * w
+    const y = h - ((v - min) / range) * (h - 2) - 1
+    return [x, y] as const
+  })
+  const linePath = pts
+    .map(([x, y], i) => (i === 0 ? `M${x},${y}` : `L${x},${y}`))
+    .join(" ")
+
+  if (kind === "bar") {
+    const bw = (w / data.length) * 0.8
+    return (
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        style={{ width: "100%", height: h }}
+      >
+        {data.map((v, i) => {
+          const bh = ((v - min) / range) * (h - 2)
+          const x = (i / data.length) * w
+          const y = h - bh - 1
+          return (
+            <rect key={i} x={x} y={y} width={bw} height={bh} fill={color} opacity="0.9" />
+          )
+        })}
+      </svg>
+    )
+  }
+  if (kind === "line") {
+    return (
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        style={{ width: "100%", height: h }}
+      >
+        <path
+          d={linePath}
+          stroke={color}
+          fill="none"
+          strokeWidth="1.4"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    )
+  }
+  const areaPath = `${linePath} L${w},${h} L0,${h} Z`
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      style={{ width: "100%", height: h }}
+    >
+      <path d={areaPath} fill={color} opacity="0.18" />
+      <path
+        d={linePath}
+        stroke={color}
+        fill="none"
+        strokeWidth="1.2"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  )
+}
+
+/* ── KPI strip + KPI ───────────────────────────────────────────────────
+   Four-up labelled blocks. Use <Kpi> as the children of <KpiStrip>. */
+
+export function KpiStrip({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cn("zv-kpi-strip", className)}>{children}</div>
+}
+
+export function Kpi({
+  label,
+  value,
+  unit,
+  spark,
+  sparkKind = "area",
+  sparkColor,
+  footL,
+  footR,
+  deltaTone,
+}: {
+  label: React.ReactNode
+  value: React.ReactNode
+  unit?: React.ReactNode
+  spark?: readonly number[]
+  sparkKind?: "area" | "line" | "bar"
+  sparkColor?: string
+  footL?: React.ReactNode
+  footR?: React.ReactNode
+  deltaTone?: "up" | "dn"
+}) {
+  return (
+    <div className="zv-kpi">
+      <div className="zv-kpi-label">
+        <span>{label}</span>
+      </div>
+      <div className="zv-kpi-val font-heading">
+        <span>{value}</span>
+        {unit != null && <sup>{unit}</sup>}
+      </div>
+      {spark && spark.length > 0 && (
+        <div className="h-[26px]">
+          <Sparkline data={spark} kind={sparkKind} color={sparkColor} />
+        </div>
+      )}
+      {(footL || footR) && (
+        <div className="zv-kpi-foot">
+          <span
+            className={
+              deltaTone === "up"
+                ? "zv-delta-up"
+                : deltaTone === "dn"
+                  ? "zv-delta-dn"
+                  : undefined
+            }
+          >
+            {footL}
+          </span>
+          {footR && <span>{footR}</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── BarTrack ──────────────────────────────────────────────────────────
+   Thin progress bar — quota / posture rows. */
+
+export function BarTrack({
+  value,
+  tone,
+  className,
+}: {
+  value: number
+  tone?: "warn" | "err"
+  className?: string
+}) {
+  return (
+    <div className={cn("zv-bar-track", className)}>
+      <div
+        className="zv-bar-fill"
+        data-tone={tone}
+        style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+      />
+    </div>
+  )
+}
+
+/* ── CodeBlock ─────────────────────────────────────────────────────────
+   Pre-formatted monospace block — wg-conf, curl examples, docker compose. */
+
+export function CodeBlock({
+  children,
+  className,
+}: {
+  children: React.ReactNode
+  className?: string
+}) {
+  return <pre className={cn("zv-code", className)}>{children}</pre>
+}
+
+/* ── Segmented control ────────────────────────────────────────────────
+   Uppercase mono segment selector. Generic over option value. */
+
+export function Seg<T extends string>({
+  value,
+  options,
+  onChange,
+  className,
+}: {
+  value: T
+  options: readonly (T | { value: T; label: React.ReactNode })[]
+  onChange: (v: T) => void
+  className?: string
+}) {
+  return (
+    <div className={cn("zv-seg", className)}>
+      {options.map((o) => {
+        const v = (typeof o === "object" ? o.value : o) as T
+        const l = typeof o === "object" ? o.label : o
+        return (
+          <button
+            key={v}
+            type="button"
+            data-active={v === value ? "1" : "0"}
+            onClick={() => onChange(v)}
+          >
+            {l}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ── IconBtn ───────────────────────────────────────────────────────────
+   Hairline 28px square — used in table row actions, panel head trailing
+   slots. Wraps a single icon/glyph. */
+
+export function IconBtn({
+  children,
+  onClick,
+  title,
+  type = "button",
+  className,
+}: {
+  children: React.ReactNode
+  onClick?: React.MouseEventHandler<HTMLButtonElement>
+  title?: string
+  type?: "button" | "submit" | "reset"
+  className?: string
+}) {
+  return (
+    <button
+      type={type}
+      className={cn("zv-icon-btn", className)}
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+    >
+      {children}
+    </button>
+  )
+}
+
+/* ── LiveDot ───────────────────────────────────────────────────────────
+   Pulsing green status indicator — connected / streaming. */
+
+export function LiveDot({
+  state = "live",
+  className,
+}: {
+  state?: "live" | "offline" | "warn"
+  className?: string
+}) {
+  return (
+    <span
+      className={cn("zv-live-dot", className)}
+      data-state={state === "live" ? undefined : state}
+      aria-hidden
+    />
+  )
+}
+
+/* ── Kbd ──────────────────────────────────────────────────────────────
+   Inline mono keycap. Use for ⌘K, ↵, etc. */
+
+export function Kbd({
+  children,
+  className,
+}: {
+  children: React.ReactNode
+  className?: string
+}) {
+  return <span className={cn("zv-kbd", className)}>{children}</span>
+}
+
+/* ── Banner ────────────────────────────────────────────────────────────
+   Full-width status bar with optional left tag + trailing actions. */
+
+export function Banner({
+  tone,
+  tag,
+  children,
+  right,
+  className,
+}: {
+  tone?: "warn" | "err" | "info" | "neutral"
+  tag?: React.ReactNode
+  children?: React.ReactNode
+  right?: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div
+      className={cn("zv-banner", className)}
+      data-tone={tone === "neutral" ? undefined : tone}
+    >
+      {tag && <span className="zv-banner-tag">{tag}</span>}
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+      {right && <span className="flex items-center gap-2 shrink-0">{right}</span>}
+    </div>
+  )
+}
+
+/* ── Format helpers ────────────────────────────────────────────────────
+   Mirror the prototype's helpers; pages import these instead of inlining. */
+
+export function fmtBytes(mb: number): string {
+  if (mb >= 1024 * 1024) return (mb / 1024 / 1024).toFixed(2) + " TB"
+  if (mb >= 1024) return (mb / 1024).toFixed(2) + " GB"
+  return mb.toFixed(1) + " MB"
+}
+
+export function fmtRate(mbps: number): string {
+  if (mbps >= 1000) return (mbps / 1000).toFixed(2) + " Gbit/s"
+  return mbps.toFixed(1) + " Mbit/s"
+}
+
+export function fmtRel(ms: number): string {
+  if (ms < 60_000) return Math.floor(ms / 1000) + "s ago"
+  if (ms < 3_600_000) return Math.floor(ms / 60_000) + "m ago"
+  if (ms < 86_400_000) return Math.floor(ms / 3_600_000) + "h ago"
+  return Math.floor(ms / 86_400_000) + "d ago"
+}

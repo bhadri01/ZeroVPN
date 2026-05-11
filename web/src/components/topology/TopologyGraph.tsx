@@ -1,7 +1,27 @@
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import ForceGraph2D from "react-force-graph-2d"
 
 import type { PublicDevice } from "@/lib/api"
+
+/** Returns a key that changes whenever the html element's class list does.
+ * Cheap MutationObserver — only fires on theme flips, not every paint. */
+function useThemeKey(): string {
+  const [k, setK] = useState(() =>
+    typeof document === "undefined" ? "" : document.documentElement.className,
+  )
+  useEffect(() => {
+    if (typeof document === "undefined") return
+    const obs = new MutationObserver(() => {
+      setK(document.documentElement.className)
+    })
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    })
+    return () => obs.disconnect()
+  }, [])
+  return k
+}
 
 interface NodeDatum {
   id: string
@@ -30,15 +50,28 @@ interface Props {
 
 const SERVER_NODE_ID = "__server__"
 
-const COLORS = {
-  serverNode: "#0ea5e9",
-  active: "#22c55e",
-  paused: "#f59e0b",
-  revoked: "#ef4444",
-  idle: "#94a3b8",
-  tx: "#22c55e",
-  rx: "#3b82f6",
-} as const
+/** Read the resolved CSS variable from <html>. Cached lazily so we don't
+ * hit the DOM for every paint. Re-resolved if the theme class flips. */
+function readVar(name: string, fallback: string): string {
+  if (typeof window === "undefined") return fallback
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim()
+  return v || fallback
+}
+
+function paletteFor(themeKey: string) {
+  void themeKey // referenced so the memo recomputes on theme switch
+  return {
+    serverNode: readVar("--chart-1", "#1e5fcc"),
+    active: readVar("--status-online", "#1f8a3f"),
+    paused: readVar("--status-degraded", "#b86a00"),
+    revoked: readVar("--destructive", "#c5283d"),
+    idle: readVar("--muted-foreground", "#6b6b66"),
+    tx: readVar("--primary", "#c6ff3d"),
+    rx: readVar("--chart-1", "#1e5fcc"),
+  } as const
+}
 
 export function TopologyGraph({ devices, rates, height = 360 }: Props) {
   // The library's exported types don't quite match the runtime methods we
@@ -47,6 +80,10 @@ export function TopologyGraph({ devices, rates, height = 360 }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const graphRef = useRef<any>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
+  // Re-read CSS vars when the document's theme class changes so colors
+  // track light/dark toggles without forcing a remount of the graph.
+  const themeKey = useThemeKey()
+  const COLORS = useMemo(() => paletteFor(themeKey), [themeKey])
 
   const data = useMemo(() => {
     const nodes: NodeDatum[] = [
@@ -86,7 +123,7 @@ export function TopologyGraph({ devices, rates, height = 360 }: Props) {
   return (
     <div
       ref={containerRef}
-      className="bg-card overflow-hidden rounded-lg border"
+      className="bg-card border-border overflow-hidden border"
       style={{ height }}
     >
       <ForceGraph2D
@@ -113,8 +150,8 @@ export function TopologyGraph({ devices, rates, height = 360 }: Props) {
           ctx.fill()
           // Label
           const fontSize = 11 / globalScale
-          ctx.font = `${fontSize}px ui-sans-serif, system-ui, sans-serif`
-          ctx.fillStyle = "rgba(120,120,120,0.9)"
+          ctx.font = `${fontSize}px "Geist Mono Variable", ui-monospace, monospace`
+          ctx.fillStyle = COLORS.idle
           ctx.textAlign = "center"
           ctx.textBaseline = "top"
           ctx.fillText(node.label, node.x ?? 0, (node.y ?? 0) + r + 2)

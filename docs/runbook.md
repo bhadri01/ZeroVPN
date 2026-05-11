@@ -1,17 +1,84 @@
 # Runbook
 
-## First-time setup
+## Dev vs. prod isolation
+
+ZeroVPN ships two Docker Compose overrides on top of a shared `docker-compose.yml` baseline:
+
+| | dev | prod |
+|---|---|---|
+| Compose layer | `docker-compose.yml` + `docker-compose.dev.yml` | `docker-compose.yml` + `docker-compose.prod.yml` |
+| Env file | `.env.dev` (from `.env.dev.example`) | `.env.prod` (from `.env.prod.example`) |
+| Secrets dir | `secrets/dev/` | `secrets/prod/` |
+| Caddyfile | `deploy/Caddyfile.dev` (auto_https off, port literals) | `deploy/Caddyfile.prod` (real domain, Let's Encrypt) |
+| `ZEROVPN_ENVIRONMENT` | `dev` | `production` — api refuses to boot with default secrets |
+| Exposed host ports | 8080 (api), 5555 (zmq), 55432 (pg), 56379 (redis), 8025 (MailHog) | 80, 443, 51820/udp only |
+| Mailer | MailHog | real SMTP relay |
+| WG backend | `noop` | `shell` (requires `--profile wg`) |
+| Session cookie | not Secure (plaintext localhost) | Secure flag set |
+| Stats cadence | 5 s simulator | 30 s real poller |
+
+`make` defaults to `ENV=dev`. For prod, use `make <target> ENV=prod` or the `*-prod` aliases (`make setup-prod`, `make up-prod`).
+
+## First-time setup (dev)
 
 ```
 git clone <this repo>
 cd zerovpn
-make setup     # copies .env.example → .env, generates secrets, builds images
+make setup                                  # copies .env.dev.example → .env.dev, generates dev secrets, builds images
 make up
 make migrate
 make bootstrap-admin EMAIL=admin@example.com   # interactive password prompt
 ```
 
-The bootstrap admin lands as `must_change_password=TRUE` and is forced through the email-link reset on first login (MailHog catches mail in dev at <http://localhost:8025>).
+The bootstrap admin lands as `must_change_password=TRUE` and is forced through the email-link reset on first login (MailHog catches mail at <http://localhost:8025>).
+
+## Fast dev loop (native cargo + Vite HMR)
+
+`make up` runs everything in docker — fine for verifying the prod-shape build, but slow when iterating on code (every change = `docker compose build`). For fast iteration, run only the *infrastructure* (db, redis, mailhog, dnsmasq) in docker and run `api` / `worker` / `frontend` natively. Frontend gets Vite HMR (<100 ms); backend uses cargo's incremental compile (~3–10 s after a small change).
+
+```
+make dev                                    # one-time: stops dockerized api/worker/frontend, starts db/redis/mailhog/dnsmasq
+make dev-migrate                            # run migrations (only first time, or after a new migration)
+make dev-bootstrap-admin EMAIL=you@example.com   # only first time
+
+# In three separate terminals:
+make dev-api                                # cargo run -p zerovpn-api  → 127.0.0.1:8080
+make dev-worker                             # cargo run -p zerovpn-worker → tcp://127.0.0.1:5555
+make dev-web                                # vite dev server          → http://localhost:5173
+```
+
+Open <http://localhost:5173> in your browser. The Vite dev server proxies `/api/*` and `/ws/*` to `127.0.0.1:8080`, so the api round-trip works transparently. MailHog stays at <http://localhost:8025>.
+
+How it works:
+
+- [scripts/dev-native.sh](../scripts/dev-native.sh) sources `.env.dev` then rewrites the docker-network hostnames (`db`, `redis`, `worker`, `mailhog`) to their `localhost:<host-port>` mappings from `docker-compose.dev.yml`. Single source of truth — change a secret in `.env.dev` and it flows through.
+- The dockerized api/worker/frontend services are kept stopped while you iterate; ports 8080 and 5555 are free for the host processes to bind.
+- `make dev-down` stops the infra. To go back to the fully-dockerized loop: `make up`.
+
+When to use which:
+
+| Workflow | Use |
+|---|---|
+| Frontend tweak, css/UX change | `make dev-web` — Vite HMR, instant |
+| Backend logic change, route handler | `make dev-api` — restart with Ctrl+C, ~5 s rebuild |
+| Migrations / new sqlx query | `make dev-migrate` then restart `make dev-api` |
+| Verifying the prod-shape stack | `make up` — full docker build, slower |
+| Smoke test before pushing | `make up && make smoke` — exercises the actual container surface |
+
+## First-time setup (production)
+
+```
+git clone <this repo>
+cd zerovpn
+make setup-prod                              # copies .env.prod.example → .env.prod
+$EDITOR .env.prod                            # fill in ZEROVPN_DOMAIN, ZEROVPN_ACME_EMAIL, SMTP relay
+./scripts/init-secrets.sh prod               # fills CHANGEME values + writes secrets/prod/*.txt
+make up-prod
+make migrate ENV=prod
+make bootstrap-admin EMAIL=admin@yourdomain  ENV=prod
+```
+
+`ZEROVPN_DOMAIN` must resolve to this host before `make up-prod`, or Caddy's first Let's Encrypt issuance attempt will fail. The api will also refuse to boot if `ZEROVPN_DOMAIN` is `localhost` or a `REPLACE_*` placeholder — see [validate_production_config in crates/zerovpn-api/src/main.rs](../crates/zerovpn-api/src/main.rs).
 
 ## Bringing up the real WireGuard runtime (Linux production)
 
@@ -23,11 +90,11 @@ The default `make up` runs the management plane only — **no actual WireGuard i
    sudo modprobe wireguard
    ```
 
-2. **Set `ZEROVPN_WG__BACKEND=shell` in `.env`.** The api/worker now route `add_peer/remove_peer` to `wg set` instead of the no-op stub.
+2. **Set `ZEROVPN_WG__BACKEND=shell` in `.env.prod`.** (`.env.prod.example` already ships with this default.) The api/worker now route `add_peer/remove_peer` to `wg set` instead of the no-op stub.
 
-3. **Bring up the wg container alongside the rest of the stack:**
+3. **Bring up the wg container alongside the rest of the prod stack:**
    ```
-   docker compose --profile wg up -d
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile wg up -d
    ```
    The bootstrap routine writes `wg0.conf` into the shared `wg_config` volume on first boot; the wg container picks it up and runs `wg-quick up wg0`.
 
@@ -43,7 +110,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 
 Adds Prometheus (scraping `api:8080/metrics` every 15 s), Grafana with the Prometheus + Loki datasources pre-provisioned (admin/admin at <http://localhost/grafana/>), Loki + Promtail for centralized container logs, and a nightly backup container.
 
-For age-encrypted backups, set `ZEROVPN_BACKUP_AGE_RECIPIENT` to your age public key in `.env` before bringing up the profile.
+For age-encrypted backups, set `ZEROVPN_BACKUP_AGE_RECIPIENT` to your age public key in the active env file (`.env.dev` or `.env.prod`) before bringing up the profile.
 
 ## Healthchecks
 
@@ -69,10 +136,12 @@ For age-encrypted backups, set `ZEROVPN_BACKUP_AGE_RECIPIENT` to your age public
 ## Rotating secrets
 
 ```
-docker compose down
-rm secrets/*.txt
-./scripts/init-secrets.sh    # regenerates with new values; updates .env
-docker compose up -d
+make down ENV=<dev|prod>
+rm secrets/<env>/*.txt
+rm .env.<env>                          # so init-secrets.sh re-reads the example template
+cp .env.<env>.example .env.<env>
+./scripts/init-secrets.sh <env>        # regenerates with new values
+make up ENV=<env>
 ```
 
 > **Caution:** rotating the session secret invalidates all live sessions; users must log in again. Rotating the KEK (`ZEROVPN_KEK`) breaks any AES-GCM-encrypted column unless you decrypt + re-encrypt with the old → new key pair first. TOTP secrets are KEK-encrypted; rotating the KEK without migration disables 2FA for everyone (they'll need to re-enroll).
@@ -108,14 +177,17 @@ The default `linuxserver/wireguard` image is fine for vanilla WireGuard. For Amn
 
 ## Security review checklist (before exposing to the internet)
 
-- [ ] `ZEROVPN_KEK` is a fresh 32-byte base64 random (the default from `init-secrets.sh` is fine; never reuse across environments)
-- [ ] Caddy is fronting with TLS — `auto_https off` is dev-only; remove it for prod
-- [ ] `ZEROVPN_DOMAIN` set to the real domain so Let's Encrypt can issue
+- [ ] Brought up via `make up-prod` (not `make up`) — confirms `.env.prod` + `Caddyfile.prod` are in effect
+- [ ] `ZEROVPN_ENVIRONMENT=production` in `.env.prod`; the api refuses to boot otherwise
+- [ ] `ZEROVPN_KEK` is a fresh 32-byte base64 random, distinct from any dev value (the prod boot check rejects `CHANGEME` and short values; `secrets/prod/` is a separate directory from `secrets/dev/`)
+- [ ] `ZEROVPN_DOMAIN` set to a real domain that already resolves to this host (LE issuance otherwise fails on first boot)
+- [ ] `ZEROVPN_ACME_EMAIL` set so Let's Encrypt can contact you on rate-limit / expiry
+- [ ] `ZEROVPN_SMTP__HOST` is a real relay (not `mailhog`, not `smtp.REPLACE_*`); api refuses to boot with placeholders
 - [ ] Firewall: 22/tcp (SSH), 80/tcp (Caddy redirect), 443/tcp+udp (Caddy + HTTP/3), 51820/udp (WireGuard) — nothing else
-- [ ] `secrets/*.txt` mode 0400, `.env` not in git
+- [ ] `secrets/prod/*.txt` mode 0600, `.env.prod` mode 0600 and not in git (`git check-ignore .env.prod` should print the file)
 - [ ] Admin email/password rotated from the bootstrap default
 - [ ] Backup `AGE_RECIPIENT` configured + verify a restore drill before relying on it
-- [ ] `ZEROVPN_WG__BACKEND=shell` if you actually want WG packets to flow
+- [ ] `ZEROVPN_WG__BACKEND=shell` and `docker compose --profile wg up -d` to actually route packets
 
 ## Container hardening notes (1C)
 
