@@ -143,6 +143,43 @@ export interface MyServerInfo {
 
 export const meServer = () => apiFetch<MyServerInfo>("/me/server")
 
+// ── User preferences ──────────────────────────────────────────────────
+// Settings-page values the server persists per-user so they sync across
+// signed-in sessions. Appearance/theme stay client-local (localStorage)
+// to avoid a flash of wrong paint on first render.
+
+export type UnitsPref = "bps" | "Bps"
+export type DateFormatPref = "iso" | "us" | "eu"
+export type TimeFormatPref = "h24" | "h12"
+export type DefaultLandingPref = "dashboard" | "devices" | "topology"
+export type ToastPositionPref =
+  | "top-left"
+  | "top-center"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-center"
+  | "bottom-right"
+
+export interface UserPreferences {
+  units: UnitsPref
+  date_format: DateFormatPref
+  time_format: TimeFormatPref
+  reduced_motion: boolean
+  default_landing: DefaultLandingPref
+  toast_position: ToastPositionPref
+  toast_sound: boolean
+  browser_notifications: boolean
+}
+
+export const getMyPreferences = () =>
+  apiFetch<UserPreferences>("/me/preferences")
+
+export const setMyPreferences = (patch: Partial<UserPreferences>) =>
+  apiFetch<UserPreferences>("/me/preferences", {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  })
+
 // ── Topology positions ─────────────────────────────────────────────────
 // Per-user saved arrangement for the live-topology drag UI. Round-trip
 // shape matches what we keep in localStorage: a flat {node_id: {x, y}}.
@@ -187,6 +224,20 @@ export const resetPassword = (token: string, new_password: string) =>
   apiFetch<{ status: string }>("/auth/reset-password", {
     method: "POST",
     body: JSON.stringify({ token, new_password }),
+  })
+
+/** Pre-flight check for a reset-password link. Lets the form surface
+ *  an "expired" state before the user types a new password. `reason`
+ *  is one of "invalid" | "wrong_purpose" | "expired" when `valid` is
+ *  false, otherwise omitted. */
+export interface ResetTokenCheck {
+  valid: boolean
+  reason?: "invalid" | "wrong_purpose" | "expired"
+}
+export const verifyResetToken = (token: string) =>
+  apiFetch<ResetTokenCheck>("/auth/verify-reset-token", {
+    method: "POST",
+    body: JSON.stringify({ token }),
   })
 
 export const listDevices = () => apiFetch<PublicDevice[]>("/devices")

@@ -154,8 +154,10 @@ pub async fn forgot_password(
     let email = body.email.trim().to_lowercase();
     let user = users::find_by_email(&state.pool, &email).await?;
 
-    // Email-enumeration prevention: always return 202. The email is sent
-    // only when the user actually exists.
+    // Email-enumeration prevention: always return 200 with the same
+    // shape regardless of whether the address exists. The email is only
+    // sent (and the audit row only written) when the user is real and
+    // in a state where receiving a reset link makes sense.
     if let Some(u) = user {
         if u.status == UserStatus::Active || u.status == UserStatus::PendingVerification {
             verification_tokens::invalidate_active(
@@ -194,9 +196,72 @@ pub async fn forgot_password(
             } else {
                 info!(user_id = %u.id, link, "DEV: password-reset link (no SMTP configured)");
             }
+            // Audit the request itself (not just the eventual reset).
+            // Useful when looking at "did someone try to take over this
+            // account?" after the fact.
+            audit::record(
+                &state.pool,
+                audit::AuditEntry {
+                    actor_user_id: Some(u.id),
+                    action: "user.password_reset_requested",
+                    target_type: Some("user"),
+                    target_id: Some(u.id),
+                    metadata: json!({}),
+                    ip_prefix: None,
+                },
+            )
+            .await?;
         }
     }
     Ok(Json(Ack { status: "ok" }))
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct VerifyResetTokenBody {
+    #[garde(length(min = 16))]
+    pub token: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VerifyResetTokenResponse {
+    pub valid: bool,
+    /// Reason `valid` is false. Omitted on success. Stable enum-shaped
+    /// values so the frontend can switch on them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<&'static str>,
+}
+
+/// Pre-flight check for a reset-password link. Lets the frontend show an
+/// "expired link" state up front instead of letting the user type a new
+/// password and then surfacing the failure at submit-time. Mirrors the
+/// validation in `reset_password` exactly so a valid response here
+/// guarantees `reset_password` will accept the same token within the
+/// remaining TTL.
+pub async fn verify_reset_token(
+    State(state): State<AppState>,
+    Json(body): Json<VerifyResetTokenBody>,
+) -> ApiResult<impl IntoResponse> {
+    if body.validate().is_err() {
+        return Ok(Json(VerifyResetTokenResponse {
+            valid: false,
+            reason: Some("invalid"),
+        }));
+    }
+    let hash = hash_token(&body.token);
+    let token = verification_tokens::find_active(&state.pool, &hash).await?;
+    match token {
+        Some(t) if t.purpose == TokenPurpose::PasswordReset => Ok(Json(
+            VerifyResetTokenResponse { valid: true, reason: None },
+        )),
+        Some(_) => Ok(Json(VerifyResetTokenResponse {
+            valid: false,
+            reason: Some("wrong_purpose"),
+        })),
+        None => Ok(Json(VerifyResetTokenResponse {
+            valid: false,
+            reason: Some("expired"),
+        })),
+    }
 }
 
 pub async fn reset_password(
@@ -212,22 +277,12 @@ pub async fn reset_password(
         return Err(ApiError::Validation("wrong token purpose".into()));
     }
     let pw_hash = zerovpn_auth::password::hash(&body.new_password)?;
-    sqlx::query(
-        r#"UPDATE users
-              SET password_hash = $2,
-                  must_change_password = FALSE
-            WHERE id = $1 AND deleted_at IS NULL"#,
-    )
-    .bind(token.user_id)
-    .bind(&pw_hash)
-    .execute(&state.pool)
-    .await?;
+    // Bump password_changed_at in the same UPDATE. The auth extractor
+    // diffs the live column against the snapshot stored in each session,
+    // so this single statement invalidates every outstanding session for
+    // the user — including the one that may have requested the reset.
+    users::update_password(&state.pool, token.user_id, &pw_hash).await?;
     verification_tokens::consume(&state.pool, token.id).await?;
-    // Revoke any active sessions so other devices need to re-auth.
-    sqlx::query("UPDATE sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL")
-        .bind(token.user_id)
-        .execute(&state.pool)
-        .await?;
     audit::record(
         &state.pool,
         audit::AuditEntry {

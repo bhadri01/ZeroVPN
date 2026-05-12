@@ -6,7 +6,7 @@ use serde_json::json;
 use time::OffsetDateTime;
 use tower_sessions::Session;
 use tracing::info;
-use zerovpn_db::repos::{audit, devices, servers, topology_positions, users};
+use zerovpn_db::repos::{audit, devices, servers, topology_positions, user_prefs, users};
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -196,6 +196,66 @@ pub async fn set_topology(
     }
     topology_positions::replace_all(&state.pool, user.id, &clean).await?;
     Ok(Json(json!({ "status": "ok", "count": clean.len() })))
+}
+
+/// Returns the user's settings-page preferences. Falls through to
+/// defaults for users who've never saved — the next PUT creates the row.
+pub async fn get_preferences(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> ApiResult<impl IntoResponse> {
+    let prefs = user_prefs::get(&state.pool, user.id).await?;
+    Ok(Json(prefs))
+}
+
+/// Partial update of the user's preferences. Validates the constrained
+/// text fields against the same set the DB CHECK enforces so we can
+/// surface a clean 400 instead of a sqlx error if a future client sends
+/// a stray value.
+pub async fn set_preferences(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(patch): Json<user_prefs::UserPreferencesPatch>,
+) -> ApiResult<impl IntoResponse> {
+    if let Some(v) = patch.units.as_deref() {
+        if !matches!(v, "bps" | "Bps") {
+            return Err(ApiError::Validation(format!("invalid units: {v}")));
+        }
+    }
+    if let Some(v) = patch.date_format.as_deref() {
+        if !matches!(v, "iso" | "us" | "eu") {
+            return Err(ApiError::Validation(format!("invalid date_format: {v}")));
+        }
+    }
+    if let Some(v) = patch.time_format.as_deref() {
+        if !matches!(v, "h24" | "h12") {
+            return Err(ApiError::Validation(format!("invalid time_format: {v}")));
+        }
+    }
+    if let Some(v) = patch.default_landing.as_deref() {
+        if !matches!(v, "dashboard" | "devices" | "topology") {
+            return Err(ApiError::Validation(format!(
+                "invalid default_landing: {v}"
+            )));
+        }
+    }
+    if let Some(v) = patch.toast_position.as_deref() {
+        if !matches!(
+            v,
+            "top-left"
+                | "top-center"
+                | "top-right"
+                | "bottom-left"
+                | "bottom-center"
+                | "bottom-right"
+        ) {
+            return Err(ApiError::Validation(format!(
+                "invalid toast_position: {v}"
+            )));
+        }
+    }
+    let prefs = user_prefs::upsert(&state.pool, user.id, &patch).await?;
+    Ok(Json(prefs))
 }
 
 /// Soft-delete the user's account: nulls PII, revokes devices/sessions/

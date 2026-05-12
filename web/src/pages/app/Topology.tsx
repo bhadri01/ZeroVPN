@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 
 import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { PageHead, Panel } from "@/components/swiss"
 import { LiveTopology } from "@/components/topology/LiveTopology"
 import { listDevices } from "@/lib/api"
@@ -24,39 +25,40 @@ export function TopologyPage() {
   const devices = devicesQ.data ?? []
 
   return (
-    <div className="flex h-full flex-col gap-6">
-      <PageHead
-        eyebrow="Workspace · 04"
-        title="Topology"
-      />
+    <PageStagger className="h-full">
+      <StaggerItem>
+        <PageHead eyebrow="Workspace · 04" title="Topology" />
+      </StaggerItem>
 
-      <Panel
-        title="Live topology"
-        sub={`${devices.length} ${devices.length === 1 ? "device" : "devices"}`}
-        right={<LiveIndicator />}
-        bodyClassName="!p-0 !h-[calc(100vh-220px)] !min-h-[480px] !flex-none relative overflow-hidden"
-      >
-        <LiveTopology
-          devices={devices}
-          rates={rates}
-          serverLabel={user?.email?.split("@")[1] ?? "vpn-server"}
-          serverMeta={
-            devices.length > 0 && devices[0].allocated_ip
-              ? deriveCidr(devices[0].allocated_ip)
-              : undefined
-          }
-          // Label the user-tier node with the local-part of the current
-          // user's email — short, readable, and matches the rest of the
-          // app's "me" identity. The map is keyed by user_id so it scales
-          // to multi-user admin topologies later.
-          userMap={
-            user
-              ? new Map([[user.id, { label: user.email.split("@")[0] }]])
-              : undefined
-          }
-        />
-      </Panel>
-    </div>
+      <StaggerItem>
+        <Panel
+          title="Live topology"
+          sub={`${devices.length} ${devices.length === 1 ? "device" : "devices"}`}
+          right={<LiveIndicator />}
+          bodyClassName="!p-0 !h-[calc(100vh-220px)] !min-h-[480px] !flex-none relative overflow-hidden"
+        >
+          <LiveTopology
+            devices={devices}
+            rates={rates}
+            serverLabel={user?.email?.split("@")[1] ?? "vpn-server"}
+            serverMeta={
+              devices.length > 0 && devices[0].allocated_ip
+                ? deriveCidr(devices[0].allocated_ip)
+                : undefined
+            }
+            // Label the user-tier node with the local-part of the current
+            // user's email — short, readable, and matches the rest of the
+            // app's "me" identity. The map is keyed by user_id so it scales
+            // to multi-user admin topologies later.
+            userMap={
+              user
+                ? new Map([[user.id, { label: user.email.split("@")[0] }]])
+                : undefined
+            }
+          />
+        </Panel>
+      </StaggerItem>
+    </PageStagger>
   )
 }
 

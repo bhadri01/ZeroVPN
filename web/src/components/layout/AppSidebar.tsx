@@ -8,8 +8,7 @@ import {
   IconLayoutSidebarLeftCollapse,
   IconRouter,
   IconSearch,
-  IconShield,
-  IconUser,
+  IconSettings,
   IconUserShield,
   IconUsers,
 } from "@tabler/icons-react"
@@ -50,11 +49,7 @@ const WORKSPACE: NavEntry[] = [
   { to: "/app/devices", label: "Devices", icon: IconDevices, k: "V" },
   { to: "/app/topology", label: "Topology", icon: IconHierarchy3, k: "T" },
   { to: "/app/finder", label: "Finder", icon: IconSearch, k: "F" },
-]
-
-const ACCOUNT: NavEntry[] = [
-  { to: "/app/security", label: "Security", icon: IconShield, k: "S" },
-  { to: "/app/account", label: "Account", icon: IconUser, k: "A" },
+  { to: "/app/settings", label: "Settings", icon: IconSettings, k: "," },
 ]
 
 const ADMIN: NavEntry[] = [
@@ -98,15 +93,6 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <NavList entries={WORKSPACE} />
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel className="font-mono text-[10px] uppercase tracking-[0.1em]">
-            Account
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <NavList entries={ACCOUNT} />
           </SidebarGroupContent>
         </SidebarGroup>
 

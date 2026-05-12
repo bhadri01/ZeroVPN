@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { RelativeTime } from "@/components/RelativeTime"
 import { Kpi, KpiStrip, PageHead, Panel, Pill } from "@/components/swiss"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -18,13 +19,16 @@ export function FailedLoginsPage() {
   const noUser = items.filter((i) => i.reason === "no_such_user").length
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHead
-        eyebrow="Admin · 04"
-        title="Failed logins"
-        sub="brute-force mitigation · rate-limit at 10/min/IP · /24 prefixes only"
-      />
+    <PageStagger>
+      <StaggerItem>
+        <PageHead
+          eyebrow="Admin · 04"
+          title="Failed logins"
+          sub="brute-force mitigation · rate-limit at 10/min/IP · /24 prefixes only"
+        />
+      </StaggerItem>
 
+      <StaggerItem>
       <KpiStrip>
         <Kpi
           label="Failed · 30d"
@@ -40,7 +44,9 @@ export function FailedLoginsPage() {
         <Kpi label="TOTP wrong" value={totpBad} footL="invalid 2FA code" />
         <Kpi label="No-such-user" value={noUser} footL="email not in DB" />
       </KpiStrip>
+      </StaggerItem>
 
+      <StaggerItem>
       <Panel title="Recent failures" sub="last 200 attempts" flush>
         {q.isLoading && (
           <div className="flex flex-col gap-2 p-4">
@@ -87,7 +93,8 @@ export function FailedLoginsPage() {
           </table>
         )}
       </Panel>
-    </div>
+      </StaggerItem>
+    </PageStagger>
   )
 }
 

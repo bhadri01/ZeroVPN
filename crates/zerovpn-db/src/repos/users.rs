@@ -8,7 +8,7 @@ pub async fn find_by_email(pool: &PgPool, email: &str) -> sqlx::Result<Option<Us
     sqlx::query_as::<_, UserWithSecrets>(
         r#"SELECT id, email::TEXT AS email, password_hash, role, status,
                   must_change_password, email_verified_at, totp_enabled,
-                  created_at, last_login_at
+                  created_at, last_login_at, password_changed_at
            FROM users
            WHERE email = $1::CITEXT AND deleted_at IS NULL"#,
     )
@@ -20,13 +20,36 @@ pub async fn find_by_email(pool: &PgPool, email: &str) -> sqlx::Result<Option<Us
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<User>> {
     sqlx::query_as::<_, User>(
         r#"SELECT id, email::TEXT AS email, role, status, must_change_password,
-                  email_verified_at, totp_enabled, created_at, last_login_at
+                  email_verified_at, totp_enabled, created_at, last_login_at,
+                  password_changed_at
            FROM users
            WHERE id = $1 AND deleted_at IS NULL"#,
     )
     .bind(id)
     .fetch_optional(pool)
     .await
+}
+
+/// Atomically update a user's password hash and bump the
+/// `password_changed_at` watermark in one statement. The watermark is
+/// what kills any existing sessions for this user — the auth extractor
+/// compares the value snapshotted into the session at login time against
+/// the live column on every request. Always called after the new hash
+/// has been generated (so a hash error short-circuits before we touch
+/// the row).
+pub async fn update_password(pool: &PgPool, id: Uuid, new_hash: &str) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        r#"UPDATE users
+              SET password_hash = $2,
+                  password_changed_at = NOW(),
+                  must_change_password = FALSE
+            WHERE id = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(id)
+    .bind(new_hash)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
 }
 
 pub async fn create(
@@ -314,6 +337,7 @@ pub struct UserWithSecrets {
     pub totp_enabled: bool,
     pub created_at: OffsetDateTime,
     pub last_login_at: Option<OffsetDateTime>,
+    pub password_changed_at: OffsetDateTime,
 }
 
 impl From<UserWithSecrets> for User {
@@ -328,6 +352,7 @@ impl From<UserWithSecrets> for User {
             totp_enabled: u.totp_enabled,
             created_at: u.created_at,
             last_login_at: u.last_login_at,
+            password_changed_at: u.password_changed_at,
         }
     }
 }

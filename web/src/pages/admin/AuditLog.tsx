@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { IconDownload } from "@tabler/icons-react"
 
 import { CopyableCode } from "@/components/CopyableCode"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { RelativeTime } from "@/components/RelativeTime"
 import { Kbd, PageHead, Panel } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
@@ -15,21 +16,24 @@ export function AuditLogPage() {
   })
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHead
-        eyebrow="Admin · 03"
-        title="Audit log"
-        sub="180-day retention · CSV export"
-        right={
-          <Button asChild variant="outline" size="sm">
-            <a href={adminAuditCsvUrl(5000)}>
-              <IconDownload />
-              Export CSV
-            </a>
-          </Button>
-        }
-      />
+    <PageStagger>
+      <StaggerItem>
+        <PageHead
+          eyebrow="Admin · 03"
+          title="Audit log"
+          sub="180-day retention · CSV export"
+          right={
+            <Button asChild variant="outline" size="sm">
+              <a href={adminAuditCsvUrl(5000)}>
+                <IconDownload />
+                Export CSV
+              </a>
+            </Button>
+          }
+        />
+      </StaggerItem>
 
+      <StaggerItem>
       <Panel flush>
         {auditQ.isLoading && (
           <div className="flex flex-col gap-2 p-4">
@@ -93,6 +97,7 @@ export function AuditLogPage() {
           </table>
         )}
       </Panel>
-    </div>
+      </StaggerItem>
+    </PageStagger>
   )
 }

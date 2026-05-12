@@ -1,5 +1,6 @@
 import {
   IconLogout,
+  IconSettings,
   IconShield,
   IconUser,
 } from "@tabler/icons-react"
@@ -58,6 +59,12 @@ export function UserMenu() {
           </p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to="/app/settings">
+            <IconSettings />
+            Settings
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link to="/app/account">
             <IconUser />

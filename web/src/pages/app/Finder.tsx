@@ -1,36 +1,30 @@
 import { useQuery } from "@tanstack/react-query"
 import {
-  IconArrowDown,
-  IconArrowUp,
   IconDeviceDesktop,
-  IconExternalLink,
   IconRegex,
   IconSearch,
   IconUserSearch,
   IconX,
 } from "@tabler/icons-react"
 import { useMemo, useState } from "react"
-import { Link } from "react-router"
 import { toast } from "sonner"
 
-import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
+import { DeviceCard } from "@/components/DeviceCard"
 import { EmptyState } from "@/components/EmptyState"
 import { FilterDropdown } from "@/components/FilterDropdown"
-import { RelativeTime } from "@/components/RelativeTime"
+import { AnimatedList, FadeIn, PageStagger, StaggerItem } from "@/components/motion"
 import { Eyebrow, PageHead, Panel } from "@/components/swiss"
-import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
+import { type Status as PillStatus } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { type PublicDevice, listDevices } from "@/lib/api"
+import { listDevices } from "@/lib/api"
 import {
   connState,
   peerState,
   type ConnState,
   type PeerState,
 } from "@/lib/deviceState"
-import { compactBytes, formatBps } from "@/lib/units"
-import { useLiveStats } from "@/stores/liveStats"
 
 const IPV4_RX = /^(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})$/
 
@@ -71,7 +65,6 @@ export function FinderPage() {
   // peer state. Empty set = no constraint on that axis.
   const [connFilter, setConnFilter] = useState<Set<ConnState>>(new Set())
   const [peerFilter, setPeerFilter] = useState<Set<PeerState>>(new Set())
-  const liveDevices = useLiveStats((s) => s.devices)
 
   const devices = devicesQ.data ?? []
 
@@ -190,9 +183,12 @@ export function FinderPage() {
     : "10.10.0.5, 10.10.0.12, …"
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHead eyebrow="Workspace · 03" title="Finder" />
+    <PageStagger>
+      <StaggerItem>
+        <PageHead eyebrow="Workspace · 03" title="Finder" />
+      </StaggerItem>
 
+      <StaggerItem>
       <Panel
         title="Search by IP"
         sub={
@@ -292,182 +288,74 @@ export function FinderPage() {
           )}
         </div>
       </Panel>
+      </StaggerItem>
 
       {devicesQ.isLoading && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-52 rounded-none" />
-          ))}
-        </div>
+        <StaggerItem>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-52 rounded-none" />
+            ))}
+          </div>
+        </StaggerItem>
       )}
 
       {!devicesQ.isLoading && committed === null && (
-        <Panel flush>
-          <div className="p-4">
-            <EmptyState
-              icon={IconUserSearch}
-              title="No search yet"
-              description="Enter one or more IPv4 addresses (or flip the .* toggle for regex) to look up the matching devices."
-            />
-          </div>
-        </Panel>
+        <StaggerItem>
+          <Panel flush>
+            <div className="p-4">
+              <EmptyState
+                icon={IconUserSearch}
+                title="No search yet"
+                description="Enter one or more IPv4 addresses (or flip the .* toggle for regex) to look up the matching devices."
+              />
+            </div>
+          </Panel>
+        </StaggerItem>
       )}
 
       {!devicesQ.isLoading &&
         committed &&
         matches &&
         matches.length === 0 && (
-          <Panel flush>
-            <div className="p-4">
-              <EmptyState
-                icon={IconDeviceDesktop}
-                title="No peers match"
-                description={
-                  committed.kind === "ips"
-                    ? `Searched ${committed.ips.length} IP${committed.ips.length === 1 ? "" : "s"} — none matched after filters. Loosen the connection / peer filters or check the addresses.`
-                    : `Regex /${committed.source}/ matched nothing after filters. Loosen the connection / peer filters or try a broader pattern.`
-                }
-              />
-            </div>
-          </Panel>
+          <FadeIn>
+            <Panel flush>
+              <div className="p-4">
+                <EmptyState
+                  icon={IconDeviceDesktop}
+                  title="No peers match"
+                  description={
+                    committed.kind === "ips"
+                      ? `Searched ${committed.ips.length} IP${committed.ips.length === 1 ? "" : "s"} — none matched after filters. Loosen the connection / peer filters or check the addresses.`
+                      : `Regex /${committed.source}/ matched nothing after filters. Loosen the connection / peer filters or try a broader pattern.`
+                  }
+                />
+              </div>
+            </Panel>
+          </FadeIn>
         )}
 
       {matches && matches.length > 0 && (
-        <div className="space-y-2">
-          <Eyebrow>
-            {matches.length} match{matches.length === 1 ? "" : "es"}
-            {committed?.kind === "ips" && ` · searched ${committed.ips.length}`}
-            {committed?.kind === "regex" && ` · regex /${committed.source}/`}
-            {totalFilters > 0 && ` · ${totalFilters} filter${totalFilters === 1 ? "" : "s"}`}
-          </Eyebrow>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {matches.map((d) => (
-              <FinderCard key={d.id} device={d} live={liveDevices[d.id]} />
-            ))}
+        <StaggerItem>
+          <div className="space-y-2">
+            <Eyebrow>
+              {matches.length} match{matches.length === 1 ? "" : "es"}
+              {committed?.kind === "ips" && ` · searched ${committed.ips.length}`}
+              {committed?.kind === "regex" && ` · regex /${committed.source}/`}
+              {totalFilters > 0 && ` · ${totalFilters} filter${totalFilters === 1 ? "" : "s"}`}
+            </Eyebrow>
+            {/* AnimatedList gives each result card its own enter/exit
+                so changing search or toggling filters slides items in
+                and out instead of flashing. */}
+            <AnimatedList className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {matches.map((d) => (
+                <DeviceCard key={d.id} device={d} />
+              ))}
+            </AnimatedList>
           </div>
-        </div>
+        </StaggerItem>
       )}
-    </div>
+    </PageStagger>
   )
 }
 
-/** Last N frames of live history to render on the Finder card's mini
- *  chart. The store retains up to 1800 frames (30 min at 1 Hz) but the
- *  card is small — a shorter window keeps the trace readable and stops
- *  the Y axis being pulled by an hour-old spike. */
-const CHART_WINDOW = 30
-
-/** Read-only peer card for the Finder grid. Same visual rhythm as the
- *  Dashboard's DeviceCard but without the action menu — clicking through
- *  takes the user to the device-detail page for manage operations.
- *
- *  Rates are gated on `connState(d) === "online"` (recent handshake)
- *  rather than just `status === "active"` so a device that hasn't
- *  handshook in 3 minutes shows "—" instead of the stale rate the store
- *  still holds from before it dropped. */
-function FinderCard({
-  device: d,
-  live,
-}: {
-  device: PublicDevice
-  live: ReturnType<typeof useLiveStats.getState>["devices"][string] | undefined
-}) {
-  const isOnline = connState(d) === "online"
-  const rxBps = isOnline ? (live?.rxBps ?? 0) : 0
-  const txBps = isOnline ? (live?.txBps ?? 0) : 0
-  // Slice histories to the last N frames before handing them to the
-  // chart. When the device is offline we feed empty arrays so the chart
-  // doesn't keep painting stale lines.
-  const rxHistory = useMemo(
-    () => (isOnline ? (live?.rxHistory ?? []).slice(-CHART_WINDOW) : []),
-    [isOnline, live?.rxHistory],
-  )
-  const txHistory = useMemo(
-    () => (isOnline ? (live?.txHistory ?? []).slice(-CHART_WINDOW) : []),
-    [isOnline, live?.txHistory],
-  )
-  return (
-    <div className="zv-panel relative flex flex-col">
-      <div className="flex items-start justify-between gap-2 px-4 pt-4 pb-3">
-        <Link
-          to={`/app/devices/${d.id}`}
-          className="hover:text-foreground flex min-w-0 flex-col gap-0.5 transition-colors"
-        >
-          <span className="text-foreground truncate text-sm font-medium">
-            {d.name}
-          </span>
-          <span className="text-muted-foreground font-mono text-xs">
-            {d.os} · {d.allocated_ip}
-          </span>
-        </Link>
-        <div className="flex items-center gap-1">
-          <StatusPill status={d.status as PillStatus} />
-          <Link
-            to={`/app/devices/${d.id}`}
-            aria-label="Open device"
-            className="text-muted-foreground hover:text-foreground -mr-1 p-1 transition-colors"
-          >
-            <IconExternalLink className="size-3.5" />
-          </Link>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 px-4 pb-3">
-        <RateBlock
-          label="↓ RX"
-          value={isOnline ? formatBps(rxBps) : "—"}
-          color="text-status-online"
-        />
-        <RateBlock
-          label="↑ TX"
-          value={isOnline ? formatBps(txBps) : "—"}
-          color="text-primary"
-        />
-      </div>
-
-      <div className="-mb-4 px-1">
-        <MiniAreaChart rxHistory={rxHistory} txHistory={txHistory} height={56} />
-      </div>
-
-      <div className="border-border bg-muted/40 flex items-center justify-between gap-3 border-t px-4 py-2.5 font-mono text-[11px]">
-        <span className="text-muted-foreground inline-flex items-center gap-1.5">
-          <span className="bg-status-paused size-1 rounded-full" aria-hidden />
-          <RelativeTime value={d.last_handshake_at} fallback="Never" />
-        </span>
-        <span className="text-muted-foreground inline-flex items-center gap-2 tabular-nums">
-          <span className="inline-flex items-center gap-0.5">
-            <IconArrowDown className="size-2.5" />
-            {compactBytes(live?.totalRx ?? 0)}
-          </span>
-          <span className="inline-flex items-center gap-0.5">
-            <IconArrowUp className="size-2.5" />
-            {compactBytes(live?.totalTx ?? 0)}
-          </span>
-        </span>
-      </div>
-    </div>
-  )
-}
-
-function RateBlock({
-  label,
-  value,
-  color,
-}: {
-  label: string
-  value: string
-  color: string
-}) {
-  return (
-    <div className="space-y-0.5">
-      <p
-        className={`font-mono text-[10px] font-medium uppercase tracking-[0.08em] ${color}`}
-      >
-        {label}
-      </p>
-      <p className="text-foreground font-heading text-base font-medium tabular-nums tracking-tight">
-        {value}
-      </p>
-    </div>
-  )
-}

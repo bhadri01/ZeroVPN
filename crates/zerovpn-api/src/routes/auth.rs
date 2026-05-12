@@ -42,7 +42,7 @@ fn client_ip_prefix(headers: &HeaderMap) -> Option<ipnetwork::IpNetwork> {
 
 use crate::{
     error::{ApiError, ApiResult},
-    extractors::auth::{CurrentUser, SESSION_KEY_USER_ID},
+    extractors::auth::{CurrentUser, SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_USER_ID},
     state::AppState,
 };
 
@@ -242,6 +242,16 @@ pub async fn login(
 
     session
         .insert(SESSION_KEY_USER_ID, user_with_secrets.id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    // Snapshot the password watermark into the session. Stored as unix
+    // seconds so the JSON value is trivially diffable on every request
+    // — see CurrentUser extractor for the comparison.
+    session
+        .insert(
+            SESSION_KEY_PW_CHANGED_AT,
+            user_with_secrets.password_changed_at.unix_timestamp(),
+        )
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 

@@ -14,6 +14,7 @@ import { CopyableCode } from "@/components/CopyableCode"
 import { LiveEventStream } from "@/components/dashboard/LiveEventStream"
 import { RecentActivity } from "@/components/dashboard/RecentActivity"
 import { EmptyState } from "@/components/EmptyState"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { Kpi, KpiStrip, PageHead, Panel, Seg } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import {
@@ -174,8 +175,10 @@ export function DashboardPage() {
   const liveHubs = servers.filter((s) => s.is_active).length
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHead eyebrow="Workspace · 01" title="Dashboard" />
+    <PageStagger>
+      <StaggerItem>
+        <PageHead eyebrow="Workspace · 01" title="Dashboard" />
+      </StaggerItem>
 
       {/* Add-device dialog. The header trigger button is intentionally gone;
           the empty-state CTA below calls `setAddOpen(true)` when the user
@@ -239,7 +242,8 @@ export function DashboardPage() {
       </Dialog>
 
       {/* KPI strip — 4-up. Devices · TX · RX · (Hubs for admin / Paused for users) */}
-      <KpiStrip>
+      <StaggerItem>
+        <KpiStrip>
         <Kpi
           label="Devices · live"
           value={active}
@@ -289,7 +293,8 @@ export function DashboardPage() {
             footL={paused === 0 ? "none paused" : "review on /devices"}
           />
         )}
-      </KpiStrip>
+        </KpiStrip>
+      </StaggerItem>
 
       <AnimatePresence>
         {created && (
@@ -298,7 +303,8 @@ export function DashboardPage() {
       </AnimatePresence>
 
       {/* Row 2: bandwidth — full width with range selector */}
-      <Panel
+      <StaggerItem>
+        <Panel
         title="Bandwidth"
         sub={
           <>
@@ -333,28 +339,31 @@ export function DashboardPage() {
             liveTxHistory={liveHistory.tx}
           />
         )}
-      </Panel>
+        </Panel>
+      </StaggerItem>
 
       {/* First-device empty state — surfaced only when there are zero
           devices, since the devices table is no longer on this page. */}
       {devicesQ.data && devicesQ.data.length === 0 && (
-        <Panel>
-          <EmptyState
-            icon={IconDeviceTablet}
-            title="No devices yet"
-            description="Add your first device to receive a WireGuard config."
-            action={
-              <Button onClick={() => setAddOpen(true)}>
-                <IconPlus />
-                Add device
-              </Button>
-            }
-          />
-        </Panel>
+        <StaggerItem>
+          <Panel>
+            <EmptyState
+              icon={IconDeviceTablet}
+              title="No devices yet"
+              description="Add your first device to receive a WireGuard config."
+              action={
+                <Button onClick={() => setAddOpen(true)}>
+                  <IconPlus />
+                  Add device
+                </Button>
+              }
+            />
+          </Panel>
+        </StaggerItem>
       )}
 
       {/* Row 4: recent activity (left) + live event stream (right) */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <StaggerItem className="grid gap-6 lg:grid-cols-2">
         <Panel
           title="Recent activity"
           sub={isAdmin ? "audit · last 8" : "live events · last 8"}
@@ -381,8 +390,8 @@ export function DashboardPage() {
         >
           <LiveEventStream />
         </Panel>
-      </div>
-    </div>
+      </StaggerItem>
+    </PageStagger>
   )
 }
 

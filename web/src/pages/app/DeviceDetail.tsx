@@ -32,6 +32,7 @@ import { toast } from "sonner"
 import { BandwidthChart } from "@/components/charts/BandwidthChart"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { RelativeTime } from "@/components/RelativeTime"
 import {
   Eyebrow,
@@ -369,7 +370,8 @@ export function DeviceDetailPage() {
       : serverDns || "server default"
 
   return (
-    <div className="flex flex-col gap-6">
+    <PageStagger>
+      <StaggerItem>
       <PageHead
         eyebrow={`Devices · ${d.id.slice(0, 8).toUpperCase()}`}
         title={d.name}
@@ -431,8 +433,10 @@ export function DeviceDetailPage() {
           </>
         }
       />
+      </StaggerItem>
 
       {/* KPI strip — design's 4-up: TX live, RX live, Total (window), Last handshake */}
+      <StaggerItem>
       <KpiStrip>
         <Kpi
           label="TX · live"
@@ -463,9 +467,10 @@ export function DeviceDetailPage() {
           footL={isOnline ? `stable · ${KEEPALIVE_SECS}s keepalive` : "—"}
         />
       </KpiStrip>
+      </StaggerItem>
 
       {/* Row 1 (1.4fr × 1fr): Bandwidth | Configuration */}
-      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+      <StaggerItem className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <Panel
           title="Bandwidth"
           sub={`device · ${range}`}
@@ -552,12 +557,13 @@ export function DeviceDetailPage() {
             />
           )}
         </Panel>
-      </div>
+      </StaggerItem>
 
       {/* DNS names — separate panel so the host alias list is first-class
           (matches the reference VPN-FRONTEND project's DNS Management
           section). Replaces the inline "Custom DNS" affordance from the
           previous layout's edit form. */}
+      <StaggerItem>
       <Panel
         title="DNS names"
         sub={
@@ -595,11 +601,13 @@ export function DeviceDetailPage() {
           </div>
         )}
       </Panel>
+      </StaggerItem>
 
       {/* Activity timeline — lifecycle, online/offline transitions, and
           every config / DNS / key change recorded against this device.
           Powered by the audit_logs table; updated lazily so an event the
           worker writes mid-session appears within ~30 s. */}
+      <StaggerItem>
       <Panel
         title="Activity"
         sub="Lifecycle, connectivity and configuration changes"
@@ -626,6 +634,7 @@ export function DeviceDetailPage() {
           onRetry={() => eventsQ.refetch()}
         />
       </Panel>
+      </StaggerItem>
 
       <ConfirmDialog
         open={revokeOpen}
@@ -849,7 +858,7 @@ export function DeviceDetailPage() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </PageStagger>
   )
 }
 

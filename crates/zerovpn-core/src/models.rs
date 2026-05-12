@@ -58,6 +58,12 @@ pub struct User {
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
     pub last_login_at: Option<OffsetDateTime>,
+    /// Bumped on every successful password change (reset link, admin
+    /// reset, must-change-password flow). The auth extractor compares
+    /// the value snapshotted into the session at login time against the
+    /// live row — any mismatch kicks the session.
+    #[serde(with = "time::serde::rfc3339")]
+    pub password_changed_at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

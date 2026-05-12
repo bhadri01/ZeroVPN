@@ -1,55 +1,114 @@
-import {
-  IconArrowDown,
-  IconArrowUp,
-  IconDots,
-  IconExternalLink,
-  IconPlayerPause,
-  IconPlayerPlay,
-  IconTrash,
-} from "@tabler/icons-react"
+import { IconArrowDown, IconArrowUp, IconExternalLink } from "@tabler/icons-react"
+import { useMemo, type HTMLAttributes, type ReactNode } from "react"
 import { Link } from "react-router"
 
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
 import { RelativeTime } from "@/components/RelativeTime"
-import { StatusPill, type Status } from "@/components/StatusPill"
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import type { PublicDevice } from "@/lib/api"
+import { connState, peerState } from "@/lib/deviceState"
 import { compactBytes, formatBps } from "@/lib/units"
+import { cn } from "@/lib/utils"
 import { useLiveStats } from "@/stores/liveStats"
 
-interface Props {
-  device: PublicDevice
-  onPause: (id: string) => void
-  onUnpause: (id: string) => void
-  onRevoke: (id: string) => void
-  pending?: boolean
+/** Frames of live history rendered on each card's mini chart. The store
+ *  retains up to 1800 frames (30 min at 1 Hz) but the card is small —
+ *  a shorter window keeps the trace readable and stops the Y axis being
+ *  pulled by an hour-old spike. */
+const CHART_WINDOW = 30
+
+/** Pill the header shows — combines connection state (handshake-derived)
+ *  with peer state (admin lifecycle) so a paused or revoked device
+ *  always wins over the bare online/offline label. */
+function rowPill(d: PublicDevice): PillStatus {
+  const c = connState(d)
+  const p = peerState(d)
+  if (p === "revoked") return "revoked"
+  if (p === "paused") return "paused"
+  return c
 }
 
-/** Swiss device card — hairline frame, mono labels, dual rate blocks,
- * full-width sparkline strip, meta footer. Replaces the violet-haloed
- * version with a flat, dense, paper-feeling tile. */
+export interface DeviceCardProps extends HTMLAttributes<HTMLDivElement> {
+  device: PublicDevice
+  /** Optional action slot rendered to the right of the status pill in
+   *  the header. Use this for pause / resume / revoke icon buttons on
+   *  pages where the user can manage the device. */
+  actions?: ReactNode
+  /** When no `actions` are supplied (e.g. read-only views like Finder),
+   *  render an external-link icon next to the status pill that opens
+   *  the device-detail page. Set to false to suppress the affordance
+   *  entirely. Defaults to true. */
+  showOpenLink?: boolean
+}
+
+/** Single, shared visual representation of a device — used by the Finder
+ *  results grid and the Devices grid view. Always shows: name, OS, IP,
+ *  status pill, live RX/TX rates, a mini RX/TX history chart, and a
+ *  footer with last-handshake + cumulative bytes.
+ *
+ *  Live rates are gated on `connState(d) === "online"` (recent handshake)
+ *  rather than just `status === "active"` so a device that hasn't
+ *  handshook in 3 minutes shows "—" instead of the stale rate the
+ *  store still holds from before it dropped.
+ *
+ *  All standard `<div>` attributes pass through to the root, so callers
+ *  can attach drag handlers, data-attributes for drag visuals, refs,
+ *  etc. without prop drilling. */
 export function DeviceCard({
   device: d,
-  onPause,
-  onUnpause,
-  onRevoke,
-  pending,
-}: Props) {
+  actions,
+  showOpenLink = true,
+  className,
+  ...divProps
+}: DeviceCardProps) {
   const live = useLiveStats((s) => s.devices[d.id])
-  const isActive = d.status === "active"
+
+  // "Real data" gate. The wg-poller emits a StatsDelta for every peer
+  // listed by `wg show dump`, including those whose `latest_handshake`
+  // is still 0 — so the live store happily accumulates non-zero
+  // counters for peers that have never actually completed a handshake.
+  // We refuse to surface any of that until we have a real handshake on
+  // record. Once the device has ever connected, the counters reflect
+  // real traffic from that point on.
+  const hasEverHandshook = d.last_handshake_at != null
+  const isOnline = hasEverHandshook && connState(d) === "online"
+  const rxBps = isOnline ? (live?.rxBps ?? 0) : 0
+  const txBps = isOnline ? (live?.txBps ?? 0) : 0
+  // Slice histories to the last N frames before feeding the chart. When
+  // the device is offline (or has never connected) we hand it empty
+  // arrays so the chart doesn't keep painting stale lines.
+  const rxHistory = useMemo(
+    () => (isOnline ? (live?.rxHistory ?? []).slice(-CHART_WINDOW) : []),
+    [isOnline, live?.rxHistory],
+  )
+  const txHistory = useMemo(
+    () => (isOnline ? (live?.txHistory ?? []).slice(-CHART_WINDOW) : []),
+    [isOnline, live?.txHistory],
+  )
+  // Cumulative byte counters live in the footer and need their own
+  // gate: a device that's been online before and is now offline should
+  // still show its accumulated totals — but a device that's never
+  // handshook must read zero, regardless of whatever stale rates the
+  // worker may have produced.
+  const totalRx = hasEverHandshook ? (live?.totalRx ?? 0) : 0
+  const totalTx = hasEverHandshook ? (live?.totalTx ?? 0) : 0
 
   return (
-    <div className="zv-panel relative flex flex-col">
+    <div
+      {...divProps}
+      className={cn(
+        "zv-panel relative flex flex-col transition-colors",
+        // Drag-state visuals — kick in when callers set
+        // data-dragging="1" / data-drop-target="1" on the root.
+        "data-[dragging=1]:opacity-40",
+        "data-[drop-target=1]:border-primary data-[drop-target=1]:shadow-[inset_0_0_0_1px_var(--primary)]",
+        className,
+      )}
+    >
       <div className="flex items-start justify-between gap-2 px-4 pt-4 pb-3">
         <Link
           to={`/app/devices/${d.id}`}
+          draggable={false}
           className="hover:text-foreground flex min-w-0 flex-col gap-0.5 transition-colors"
         >
           <span className="text-foreground truncate text-sm font-medium">
@@ -60,76 +119,35 @@ export function DeviceCard({
           </span>
         </Link>
         <div className="flex items-center gap-1">
-          <StatusPill status={d.status as Status} />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                className="text-muted-foreground -mr-1"
-                aria-label="Device actions"
-              >
-                <IconDots className="size-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[10rem]">
-              <DropdownMenuItem asChild>
-                <Link to={`/app/devices/${d.id}`}>
-                  <IconExternalLink />
-                  View details
-                </Link>
-              </DropdownMenuItem>
-              {d.status === "active" && (
-                <DropdownMenuItem
-                  onSelect={() => onPause(d.id)}
-                  disabled={pending}
-                >
-                  <IconPlayerPause />
-                  Pause
-                </DropdownMenuItem>
-              )}
-              {d.status === "paused" && (
-                <DropdownMenuItem
-                  onSelect={() => onUnpause(d.id)}
-                  disabled={pending}
-                >
-                  <IconPlayerPlay />
-                  Unpause
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onSelect={() => onRevoke(d.id)}
-                disabled={d.status === "revoked"}
-                className="text-destructive focus:text-destructive"
-              >
-                <IconTrash />
-                Revoke
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <StatusPill status={rowPill(d)} />
+          {actions}
+          {showOpenLink && !actions && (
+            <Link
+              to={`/app/devices/${d.id}`}
+              aria-label="Open device"
+              className="text-muted-foreground hover:text-foreground -mr-1 p-1 transition-colors"
+            >
+              <IconExternalLink className="size-3.5" />
+            </Link>
+          )}
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 px-4 pb-3">
         <RateBlock
           label="↓ RX"
-          value={isActive ? formatBps(live?.rxBps ?? 0) : "—"}
+          value={isOnline ? formatBps(rxBps) : "—"}
           color="text-status-online"
         />
         <RateBlock
           label="↑ TX"
-          value={isActive ? formatBps(live?.txBps ?? 0) : "—"}
+          value={isOnline ? formatBps(txBps) : "—"}
           color="text-primary"
         />
       </div>
 
       <div className="-mb-4 px-1">
-        <MiniAreaChart
-          rxHistory={live?.rxHistory ?? []}
-          txHistory={live?.txHistory ?? []}
-          height={56}
-        />
+        <MiniAreaChart rxHistory={rxHistory} txHistory={txHistory} height={56} />
       </div>
 
       <div className="border-border bg-muted/40 flex items-center justify-between gap-3 border-t px-4 py-2.5 font-mono text-[11px]">
@@ -140,11 +158,11 @@ export function DeviceCard({
         <span className="text-muted-foreground inline-flex items-center gap-2 tabular-nums">
           <span className="inline-flex items-center gap-0.5">
             <IconArrowDown className="size-2.5" />
-            {compactBytes(live?.totalRx ?? 0)}
+            {hasEverHandshook ? compactBytes(totalRx) : "—"}
           </span>
           <span className="inline-flex items-center gap-0.5">
             <IconArrowUp className="size-2.5" />
-            {compactBytes(live?.totalTx ?? 0)}
+            {hasEverHandshook ? compactBytes(totalTx) : "—"}
           </span>
         </span>
       </div>
@@ -164,7 +182,10 @@ function RateBlock({
   return (
     <div className="space-y-0.5">
       <p
-        className={`font-mono text-[10px] font-medium uppercase tracking-[0.08em] ${color}`}
+        className={cn(
+          "font-mono text-[10px] font-medium uppercase tracking-[0.08em]",
+          color,
+        )}
       >
         {label}
       </p>
@@ -174,4 +195,3 @@ function RateBlock({
     </div>
   )
 }
-

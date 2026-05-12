@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
-  IconCheck,
-  IconChevronDown,
   IconDeviceTablet,
   IconDownload,
   IconGripVertical,
+  IconLayoutGrid,
+  IconLayoutList,
   IconPlayerPause,
   IconPlayerPlay,
   IconPlus,
@@ -18,8 +18,10 @@ import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
+import { DeviceCard } from "@/components/DeviceCard"
 import { EmptyState } from "@/components/EmptyState"
 import { FilterDropdown } from "@/components/FilterDropdown"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import {
   Eyebrow,
   fmtRel,
@@ -30,11 +32,6 @@ import {
 } from "@/components/swiss"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
 import {
   Dialog,
   DialogClose,
@@ -101,6 +98,18 @@ const PEER_FILTERS: { value: PeerState; label: string; pill: PillStatus }[] = [
   { value: "revoked", label: "Revoked", pill: "revoked" },
 ]
 
+type ViewMode = "list" | "grid"
+const VIEW_MODE_KEY = "zv-devices-view-mode"
+function readViewMode(): ViewMode {
+  if (typeof localStorage === "undefined") return "list"
+  try {
+    const v = localStorage.getItem(VIEW_MODE_KEY)
+    return v === "grid" ? "grid" : "list"
+  } catch {
+    return "list"
+  }
+}
+
 export function DevicesPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -113,6 +122,19 @@ export function DevicesPage() {
   const [peerFilter, setPeerFilter] = useState<Set<PeerState>>(new Set())
   const [query, setQuery] = useState("")
   const [addOpen, setAddOpen] = useState(false)
+  // List vs grid presentation toggle, persisted across visits via
+  // localStorage so a user who prefers one layout doesn't get bounced
+  // back to the default every reload. Filters / search / drag-reorder
+  // all work identically in both modes — only the cell geometry changes.
+  const [viewMode, setViewMode] = useState<ViewMode>(readViewMode)
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, viewMode)
+    } catch {
+      // localStorage can throw in restricted contexts (private mode,
+      // quota); preferences are non-essential, swallow it.
+    }
+  }, [viewMode])
   const [revokeId, setRevokeId] = useState<string | null>(null)
   // Pause / resume both flip the live tunnel state for the user, so each
   // is gated behind its own confirm. `pauseId` / `unpauseId` hold the
@@ -310,7 +332,8 @@ export function DevicesPage() {
   }, [filtered])
 
   return (
-    <div className="flex flex-col gap-6">
+    <PageStagger>
+      <StaggerItem>
       <PageHead
         eyebrow="Workspace · 02"
         title="Devices"
@@ -334,7 +357,9 @@ export function DevicesPage() {
           </Dialog>
         }
       />
+      </StaggerItem>
 
+      <StaggerItem>
       <FleetSummary
         devices={devices}
         filteredCount={filtered.length}
@@ -346,11 +371,14 @@ export function DevicesPage() {
         osBreakdown={osBreakdown}
         loading={devicesQ.isLoading}
       />
+      </StaggerItem>
 
+      <StaggerItem>
       <Panel
         flush
         right={
           <>
+            <ViewModeToggle value={viewMode} onChange={setViewMode} />
             <div className="flex flex-wrap items-center gap-2">
               <FilterDropdown<ConnState>
                 label="Connection"
@@ -433,7 +461,7 @@ export function DevicesPage() {
             No devices match the current filter.
           </p>
         )}
-        {filtered.length > 0 && (
+        {filtered.length > 0 && viewMode === "list" && (
           <table className="zv-table zv-table-draggable">
             <thead>
               <tr>
@@ -577,7 +605,58 @@ export function DevicesPage() {
             </tbody>
           </table>
         )}
+        {filtered.length > 0 && viewMode === "grid" && (
+          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {filtered.map(({ d }) => {
+              const isDragging = dragId === d.id
+              const isDropTarget =
+                dropTargetId === d.id && dragId !== null && dragId !== d.id
+              return (
+                <DeviceCard
+                  key={d.id}
+                  device={d}
+                  draggable
+                  data-dragging={isDragging ? "1" : undefined}
+                  data-drop-target={isDropTarget ? "1" : undefined}
+                  onDoubleClick={() => navigate(`/app/devices/${d.id}`)}
+                  onDragStart={(e) => {
+                    setDragId(d.id)
+                    e.dataTransfer.effectAllowed = "move"
+                    e.dataTransfer.setData("text/plain", d.id)
+                  }}
+                  onDragEnd={() => {
+                    setDragId(null)
+                    setDropTargetId(null)
+                  }}
+                  onDragOver={(e) => {
+                    if (!dragId || dragId === d.id) return
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = "move"
+                    if (dropTargetId !== d.id) setDropTargetId(d.id)
+                  }}
+                  onDragLeave={() => {
+                    if (dropTargetId === d.id) setDropTargetId(null)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    onDropOn(d.id)
+                  }}
+                  actions={
+                    <RowActions
+                      device={d}
+                      onPause={() => setPauseId(d.id)}
+                      onUnpause={() => setUnpauseId(d.id)}
+                      onRevoke={() => setRevokeId(d.id)}
+                      pending={pauseM.isPending || unpauseM.isPending}
+                    />
+                  }
+                />
+              )
+            })}
+          </div>
+        )}
       </Panel>
+      </StaggerItem>
 
       <ConfirmDialog
         open={!!revokeId}
@@ -609,7 +688,7 @@ export function DevicesPage() {
         pending={unpauseM.isPending}
         onConfirm={() => unpauseId && unpauseM.mutate(unpauseId)}
       />
-    </div>
+    </PageStagger>
   )
 }
 
@@ -894,6 +973,66 @@ function OsBreakdownRow({
         />
       </div>
     </div>
+  )
+}
+
+/** Two-button segmented toggle for switching the devices listing between
+ *  table layout (list) and card layout (grid). Compact, mono-styled to
+ *  match the rest of the panel toolbar. */
+function ViewModeToggle({
+  value,
+  onChange,
+}: {
+  value: ViewMode
+  onChange: (v: ViewMode) => void
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="View mode"
+      className="border-border inline-flex h-7 shrink-0 overflow-hidden border"
+    >
+      <ViewModeButton
+        active={value === "list"}
+        onClick={() => onChange("list")}
+        label="List view"
+      >
+        <IconLayoutList size={13} />
+      </ViewModeButton>
+      <ViewModeButton
+        active={value === "grid"}
+        onClick={() => onChange("grid")}
+        label="Grid view"
+      >
+        <IconLayoutGrid size={13} />
+      </ViewModeButton>
+    </div>
+  )
+}
+
+function ViewModeButton({
+  active,
+  onClick,
+  label,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={label}
+      title={label}
+      data-active={active ? "1" : "0"}
+      className="text-muted-foreground hover:text-foreground data-[active=1]:bg-muted/60 data-[active=1]:text-foreground inline-flex w-7 items-center justify-center transition-colors first:border-r first:border-border"
+    >
+      {children}
+    </button>
   )
 }
 

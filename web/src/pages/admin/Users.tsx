@@ -4,6 +4,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { RelativeTime } from "@/components/RelativeTime"
 import { PageHead, Panel, Pill } from "@/components/swiss"
 import { StatusPill, type Status } from "@/components/StatusPill"
@@ -54,24 +55,27 @@ export function UsersPage() {
   const items = usersQ.data?.items ?? []
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHead
-        eyebrow="Admin · 02"
-        title="Users"
-        sub={`${usersQ.data?.total ?? 0} total · ${items.filter((u) => u.status === "active").length} active`}
-        right={
-          <div className="relative w-64">
-            <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter email…"
-              className="h-8 pl-8"
-            />
-          </div>
-        }
-      />
+    <PageStagger>
+      <StaggerItem>
+        <PageHead
+          eyebrow="Admin · 02"
+          title="Users"
+          sub={`${usersQ.data?.total ?? 0} total · ${items.filter((u) => u.status === "active").length} active`}
+          right={
+            <div className="relative w-64">
+              <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Filter email…"
+                className="h-8 pl-8"
+              />
+            </div>
+          }
+        />
+      </StaggerItem>
 
+      <StaggerItem>
       <Panel flush>
         {usersQ.isLoading && (
           <div className="flex flex-col gap-2 p-4">
@@ -179,6 +183,7 @@ export function UsersPage() {
           </table>
         )}
       </Panel>
+      </StaggerItem>
 
       <ConfirmDialog
         open={!!suspendTarget}
@@ -193,6 +198,6 @@ export function UsersPage() {
           setStatusM.mutate({ id: suspendTarget.id, status: "suspended" })
         }
       />
-    </div>
+    </PageStagger>
   )
 }

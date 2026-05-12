@@ -1,44 +1,37 @@
-import { IconDownload } from "@tabler/icons-react"
 import { useState } from "react"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { PageHead, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
-import { ApiError, deleteAccount, exportData } from "@/lib/api"
+import { ApiError, deleteAccount } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
 export function AccountPage() {
+  return (
+    <PageStagger>
+      <StaggerItem>
+        <PageHead
+          eyebrow="Account · 06"
+          title="Account"
+          sub="profile · data · lifecycle"
+        />
+      </StaggerItem>
+      <AccountSections />
+    </PageStagger>
+  )
+}
+
+/** Reusable account-management content (no page header). Embedded by
+ *  the unified `/app/settings` page so the Account tab there shows the
+ *  same UI without duplicating the markup. */
+export function AccountSections() {
   const navigate = useNavigate()
   const reset = useAuth((s) => s.reset)
-  const user = useAuth((s) => s.user)
   const [deleting, setDeleting] = useState(false)
-  const [exporting, setExporting] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-
-  const handleExport = async () => {
-    setExporting(true)
-    try {
-      const data = await exportData()
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: "application/json",
-      })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `zerovpn-data-export-${new Date()
-        .toISOString()
-        .slice(0, 10)}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast.success("Data export downloaded")
-    } catch (e) {
-      if (e instanceof ApiError) toast.error(e.message)
-    } finally {
-      setExporting(false)
-    }
-  }
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -54,13 +47,29 @@ export function AccountPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHead
-        eyebrow="Account · 06"
-        title="Account"
-        sub="profile · data · lifecycle"
-      />
+    <AccountSectionsBody
+      deleteOpen={deleteOpen}
+      setDeleteOpen={setDeleteOpen}
+      deleting={deleting}
+      handleDelete={handleDelete}
+    />
+  )
+}
 
+function AccountSectionsBody({
+  deleteOpen,
+  setDeleteOpen,
+  deleting,
+  handleDelete,
+}: {
+  deleteOpen: boolean
+  setDeleteOpen: (open: boolean) => void
+  deleting: boolean
+  handleDelete: () => Promise<void>
+}) {
+  const user = useAuth((s) => s.user)
+  return (
+    <div className="flex flex-col gap-6">
       <Panel title="Profile">
         <div className="flex flex-col gap-3 text-sm">
           <Row label="Email">
@@ -75,23 +84,6 @@ export function AccountPage() {
               </span>
             )}
           </Row>
-        </div>
-      </Panel>
-
-      <Panel
-        title="Data export"
-        sub="GDPR-shaped · ndjson"
-      >
-        <p className="text-muted-foreground max-w-[60ch] text-[13px] leading-relaxed">
-          Download a JSON copy of everything we hold for {user?.email}: account
-          metadata, devices, and audit-log entries you originated. Password
-          hashes, TOTP secrets, and other sensitive fields are excluded.
-        </p>
-        <div className="mt-3">
-          <Button onClick={handleExport} disabled={exporting}>
-            <IconDownload />
-            {exporting ? "Preparing…" : "Download data export"}
-          </Button>
         </div>
       </Panel>
 

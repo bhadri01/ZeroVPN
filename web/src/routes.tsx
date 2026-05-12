@@ -51,6 +51,9 @@ const SecurityPage = lazy(() =>
 const AccountPage = lazy(() =>
   import("@/pages/app/Account").then((m) => ({ default: m.AccountPage })),
 )
+const SettingsPage = lazy(() =>
+  import("@/pages/app/Settings").then((m) => ({ default: m.SettingsPage })),
+)
 const DeviceDetailPage = lazy(() =>
   import("@/pages/app/DeviceDetail").then((m) => ({
     default: m.DeviceDetailPage,
@@ -157,6 +160,11 @@ export const router = createBrowserRouter([
             path: "/app/account",
             handle: { breadcrumb: "Account" },
             element: <AccountPage />,
+          },
+          {
+            path: "/app/settings",
+            handle: { breadcrumb: "Settings" },
+            element: <SettingsPage />,
           },
           // ── Admin ──────────────────────────────────────────────────────
           {

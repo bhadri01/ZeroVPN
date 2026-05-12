@@ -6,8 +6,7 @@ import {
   IconLayoutDashboard,
   IconRouter,
   IconSearch,
-  IconShield,
-  IconUser,
+  IconSettings,
   IconUserShield,
 } from "@tabler/icons-react"
 import { useEffect, useState } from "react"
@@ -57,12 +56,11 @@ const ITEMS: Item[] = [
     chord: "g f",
   },
   {
-    to: "/app/security",
-    label: "Security",
-    icon: IconShield,
+    to: "/app/settings",
+    label: "Settings",
+    icon: IconSettings,
     group: "Workspace",
   },
-  { to: "/app/account", label: "Account", icon: IconUser, group: "Workspace" },
 
   // Admin
   {

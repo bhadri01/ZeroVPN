@@ -7,6 +7,7 @@ import {
   LiveIndicator,
   NetworkMonitorChart,
 } from "@/components/charts/LazyNetworkMonitorChart"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { RelativeTime } from "@/components/RelativeTime"
 import { Kpi, KpiStrip, PageHead, Panel, Pill } from "@/components/swiss"
 import { StatusPill, type Status } from "@/components/StatusPill"
@@ -96,23 +97,26 @@ export function AdminOverviewPage() {
   const maintOn = !!maintQ.data?.maintenance_mode
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHead
-        eyebrow="Admin · 01"
-        title="Overview"
-        sub="health · users · activity · trust surfaces"
-        right={
-          <Button
-            variant={maintOn ? "destructive" : "outline"}
-            onClick={() => setMaintM.mutate(!maintOn)}
-            disabled={setMaintM.isPending || maintQ.isLoading}
-          >
-            {maintOn ? "● Maintenance ON" : "Toggle maintenance"}
-          </Button>
-        }
-      />
+    <PageStagger>
+      <StaggerItem>
+        <PageHead
+          eyebrow="Admin · 01"
+          title="Overview"
+          sub="health · users · activity · trust surfaces"
+          right={
+            <Button
+              variant={maintOn ? "destructive" : "outline"}
+              onClick={() => setMaintM.mutate(!maintOn)}
+              disabled={setMaintM.isPending || maintQ.isLoading}
+            >
+              {maintOn ? "● Maintenance ON" : "Toggle maintenance"}
+            </Button>
+          }
+        />
+      </StaggerItem>
 
-      <KpiStrip>
+      <StaggerItem>
+        <KpiStrip>
         <Kpi label="Total users" value={total} footL={`${active} active`} />
         <Kpi
           label="Suspended"
@@ -126,8 +130,10 @@ export function AdminOverviewPage() {
           value={maintOn ? "ON" : "OFF"}
           footL={maintOn ? "writes blocked" : "writes allowed"}
         />
-      </KpiStrip>
+        </KpiStrip>
+      </StaggerItem>
 
+      <StaggerItem>
       <Panel
         title="Maintenance mode"
         sub="When ON, the API rejects writes with 503 and the UI shows a site-wide banner."
@@ -151,8 +157,10 @@ export function AdminOverviewPage() {
           </p>
         )}
       </Panel>
+      </StaggerItem>
 
       {(serversQ.data ?? []).length > 0 && (
+        <StaggerItem>
         <Panel
           title="Server live"
           sub="per-tick RX/TX + peer counts streamed over WS, hydrated from server_samples"
@@ -164,8 +172,10 @@ export function AdminOverviewPage() {
             ))}
           </div>
         </Panel>
+        </StaggerItem>
       )}
 
+      <StaggerItem>
       <Panel
         flush
         title="Users"
@@ -216,7 +226,8 @@ export function AdminOverviewPage() {
           </tbody>
         </table>
       </Panel>
-    </div>
+      </StaggerItem>
+    </PageStagger>
   )
 }
 

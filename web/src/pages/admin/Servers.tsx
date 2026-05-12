@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { EmptyState } from "@/components/EmptyState"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { PageHead, Panel } from "@/components/swiss"
 import { StatusPill } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
@@ -26,29 +27,35 @@ export function ServersPage() {
   })
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHead
-        eyebrow="Admin · 06"
-        title="Servers"
-        sub="hubs · keypairs · rotation · drain"
-      />
+    <PageStagger>
+      <StaggerItem>
+        <PageHead
+          eyebrow="Admin · 06"
+          title="Servers"
+          sub="hubs · keypairs · rotation · drain"
+        />
+      </StaggerItem>
       {q.isLoading && (
-        <div className="flex flex-col gap-3">
+        <StaggerItem className="flex flex-col gap-3">
           <Skeleton className="h-48 rounded-none" />
           <Skeleton className="h-48 rounded-none" />
-        </div>
+        </StaggerItem>
       )}
       {q.data && q.data.length === 0 && (
-        <EmptyState
-          icon={IconRouter}
-          title="No servers configured"
-          description="Bootstrap creates a default server on first boot."
-        />
+        <StaggerItem>
+          <EmptyState
+            icon={IconRouter}
+            title="No servers configured"
+            description="Bootstrap creates a default server on first boot."
+          />
+        </StaggerItem>
       )}
-      <div className="flex flex-col gap-4">
-        {q.data?.map((s) => <ServerEditor key={s.id} server={s} />)}
-      </div>
-    </div>
+      {q.data?.map((s) => (
+        <StaggerItem key={s.id}>
+          <ServerEditor server={s} />
+        </StaggerItem>
+      ))}
+    </PageStagger>
   )
 }
 

@@ -192,13 +192,22 @@ async fn poll_once(
         }
         prev_online.insert(device_id, online);
 
+        // Peers that have never completed a handshake can still appear in
+        // `wg show dump` with non-zero rx/tx counters — these are bytes
+        // accepted for the initiator handshake itself, not tunneled
+        // traffic. Reporting them as live "rates" makes a brand-new
+        // device's card show changing numbers before it has ever
+        // connected, which is misleading. Suppress the rate fields when
+        // there's no real handshake on record so the live stream only
+        // carries traffic for sessions that actually established.
+        let report_rates = latest_handshake > 0;
         let event = Event::StatsDelta {
             device_id,
             user_id,
-            rx_bytes: drx,
-            tx_bytes: dtx,
-            rate_rx_bps: drx / secs * 8,
-            rate_tx_bps: dtx / secs * 8,
+            rx_bytes: if report_rates { drx } else { 0 },
+            tx_bytes: if report_rates { dtx } else { 0 },
+            rate_rx_bps: if report_rates { drx / secs * 8 } else { 0 },
+            rate_tx_bps: if report_rates { dtx / secs * 8 } else { 0 },
             ts_ms: now_ms,
         };
         let topic = format!("stats.peer.{}", device_id);

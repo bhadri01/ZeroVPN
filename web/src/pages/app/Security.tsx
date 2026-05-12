@@ -4,6 +4,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { CopyableCode } from "@/components/CopyableCode"
+import { PageStagger, StaggerItem } from "@/components/motion"
 import { Kbd, PageHead, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,6 +18,24 @@ import { ApiError, totpDisable, totpEnable, totpSetup } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
 export function SecurityPage() {
+  return (
+    <PageStagger>
+      <StaggerItem>
+        <PageHead
+          eyebrow="Account · 04"
+          title="Security"
+          sub="2FA · recovery codes · sessions"
+        />
+      </StaggerItem>
+      <SecuritySections />
+    </PageStagger>
+  )
+}
+
+/** Reusable security-management content (no page header). Embedded by
+ *  the unified `/app/settings` page so the Security tab there shows the
+ *  same UI without duplicating the markup. */
+export function SecuritySections() {
   const user = useAuth((s) => s.user)
   const setUser = useAuth((s) => s.setUser)
   const qc = useQueryClient()
@@ -64,12 +83,6 @@ export function SecurityPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHead
-        eyebrow="Account · 04"
-        title="Security"
-        sub="2FA · recovery codes · sessions"
-      />
-
       <Panel
         title="Two-factor authentication"
         sub="time-based one-time password (TOTP)"

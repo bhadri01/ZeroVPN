@@ -117,6 +117,60 @@
     --status-revoked: #ff4f5e;
 }
 
+/* ── Accent variants ──────────────────────────────────────────────────
+   `data-accent` on <html> picks which hue drives `--primary`. Lime is
+   the default (matches the original design); the rest mirror the
+   variants from the design bundle's styles.css so users get five
+   distinct, on-brand looks without straying from the system. Each
+   variant tweaks `--primary`, `--primary-foreground` (text on top of
+   primary fills) and `--ring` (focus outline) so every shadcn primitive
+   picks the new tint up without per-component edits. Sidebar primary
+   mirrors the same. */
+:root[data-accent="lime"] {
+    --primary: #c6ff3d;
+    --primary-foreground: #0a0a0a;
+    --ring: #c6ff3d;
+    --sidebar-primary: #c6ff3d;
+    --sidebar-primary-foreground: #0a0a0a;
+}
+:root[data-accent="cobalt"] {
+    --primary: #3d5bff;
+    --primary-foreground: #ffffff;
+    --ring: #3d5bff;
+    --sidebar-primary: #3d5bff;
+    --sidebar-primary-foreground: #ffffff;
+}
+:root[data-accent="orange"] {
+    --primary: #ff6a1f;
+    --primary-foreground: #ffffff;
+    --ring: #ff6a1f;
+    --sidebar-primary: #ff6a1f;
+    --sidebar-primary-foreground: #ffffff;
+}
+:root[data-accent="magenta"] {
+    --primary: #ff2e88;
+    --primary-foreground: #ffffff;
+    --ring: #ff2e88;
+    --sidebar-primary: #ff2e88;
+    --sidebar-primary-foreground: #ffffff;
+}
+:root[data-accent="ink"] {
+    --primary: #0a0a0a;
+    --primary-foreground: #fafaf7;
+    --ring: #0a0a0a;
+    --sidebar-primary: #0a0a0a;
+    --sidebar-primary-foreground: #fafaf7;
+}
+.dark[data-accent="ink"] {
+    /* In dark mode "ink" inverts: primary is paper white so it reads on
+       the black surface. */
+    --primary: #f5f5f0;
+    --primary-foreground: #0a0a0a;
+    --ring: #f5f5f0;
+    --sidebar-primary: #f5f5f0;
+    --sidebar-primary-foreground: #0a0a0a;
+}
+
 @theme inline {
     --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
     --font-heading: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
@@ -759,6 +813,69 @@
   color: #1e5fcc;
 }
 .dark .zv-banner[data-tone="info"] { color: #5a9cff; }
+
+/* Settings sub-nav — vertical list of section buttons on the left rail
+   of /app/settings. Each row carries an icon + label + one-liner hint.
+   Active row gets a subtle tint + left accent border that matches the
+   currently-selected accent color. */
+.zv-settings-nav-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms, color 100ms;
+  position: relative;
+}
+.zv-settings-nav-item:hover {
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+}
+.zv-settings-nav-item--on {
+  background: color-mix(in oklch, var(--primary) 8%, transparent);
+}
+.zv-settings-nav-item--on::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--primary);
+}
+
+/* Accent swatch button — used in the Appearance section to pick the
+   primary tint. Selected swatch grows a hairline ring + flips to a
+   check glyph inside the colour chip. */
+.zv-accent-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color 100ms, background 100ms;
+}
+.zv-accent-swatch:hover {
+  border-color: color-mix(in oklch, var(--foreground) 40%, var(--border));
+}
+.zv-accent-swatch--on {
+  border-color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 4%, var(--card));
+}
+.zv-accent-swatch__chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--primary-foreground);
+  border: 1px solid color-mix(in oklch, var(--foreground) 18%, transparent);
+}
+
 .zv-banner-tag {
   padding: 1px 6px;
   border: 1px solid currentColor;

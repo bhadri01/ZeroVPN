@@ -3,11 +3,13 @@ import * as React from "react"
 
 type Theme = "dark" | "light" | "system"
 type ResolvedTheme = "dark" | "light"
+export type Accent = "lime" | "cobalt" | "orange" | "magenta" | "ink"
 
 type ThemeProviderProps = {
   children: React.ReactNode
   defaultTheme?: Theme
   storageKey?: string
+  accentStorageKey?: string
   disableTransitionOnChange?: boolean
 }
 
@@ -15,10 +17,18 @@ type ThemeProviderState = {
   theme: Theme
   resolvedTheme: ResolvedTheme
   setTheme: (theme: Theme) => void
+  accent: Accent
+  setAccent: (accent: Accent) => void
 }
 
 const COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)"
 const THEME_VALUES: Theme[] = ["dark", "light", "system"]
+const ACCENT_VALUES: Accent[] = ["lime", "cobalt", "orange", "magenta", "ink"]
+
+function isAccent(value: string | null): value is Accent {
+  if (value === null) return false
+  return ACCENT_VALUES.includes(value as Accent)
+}
 
 const ThemeProviderContext = React.createContext<
   ThemeProviderState | undefined
@@ -82,6 +92,7 @@ export function ThemeProvider({
   children,
   defaultTheme = "system",
   storageKey = "zerovpn-theme",
+  accentStorageKey = "zerovpn-accent",
   disableTransitionOnChange = true,
   ...props
 }: ThemeProviderProps) {
@@ -104,6 +115,25 @@ export function ThemeProvider({
     },
     [storageKey]
   )
+
+  // Accent variant — applied to <html> as `data-accent="..."`. index.css
+  // attaches per-variant overrides for `--primary` / `--primary-foreground`
+  // / `--ring` so every shadcn primitive picks up the new tint without
+  // touching its own classes.
+  const [accent, setAccentState] = React.useState<Accent>(() => {
+    const stored = localStorage.getItem(accentStorageKey)
+    return isAccent(stored) ? stored : "lime"
+  })
+  const setAccent = React.useCallback(
+    (next: Accent) => {
+      localStorage.setItem(accentStorageKey, next)
+      setAccentState(next)
+    },
+    [accentStorageKey]
+  )
+  React.useEffect(() => {
+    document.documentElement.setAttribute("data-accent", accent)
+  }, [accent])
 
   const applyTheme = React.useCallback(
     (nextTheme: Theme) => {
@@ -215,8 +245,10 @@ export function ThemeProvider({
       theme,
       resolvedTheme,
       setTheme,
+      accent,
+      setAccent,
     }),
-    [theme, resolvedTheme, setTheme]
+    [theme, resolvedTheme, setTheme, accent, setAccent]
   )
 
   return (

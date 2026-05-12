@@ -225,6 +225,10 @@ async fn main() -> Result<()> {
                     "/me/account",
                     axum::routing::delete(routes::me::delete_account),
                 )
+                .route(
+                    "/me/preferences",
+                    get(routes::me::get_preferences).put(routes::me::set_preferences),
+                )
                 .route("/admin/users", get(routes::admin::list_users))
                 .route(
                     "/admin/users/{id}/status",
@@ -259,6 +263,10 @@ async fn main() -> Result<()> {
                 .route(
                     "/auth/reset-password",
                     post(routes::email_auth::reset_password),
+                )
+                .route(
+                    "/auth/verify-reset-token",
+                    post(routes::email_auth::verify_reset_token),
                 )
                 .route("/ws", get(routes::ws::ws)),
         )
