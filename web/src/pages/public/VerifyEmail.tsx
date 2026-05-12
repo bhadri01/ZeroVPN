@@ -1,6 +1,7 @@
 import { IconLoader2 } from "@tabler/icons-react"
 import { useEffect, useState } from "react"
-import { Link, useSearchParams } from "react-router"
+import { Link, useNavigate, useSearchParams } from "react-router"
+import { toast } from "sonner"
 
 import {
   AuthForm,
@@ -11,11 +12,14 @@ import {
 import { CodeBlock, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { ApiError, verifyEmail } from "@/lib/api"
+import { useAuth } from "@/stores/auth"
 
 type Status = "pending" | "ok" | "fail"
 
 export function VerifyEmailPage() {
   const [params] = useSearchParams()
+  const navigate = useNavigate()
+  const setUser = useAuth((s) => s.setUser)
   const token = params.get("token")
   const [status, setStatus] = useState<Status>("pending")
   const [message, setMessage] = useState<string>("")
@@ -28,11 +32,18 @@ export function VerifyEmailPage() {
     }
     let alive = true
     verifyEmail(token)
-      .then(() => {
-        if (alive) {
-          setStatus("ok")
-          setMessage("Your email is verified. You can sign in now.")
-        }
+      .then((res) => {
+        if (!alive) return
+        setStatus("ok")
+        setMessage("Your email is verified — signing you in…")
+        setUser(res.user)
+        toast.success(`Welcome, ${res.user.email}`)
+        // Small delay so the user briefly sees the success state before
+        // the dashboard appears; matches the 200ms feel of other
+        // post-action transitions in the app.
+        setTimeout(() => {
+          if (alive) navigate("/app", { replace: true })
+        }, 600)
       })
       .catch((e) => {
         if (alive) {
@@ -43,7 +54,7 @@ export function VerifyEmailPage() {
     return () => {
       alive = false
     }
-  }, [token])
+  }, [token, navigate, setUser])
 
   return (
     <AuthShell>
@@ -89,16 +100,16 @@ Subject: Verify your account
 → https://your-host.tld/verify-email?token=eyJhbGciOi…  (24h)`}</CodeBlock>
         )}
 
-        <div className="flex gap-2">
-          <Button asChild>
-            <Link to="/login">Continue to sign in</Link>
-          </Button>
-          {status === "fail" && (
+        {status === "fail" && (
+          <div className="flex gap-2">
+            <Button asChild>
+              <Link to="/login">Continue to sign in</Link>
+            </Button>
             <Button asChild variant="ghost">
               <Link to="/register">Try again</Link>
             </Button>
-          )}
-        </div>
+          </div>
+        )}
 
         <AuthFooterRule>
           <Link to="/" className="hover:text-foreground">

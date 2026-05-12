@@ -299,7 +299,7 @@ pub async fn login(
                         .format(&time::format_description::well_known::Rfc3339)
                         .unwrap_or_else(|_| "(unknown)".into());
                     let security_link = format!(
-                        "{}/app/security",
+                        "{}/app/settings#security",
                         state.public_url.trim_end_matches('/'),
                     );
                     let body = zerovpn_mail::templates::SuspiciousLogin {

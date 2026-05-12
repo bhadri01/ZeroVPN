@@ -14,6 +14,10 @@ use zerovpn_db::PgPool;
 const TICK: Duration = Duration::from_secs(6 * 3600);
 const VERIFY_TOKEN_RETENTION_HOURS: i64 = 24;
 const SOFT_DELETE_PURGE_DAYS: i64 = 30;
+/// Pending-verification accounts older than this are dropped outright.
+/// Their verify-email TTL is 24 h, so by day 7 the link is long-dead and
+/// the row is just blocking the email from being re-registered.
+const PENDING_VERIFICATION_PURGE_DAYS: i64 = 7;
 
 /// Retention window for raw `bandwidth_samples` (per-tick rows). Read from
 /// `ZEROVPN_SAMPLE_RETENTION_DAYS`. **Unset (None) → samples are never
@@ -138,6 +142,27 @@ async fn run_once(pool: &PgPool) -> sqlx::Result<()> {
         .await?;
     if res.rows_affected() > 0 {
         info!(rows = res.rows_affected(), "purged old failed_logins");
+    }
+
+    // 6. Drop accounts that signed up but never clicked the verify link.
+    //    Once the verify token has been dead for days, the row just blocks
+    //    the email from being re-registered. Cascades clean up any
+    //    leftover verification_tokens.
+    let pending_cutoff = now - time::Duration::days(PENDING_VERIFICATION_PURGE_DAYS);
+    let res = sqlx::query(
+        "DELETE FROM users
+          WHERE status = 'pending_verification'
+            AND email_verified_at IS NULL
+            AND created_at < $1",
+    )
+    .bind(pending_cutoff)
+    .execute(pool)
+    .await?;
+    if res.rows_affected() > 0 {
+        info!(
+            rows = res.rows_affected(),
+            "purged stale pending-verification accounts"
+        );
     }
 
     Ok(())

@@ -202,8 +202,15 @@ export const setMyTopology = (positions: Record<string, TopologyPosition>) =>
     body: JSON.stringify({ positions }),
   })
 
+/** Verify-email response. The server upgrades the caller's session as
+ *  part of a successful verify so the frontend can navigate straight to
+ *  /app without an additional sign-in hop. */
+export interface VerifyEmailResponse {
+  status: string
+  user: PublicUser
+}
 export const verifyEmail = (token: string) =>
-  apiFetch<{ status: string }>("/auth/verify-email", {
+  apiFetch<VerifyEmailResponse>("/auth/verify-email", {
     method: "POST",
     body: JSON.stringify({ token }),
   })

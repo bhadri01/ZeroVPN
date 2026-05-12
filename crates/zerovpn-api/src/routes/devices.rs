@@ -211,7 +211,7 @@ pub async fn create(
         .ok_or_else(|| ApiError::Internal("server allocator missing".into()))?;
     let ip = match body.allocated_ip.as_ref() {
         Some(raw) => reserve_specific(&alloc, raw)?,
-        None => allocate_v4(&alloc)?,
+        None => allocate_auto(&alloc)?,
     };
 
     let private_key = keys::generate_private_key();
@@ -275,7 +275,8 @@ pub async fn create(
     });
 
     // Best-effort: persist the device row. If it fails we must release the IP.
-    let allocated_cidr = IpNetwork::new(ip, 32).expect("valid /32");
+    let host_prefix = if ip.is_ipv4() { 32 } else { 128 };
+    let allocated_cidr = IpNetwork::new(ip, host_prefix).expect("valid host prefix");
     let device_id = match devices::create(
         &state.pool,
         devices::NewDevice {
@@ -294,9 +295,7 @@ pub async fn create(
         Ok(id) => id,
         Err(e) => {
             // Best-effort release.
-            if let std::net::IpAddr::V4(v4) = ip {
-                let _ = alloc.release(v4);
-            }
+            let _ = alloc.release(ip);
             return Err(e.into());
         }
     };
@@ -626,10 +625,8 @@ pub async fn delete(
     if n == 0 {
         return Err(ApiError::NotFound);
     }
-    if let std::net::IpAddr::V4(v4) = device.allocated_ip.ip() {
-        if let Some(alloc) = state.allocators.get(device.server_id) {
-            let _ = alloc.release(v4);
-        }
+    if let Some(alloc) = state.allocators.get(device.server_id) {
+        let _ = alloc.release(device.allocated_ip.ip());
     }
     audit::record(
         &state.pool,
@@ -954,18 +951,18 @@ async fn set_pause_state(
     Ok(())
 }
 
-fn allocate_v4(alloc: &Arc<IpAllocator>) -> ApiResult<IpAddr> {
-    match alloc.allocate() {
-        Ok(v4) => Ok(IpAddr::V4(v4)),
-        Err(_) => Err(ApiError::Conflict("server IP pool exhausted".into())),
-    }
+fn allocate_auto(alloc: &Arc<IpAllocator>) -> ApiResult<IpAddr> {
+    alloc
+        .allocate()
+        .map_err(|_| ApiError::Conflict("server IP pool exhausted".into()))
 }
 
-/// Caller-supplied IP path. Parses the string, ensures it's IPv4, then
-/// asks the allocator to atomically claim it inside the server's CIDR.
-/// Maps the four interesting outcomes to specific API errors so the
-/// frontend can render targeted toasts ("already taken" vs "outside
-/// subnet" vs "reserved address").
+/// Caller-supplied IP path. Parses the string and asks the allocator
+/// to atomically claim it inside the server's CIDR. Family must match
+/// the server's CIDR; mismatches surface as a validation error so the
+/// frontend can render a clear message. Maps the other interesting
+/// outcomes to specific API errors so toasts can be targeted
+/// ("already taken" vs "outside subnet" vs "reserved address").
 fn reserve_specific(
     alloc: &Arc<IpAllocator>,
     raw: &str,
@@ -975,28 +972,23 @@ fn reserve_specific(
         .trim()
         .parse()
         .map_err(|_| ApiError::Validation(format!("invalid IP: {raw}")))?;
-    let v4 = match parsed {
-        std::net::IpAddr::V4(v4) => v4,
-        std::net::IpAddr::V6(_) => {
-            return Err(ApiError::Validation(
-                "only IPv4 addresses are supported for manual allocation".into(),
-            ));
-        }
-    };
-    match alloc.try_reserve(v4) {
-        Ok(()) => Ok(IpAddr::V4(v4)),
+    match alloc.try_reserve(parsed) {
+        Ok(()) => Ok(parsed),
         Err(AllocError::AlreadyAllocated) => Err(ApiError::Conflict(format!(
-            "{v4} is already assigned to another device"
+            "{parsed} is already assigned to another device"
         ))),
         Err(AllocError::OutOfRange) => Err(ApiError::Validation(format!(
-            "{v4} is outside the server's subnet"
+            "{parsed} is outside the server's subnet"
         ))),
         Err(AllocError::Reserved) => Err(ApiError::Validation(format!(
-            "{v4} is a reserved address (network / broadcast / gateway)"
+            "{parsed} is a reserved address (network / broadcast / gateway)"
         ))),
         Err(AllocError::Exhausted) => {
             Err(ApiError::Conflict("server IP pool exhausted".into()))
         }
+        Err(AllocError::FamilyMismatch(want, got)) => Err(ApiError::Validation(format!(
+            "IP family mismatch: server expects {want}, got {got}"
+        ))),
     }
 }
 

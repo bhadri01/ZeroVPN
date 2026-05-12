@@ -13,6 +13,7 @@ path = "src/main.rs"
 zerovpn-core = { workspace = true }
 zerovpn-db = { workspace = true }
 zerovpn-auth = { workspace = true }
+zerovpn-wg = { workspace = true }
 
 clap = { workspace = true }
 inquire = { workspace = true }
@@ -23,3 +24,4 @@ anyhow = { workspace = true }
 dotenvy = { workspace = true }
 sqlx = { workspace = true }
 uuid = { workspace = true }
+serde_json = { workspace = true }

@@ -344,13 +344,12 @@ pub async fn delete_account(
     .await?;
     let _ = session.flush().await;
 
-    // Belt-and-suspenders: revoke any device IPs from the in-memory bitmap.
+    // Belt-and-suspenders: revoke any device IPs from the in-memory
+    // allocator so freshly-released slots are immediately reusable.
     if let Ok(user_devices) = devices::list_for_user(&state.pool, user.id).await {
         for d in user_devices {
-            if let std::net::IpAddr::V4(v4) = d.allocated_ip.ip() {
-                if let Some(alloc) = state.allocators.get(d.server_id) {
-                    let _ = alloc.release(v4);
-                }
+            if let Some(alloc) = state.allocators.get(d.server_id) {
+                let _ = alloc.release(d.allocated_ip.ip());
             }
         }
     }

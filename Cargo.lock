@@ -5989,6 +5989,7 @@ dependencies = [
  "clap",
  "dotenvy",
  "inquire",
+ "serde_json",
  "sqlx",
  "tokio",
  "tracing",
@@ -5997,6 +5998,7 @@ dependencies = [
  "zerovpn-auth",
  "zerovpn-core",
  "zerovpn-db",
+ "zerovpn-wg",
 ]
 
 [[package]]

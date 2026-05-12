@@ -81,6 +81,29 @@ pub async fn consume(pool: &PgPool, id: Uuid) -> sqlx::Result<u64> {
     Ok(res.rows_affected())
 }
 
+/// Count tokens of `purpose` issued for `user_id` in the last `seconds`.
+/// Used by the resend-verify endpoint to throttle email blasts without
+/// touching a separate rate-limit table — we already write a row every
+/// time `issue_verify_email` runs.
+pub async fn count_recent_for_user(
+    pool: &PgPool,
+    user_id: Uuid,
+    purpose: TokenPurpose,
+    seconds: i64,
+) -> sqlx::Result<i64> {
+    let cutoff = OffsetDateTime::now_utc() - time::Duration::seconds(seconds);
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*) FROM verification_tokens
+           WHERE user_id = $1 AND purpose = $2 AND created_at > $3"#,
+    )
+    .bind(user_id)
+    .bind(purpose)
+    .bind(cutoff)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
 /// Invalidate any active tokens for the same purpose so a user can only
 /// have one outstanding password-reset / email-verify token at a time.
 pub async fn invalidate_active(

@@ -5,13 +5,18 @@ import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { PageHead, Panel } from "@/components/swiss"
 import { LiveTopology } from "@/components/topology/LiveTopology"
-import { listDevices } from "@/lib/api"
+import { listDevices, meServer } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 import { useLiveStats } from "@/stores/liveStats"
 
 export function TopologyPage() {
   const user = useAuth((s) => s.user)
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
+  // The VPN hub identity is the same for every user on a given deployment
+  // (one WireGuard server backs the whole fleet), so it must come from the
+  // server, never from the viewer's email — using the email domain made
+  // accounts like bhadri2002@example.com render the hub as "example.com".
+  const serverQ = useQuery({ queryKey: ["me", "server"], queryFn: meServer })
 
   const liveDevices = useLiveStats((s) => s.devices)
   const rates = useMemo(() => {
@@ -23,6 +28,11 @@ export function TopologyPage() {
   }, [liveDevices])
 
   const devices = devicesQ.data ?? []
+  const server = serverQ.data
+  const serverLabel = server?.endpoint_host ?? "vpn-server"
+  const serverMeta = server
+    ? `${server.cidr} · :${server.endpoint_port}`
+    : undefined
 
   return (
     <PageStagger className="h-full">
@@ -40,12 +50,8 @@ export function TopologyPage() {
           <LiveTopology
             devices={devices}
             rates={rates}
-            serverLabel={user?.email?.split("@")[1] ?? "vpn-server"}
-            serverMeta={
-              devices.length > 0 && devices[0].allocated_ip
-                ? deriveCidr(devices[0].allocated_ip)
-                : undefined
-            }
+            serverLabel={serverLabel}
+            serverMeta={serverMeta}
             // Label the user-tier node with the local-part of the current
             // user's email — short, readable, and matches the rest of the
             // app's "me" identity. The map is keyed by user_id so it scales
@@ -60,13 +66,4 @@ export function TopologyPage() {
       </StaggerItem>
     </PageStagger>
   )
-}
-
-/** Best-effort CIDR derived from a device's allocated IP. Used purely as
- *  cosmetic meta on the topology hub — falls back to the bare IP if we
- *  can't parse it as IPv4. */
-function deriveCidr(ip: string): string | undefined {
-  const parts = ip.split(".")
-  if (parts.length !== 4) return undefined
-  return `${parts[0]}.${parts[1]}.0.0/16`
 }

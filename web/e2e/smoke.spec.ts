@@ -1,33 +1,55 @@
 /**
  * End-to-end happy-path smoke against a running stack:
- *   register → DB-activate (skips email click) → login → add device → see it
+ *   register → click verify link from MailHog → land on /app (auto-signed
+ *   in) → add device → see it listed.
  *
  * Run with: pnpm exec playwright test
- * Assumes the stack is up via `make up`.
- *
- * Why we DB-activate: the verify-email plaintext token is only emitted in
- * the email link (the row stores a sha256 hash), so a black-box smoke test
- * cannot recover it. We exercise the verify-email path separately in the
- * Rust integration tests; here we just need the user usable for the rest
- * of the device-creation flow.
+ * Assumes the stack is up via `make up`. The dev compose includes MailHog
+ * (UI + API on :8025, SMTP on :1025), which the API points at via
+ * ZEROVPN_SMTP__HOST=mailhog, so registration produces a real captured
+ * verification email we can scrape here.
  */
-import { execSync } from "node:child_process"
-
 import { expect, test } from "@playwright/test"
 
 const PASSWORD = "correcthorsebatterystaple"
+const MAILHOG_API = "http://localhost:8025/api/v2"
 
-function activateUserInDb(email: string) {
-  execSync(
-    `docker compose exec -T db psql -U zerovpn -d zerovpn -c "UPDATE users SET status='active', email_verified_at=NOW() WHERE email='${email}'"`,
-    { stdio: "pipe" },
-  )
+interface MailHogMessage {
+  ID: string
+  Content: { Headers: Record<string, string[]>; Body: string }
+  To: { Mailbox: string; Domain: string }[]
 }
 
-test("user can register, log in, and add a device", async ({ page }) => {
+async function fetchVerifyTokenFromMailHog(email: string): Promise<string> {
+  const deadline = Date.now() + 15_000
+  while (Date.now() < deadline) {
+    const res = await fetch(`${MAILHOG_API}/messages`)
+    if (res.ok) {
+      const data = (await res.json()) as { items: MailHogMessage[] }
+      // MailHog returns messages newest-first. Find the verify-email
+      // mail addressed to this run's throwaway address. We match on the
+      // local-part to avoid coupling to MailHog's domain handling.
+      const local = email.split("@")[0]
+      const msg = data.items.find((m) =>
+        m.To.some((t) => t.Mailbox === local),
+      )
+      if (msg) {
+        const match = msg.Content.Body.match(/verify-email\?token=([^\s>]+)/)
+        if (match) return match[1].replace(/=+$/, "")
+      }
+    }
+    await new Promise((r) => setTimeout(r, 300))
+  }
+  throw new Error(`No verify-email message for ${email} after 15s`)
+}
+
+test("user can register, verify, log in, and add a device", async ({ page }) => {
   const email = `e2e-${Date.now()}@local.test`
 
-  // Register — now lands on the "check your email" screen.
+  // Empty the catcher so we don't read a stale message from a previous run.
+  await fetch(`${MAILHOG_API}/messages`, { method: "DELETE" }).catch(() => {})
+
+  // Register → "Check your inbox" screen.
   await page.goto("/register")
   await page.getByLabel("Email").fill(email)
   await page.getByLabel("Password", { exact: true }).fill(PASSWORD)
@@ -37,22 +59,19 @@ test("user can register, log in, and add a device", async ({ page }) => {
     timeout: 10_000,
   })
 
-  // Stand in for the user clicking the verify link.
-  activateUserInDb(email)
-
-  // Sign in
-  await page.goto("/login")
-  await page.getByLabel("Email").fill(email)
-  await page.getByLabel("Password").fill(PASSWORD)
-  await page.getByRole("button", { name: /Continue/i }).click()
-
+  // Pull the verify token out of MailHog and visit the verify URL. The
+  // backend establishes a session on success, and VerifyEmailPage navigates
+  // straight to /app.
+  const token = await fetchVerifyTokenFromMailHog(email)
+  await page.goto(`/verify-email?token=${encodeURIComponent(token)}`)
   await page.waitForURL(/\/app|\/admin/, { timeout: 15_000 })
+
+  // First registered user becomes admin — drop into the user dashboard.
   if (page.url().includes("/admin")) {
     await page.getByRole("link", { name: /User dashboard/i }).click()
     await page.waitForURL(/\/app/)
   }
 
-  // Add a device
   await page.getByPlaceholder(/Device name/i).fill("E2E Laptop")
   await page.getByRole("button", { name: /^Add device$/i }).click()
 

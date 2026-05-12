@@ -44,4 +44,3 @@ id_type!(UserId);
 id_type!(DeviceId);
 id_type!(ServerId);
 id_type!(SessionId);
-id_type!(ApiTokenId);

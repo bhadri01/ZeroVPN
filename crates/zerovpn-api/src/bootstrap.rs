@@ -101,23 +101,17 @@ pub async fn ensure_default_server(pool: &PgPool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build per-server IP allocators from the DB on startup.
+/// Build per-server IP allocators from the DB on startup. The allocator
+/// dispatches internally on the network family — both IPv4 and IPv6
+/// servers are seeded with their existing allocations from the
+/// `devices` table.
 pub async fn build_ip_allocators(pool: &PgPool) -> anyhow::Result<Arc<IpAllocators>> {
     let allocators = Arc::new(IpAllocators::default());
     for s in servers::list_active(pool).await? {
-        let net = match s.cidr {
-            IpNetwork::V4(v4) => v4,
-            IpNetwork::V6(_) => {
-                warn!(server_id = %s.id, "IPv6 CIDR not yet supported by allocator; skipping");
-                continue;
-            }
-        };
-        let alloc = Arc::new(IpAllocator::new(net));
+        let alloc = Arc::new(IpAllocator::new(s.cidr));
         for ip in devices::allocated_ips_for_server(pool, s.id).await? {
-            if let std::net::IpAddr::V4(v4) = ip {
-                if let Err(e) = alloc.mark_allocated(v4) {
-                    warn!(server_id = %s.id, ip = %v4, err = ?e, "failed to seed allocator");
-                }
+            if let Err(e) = alloc.mark_allocated(ip) {
+                warn!(server_id = %s.id, %ip, err = ?e, "failed to seed allocator");
             }
         }
         allocators.insert(s.id, alloc);
