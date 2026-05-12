@@ -654,6 +654,7 @@ pub async fn delete(
 #[derive(Debug, Deserialize)]
 pub struct PatchBody {
     pub name: Option<String>,
+    pub os: Option<DeviceOs>,
     pub allowed_ips_override: Option<Vec<String>>,
     pub dns_override: Option<Vec<String>>,
 }
@@ -839,13 +840,15 @@ pub async fn patch(
     sqlx::query(
         r#"UPDATE devices
               SET name = COALESCE($3, name),
-                  allowed_ips_override = $4,
-                  dns_override = $5
+                  os = COALESCE($4, os),
+                  allowed_ips_override = $5,
+                  dns_override = $6
             WHERE user_id = $1 AND id = $2"#,
     )
     .bind(user.id)
     .bind(id)
     .bind(body.name.as_deref())
+    .bind(body.os)
     .bind(body.allowed_ips_override.as_deref())
     .bind(dns_override_inet.as_deref())
     .execute(&state.pool)
@@ -860,6 +863,7 @@ pub async fn patch(
             target_id: Some(id),
             metadata: json!({
                 "name_changed": body.name.is_some(),
+                "os_changed": body.os.is_some(),
                 "split_tunnel_changed": body.allowed_ips_override.is_some(),
                 "dns_changed": body.dns_override.is_some(),
             }),

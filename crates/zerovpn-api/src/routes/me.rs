@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use axum::{Json, extract::State, response::IntoResponse};
+use garde::Validate;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
@@ -10,7 +11,7 @@ use zerovpn_db::repos::{audit, devices, servers, topology_positions, user_prefs,
 
 use crate::{
     error::{ApiError, ApiResult},
-    extractors::auth::CurrentUser,
+    extractors::auth::{CurrentUser, SESSION_KEY_PW_CHANGED_AT},
     state::AppState,
 };
 
@@ -260,6 +261,69 @@ pub async fn set_preferences(
 
 /// Soft-delete the user's account: nulls PII, revokes devices/sessions/
 /// tokens, flushes the current session.
+#[derive(Debug, Deserialize, Validate)]
+pub struct ChangePasswordBody {
+    #[garde(length(min = 1))]
+    pub current_password: String,
+    #[garde(length(min = 12, max = 128))]
+    pub new_password: String,
+}
+
+/// Authenticated change-password: verifies the current password and sets
+/// a new one. `update_password` bumps `password_changed_at` which would
+/// invalidate this very request's session on the next hop, so we
+/// re-snapshot the new watermark into the current session — the user
+/// stays signed in here while every *other* session for this account
+/// dies on its next request.
+pub async fn change_password(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    session: Session,
+    Json(body): Json<ChangePasswordBody>,
+) -> ApiResult<impl IntoResponse> {
+    body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
+    if body.current_password == body.new_password {
+        return Err(ApiError::Validation(
+            "new password must differ from current password".into(),
+        ));
+    }
+
+    let current_hash = users::find_password_hash(&state.pool, user.id)
+        .await?
+        .ok_or(ApiError::Unauthorized)?;
+    let ok = zerovpn_auth::password::verify(&body.current_password, &current_hash)?;
+    if !ok {
+        return Err(ApiError::Validation("current password is incorrect".into()));
+    }
+
+    let new_hash = zerovpn_auth::password::hash(&body.new_password)?;
+    users::update_password(&state.pool, user.id, &new_hash).await?;
+
+    // Re-sync the current session's password-watermark snapshot so the
+    // request that just changed the password is not itself logged out.
+    if let Some(new_watermark) = users::find_password_changed_at(&state.pool, user.id).await? {
+        session
+            .insert(SESSION_KEY_PW_CHANGED_AT, new_watermark.unix_timestamp())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "user.password_changed",
+            target_type: Some("user"),
+            target_id: Some(user.id),
+            metadata: json!({}),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(user_id = %user.id, "password changed");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
 pub async fn delete_account(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,

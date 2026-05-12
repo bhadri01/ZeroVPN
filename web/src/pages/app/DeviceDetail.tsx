@@ -55,6 +55,13 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -186,6 +193,12 @@ export function DeviceDetailPage() {
   // saved on zero-knowledge devices).
   const [clearKeyOpen, setClearKeyOpen] = useState(false)
   const [enableKeyOpen, setEnableKeyOpen] = useState(false)
+  // Rename + OS edit dialog. The name + OS are presentational metadata
+  // (no impact on the running tunnel), so editing is a simple two-field
+  // form gated behind a pencil button in the page header.
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [nameInput, setNameInput] = useState("")
+  const [osInput, setOsInput] = useState<DeviceOs>("other")
 
   // Seed edit-form state from the live device payload whenever it changes.
   useEffect(() => {
@@ -201,6 +214,38 @@ export function DeviceDetailPage() {
     setSplitCidrs(isFull ? "" : (d.allowed_ips_override ?? []).join(", "))
     setCustomDns((d.dns_override ?? []).join(", "))
   }, [deviceQ.data])
+
+  // Re-seed the rename form whenever the dialog opens so the user sees
+  // the device's current name/OS, not a stale value from a prior edit.
+  useEffect(() => {
+    if (renameOpen && deviceQ.data) {
+      setNameInput(deviceQ.data.name)
+      setOsInput(deviceQ.data.os)
+    }
+  }, [renameOpen, deviceQ.data])
+
+  const renameM = useMutation({
+    mutationFn: () => {
+      const next = nameInput.trim()
+      if (!next || next.length > 64) {
+        throw new ApiError(422, "validation", "Name must be 1–64 characters")
+      }
+      const body: { name?: string; os?: DeviceOs } = {}
+      if (next !== deviceQ.data?.name) body.name = next
+      if (osInput !== deviceQ.data?.os) body.os = osInput
+      if (!body.name && !body.os) return Promise.resolve({ status: "noop" })
+      return patchDevice(id, body)
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["device", id] })
+      void qc.invalidateQueries({ queryKey: ["devices"] })
+      setRenameOpen(false)
+      toast.success("Device updated")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
 
   const saveConfigM = useMutation({
     mutationFn: () => {
@@ -389,6 +434,16 @@ export function DeviceDetailPage() {
                       : "offline"
               }
             />
+            {!isRevoked && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setRenameOpen(true)}
+              >
+                <IconPencil size={14} />
+                Edit
+              </Button>
+            )}
             {d.status === "active" && (
               <Button
                 variant="ghost"
@@ -766,6 +821,90 @@ export function DeviceDetailPage() {
         pending={rotateM.isPending}
         onConfirm={() => rotateM.mutate(undefined)}
       />
+
+      {/* Rename + OS — purely presentational metadata, so no tunnel impact.
+          Submit is a no-op when neither field actually changed. */}
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit device</DialogTitle>
+            <DialogDescription>
+              Update the device's name or operating system. These are
+              labels — the WireGuard tunnel keeps working unchanged.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="rename-input" className="zv-eyebrow">
+                Name
+              </Label>
+              <Input
+                id="rename-input"
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                maxLength={64}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !renameM.isPending) {
+                    e.preventDefault()
+                    renameM.mutate()
+                  }
+                }}
+              />
+              <p className="text-muted-foreground font-mono text-[11px]">
+                1–64 characters.
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label className="zv-eyebrow">Operating system</Label>
+              <Select
+                value={osInput}
+                onValueChange={(v) => setOsInput(v as DeviceOs)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(
+                    [
+                      "ios",
+                      "android",
+                      "macos",
+                      "windows",
+                      "linux",
+                      "other",
+                    ] as DeviceOs[]
+                  ).map((o) => (
+                    <SelectItem key={o} value={o}>
+                      {o}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setRenameOpen(false)}
+              disabled={renameM.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => renameM.mutate()}
+              disabled={
+                renameM.isPending ||
+                nameInput.trim().length === 0 ||
+                nameInput.trim().length > 64 ||
+                (nameInput.trim() === d.name && osInput === d.os)
+              }
+            >
+              {renameM.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={clearKeyOpen}

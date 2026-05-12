@@ -226,6 +226,10 @@ async fn main() -> Result<()> {
                     axum::routing::delete(routes::me::delete_account),
                 )
                 .route(
+                    "/me/change-password",
+                    post(routes::me::change_password),
+                )
+                .route(
                     "/me/preferences",
                     get(routes::me::get_preferences).put(routes::me::set_preferences),
                 )

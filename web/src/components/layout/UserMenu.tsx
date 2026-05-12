@@ -4,8 +4,10 @@ import {
   IconShield,
   IconUser,
 } from "@tabler/icons-react"
+import { useState } from "react"
 import { Link } from "react-router"
 
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -21,13 +23,18 @@ import { useAuth } from "@/stores/auth"
 export function UserMenu() {
   const user = useAuth((s) => s.user)
   const reset = useAuth((s) => s.reset)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
 
   const handleLogout = async () => {
+    setSigningOut(true)
     try {
       await apiLogout()
     } catch {
       /* ignore network failure — UI must still drop session */
     }
+    setSigningOut(false)
+    setConfirmOpen(false)
     reset()
   }
 
@@ -36,6 +43,7 @@ export function UserMenu() {
   const initial = user.email[0]?.toUpperCase() ?? "?"
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
@@ -66,23 +74,41 @@ export function UserMenu() {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to="/app/account">
+          <Link to="/app/settings#account">
             <IconUser />
             Account
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to="/app/security">
+          <Link to="/app/settings#security">
             <IconShield />
             Security
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void handleLogout()}>
+        <DropdownMenuItem
+          onSelect={(e) => {
+            e.preventDefault()
+            setConfirmOpen(true)
+          }}
+        >
           <IconLogout />
           Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+
+    <ConfirmDialog
+      open={confirmOpen}
+      onOpenChange={setConfirmOpen}
+      title="Sign out?"
+      description="You'll need to sign in again to access your dashboard."
+      confirmLabel="Sign out"
+      cancelLabel="Stay signed in"
+      destructive
+      pending={signingOut}
+      onConfirm={() => void handleLogout()}
+    />
+    </>
   )
 }

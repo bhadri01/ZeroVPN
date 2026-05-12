@@ -4,8 +4,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { CopyableCode } from "@/components/CopyableCode"
-import { PageStagger, StaggerItem } from "@/components/motion"
-import { Kbd, PageHead, Panel, Pill } from "@/components/swiss"
+import { Kbd, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -14,27 +13,18 @@ import {
   InputOTPSlot,
 } from "@/components/ui/input-otp"
 import { Label } from "@/components/ui/label"
-import { ApiError, totpDisable, totpEnable, totpSetup } from "@/lib/api"
+import {
+  ApiError,
+  changePassword,
+  totpDisable,
+  totpEnable,
+  totpSetup,
+} from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
-export function SecurityPage() {
-  return (
-    <PageStagger>
-      <StaggerItem>
-        <PageHead
-          eyebrow="Account · 04"
-          title="Security"
-          sub="2FA · recovery codes · sessions"
-        />
-      </StaggerItem>
-      <SecuritySections />
-    </PageStagger>
-  )
-}
-
-/** Reusable security-management content (no page header). Embedded by
- *  the unified `/app/settings` page so the Security tab there shows the
- *  same UI without duplicating the markup. */
+/** Security-management content embedded by the unified `/app/settings`
+ *  page (Security tab). Owns TOTP enrollment, recovery-code download,
+ *  and the disable-2FA flow. */
 export function SecuritySections() {
   const user = useAuth((s) => s.user)
   const setUser = useAuth((s) => s.setUser)
@@ -199,12 +189,125 @@ export function SecuritySections() {
       </Panel>
 
       <Panel title="Password" sub="argon2id · m=64MB · t=3 · p=4">
-        <div className="flex gap-2">
-          <Button variant="outline" asChild>
-            <a href="/app/change-password">Change password</a>
-          </Button>
-        </div>
+        <ChangePasswordForm />
       </Panel>
+    </div>
+  )
+}
+
+function ChangePasswordForm() {
+  const [current, setCurrent] = useState("")
+  const [next, setNext] = useState("")
+  const [confirm, setConfirm] = useState("")
+
+  const m = useMutation({
+    mutationFn: () => changePassword(current, next),
+    onSuccess: () => {
+      setCurrent("")
+      setNext("")
+      setConfirm("")
+      toast.success("Password changed. Other sessions have been signed out.")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const tooShort = next.length > 0 && next.length < 12
+  const mismatch = confirm.length > 0 && next !== confirm
+  const sameAsCurrent =
+    current.length > 0 && next.length > 0 && current === next
+  const canSubmit =
+    !m.isPending &&
+    current.length > 0 &&
+    next.length >= 12 &&
+    next === confirm &&
+    current !== next
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!canSubmit) return
+    m.mutate()
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field
+          label="Current password"
+          id="cp-current"
+          value={current}
+          onChange={setCurrent}
+          autoComplete="current-password"
+        />
+        <div className="sm:col-span-1" />
+        <Field
+          label="New password"
+          id="cp-new"
+          value={next}
+          onChange={setNext}
+          autoComplete="new-password"
+          hint={tooShort ? "Minimum 12 characters" : undefined}
+          invalid={tooShort || sameAsCurrent}
+        />
+        <Field
+          label="Confirm new password"
+          id="cp-confirm"
+          value={confirm}
+          onChange={setConfirm}
+          autoComplete="new-password"
+          hint={mismatch ? "Passwords don't match" : undefined}
+          invalid={mismatch}
+        />
+      </div>
+      {sameAsCurrent && (
+        <p className="text-status-degraded font-mono text-[11px]">
+          New password must differ from your current one.
+        </p>
+      )}
+      <div>
+        <Button type="submit" disabled={!canSubmit}>
+          {m.isPending ? "Saving…" : "Change password"}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+function Field({
+  label,
+  id,
+  value,
+  onChange,
+  autoComplete,
+  hint,
+  invalid,
+}: {
+  label: string
+  id: string
+  value: string
+  onChange: (v: string) => void
+  autoComplete: string
+  hint?: string
+  invalid?: boolean
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Label htmlFor={id} className="text-xs">
+        {label}
+      </Label>
+      <Input
+        id={id}
+        type="password"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete={autoComplete}
+        aria-invalid={invalid || undefined}
+        className="font-mono"
+      />
+      {hint && (
+        <p className="text-status-degraded font-mono text-[11px]">{hint}</p>
+      )}
     </div>
   )
 }

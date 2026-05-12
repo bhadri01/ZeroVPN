@@ -226,6 +226,18 @@ export const resetPassword = (token: string, new_password: string) =>
     body: JSON.stringify({ token, new_password }),
   })
 
+/** Authenticated change-password. Used by the in-app Settings → Security
+ *  panel — keeps the current session alive while invalidating every
+ *  other session for this user. */
+export const changePassword = (
+  current_password: string,
+  new_password: string,
+) =>
+  apiFetch<{ status: string }>("/me/change-password", {
+    method: "POST",
+    body: JSON.stringify({ current_password, new_password }),
+  })
+
 /** Pre-flight check for a reset-password link. Lets the form surface
  *  an "expired" state before the user types a new password. `reason`
  *  distinguishes "invalid" (no such token — usually a stale link from a
@@ -275,6 +287,7 @@ export const patchDevice = (
   id: string,
   body: {
     name?: string
+    os?: DeviceOs
     allowed_ips_override?: string[] | null
     dns_override?: string[] | null
   },

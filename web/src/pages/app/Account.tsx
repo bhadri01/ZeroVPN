@@ -3,30 +3,14 @@ import { useNavigate } from "react-router"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { PageStagger, StaggerItem } from "@/components/motion"
-import { PageHead, Panel, Pill } from "@/components/swiss"
+import { Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { ApiError, deleteAccount } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
-export function AccountPage() {
-  return (
-    <PageStagger>
-      <StaggerItem>
-        <PageHead
-          eyebrow="Account · 06"
-          title="Account"
-          sub="profile · data · lifecycle"
-        />
-      </StaggerItem>
-      <AccountSections />
-    </PageStagger>
-  )
-}
-
-/** Reusable account-management content (no page header). Embedded by
- *  the unified `/app/settings` page so the Account tab there shows the
- *  same UI without duplicating the markup. */
+/** Account-management content embedded by the unified `/app/settings`
+ *  page (Account tab). Owns the profile readout, data-export panel, and
+ *  the account-deletion lifecycle. */
 export function AccountSections() {
   const navigate = useNavigate()
   const reset = useAuth((s) => s.reset)

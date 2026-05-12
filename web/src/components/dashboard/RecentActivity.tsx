@@ -115,9 +115,16 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
   })
 
   const tail = useEventTail((s) => s.lines)
+  // For regular users, the tail also carries server-level signals
+  // (`server_health` for the sidebar, `server_sample` for admins) that
+  // aren't *their* activity. Drop those before slicing so the panel
+  // only reflects events tied to the viewer's own devices.
+  const userTail = tail.filter(
+    (l) => l.kind !== "server_health" && l.kind !== "server_sample",
+  )
   const items: ActivityItem[] = isAdmin
     ? (auditQ.data?.items ?? []).map(auditToItem)
-    : tail.slice(-limit).reverse().map(tailToItem)
+    : userTail.slice(-limit).reverse().map(tailToItem)
 
   if (isAdmin && auditQ.isLoading) {
     return (

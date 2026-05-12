@@ -17,6 +17,36 @@ pub async fn find_by_email(pool: &PgPool, email: &str) -> sqlx::Result<Option<Us
     .await
 }
 
+/// Fetch just the password hash for a user. Used by the authenticated
+/// change-password flow which needs to verify the current password
+/// against the stored hash without pulling the rest of the secrets row.
+pub async fn find_password_hash(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<String>> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.0))
+}
+
+/// Fetch the live `password_changed_at` watermark. Used right after
+/// `update_password` so the caller can refresh the current session's
+/// snapshot (otherwise the bump made by `update_password` invalidates
+/// the request's own session on the next hop).
+pub async fn find_password_changed_at(
+    pool: &PgPool,
+    id: Uuid,
+) -> sqlx::Result<Option<OffsetDateTime>> {
+    let row: Option<(OffsetDateTime,)> = sqlx::query_as(
+        "SELECT password_changed_at FROM users WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.0))
+}
+
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<User>> {
     sqlx::query_as::<_, User>(
         r#"SELECT id, email::TEXT AS email, role, status, must_change_password,

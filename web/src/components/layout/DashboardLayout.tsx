@@ -9,13 +9,13 @@ import {
 import { CommandPalette } from "@/components/CommandPalette"
 import { AppSidebar } from "@/components/layout/AppSidebar"
 import { LiveStatsProvider } from "@/components/layout/LiveStatsProvider"
+import { RouteSkeleton } from "@/components/layout/RouteSkeletons"
 import { TopBar } from "@/components/layout/TopBar"
 import { MaintenanceBanner } from "@/components/MaintenanceBanner"
 import {
   SidebarInset,
   SidebarProvider,
 } from "@/components/ui/sidebar"
-import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useReducedMotion } from "@/lib/motion"
 
@@ -52,9 +52,13 @@ export function DashboardLayout() {
                 was previously interacting badly with React Suspense for
                 lazy-loaded routes (the page would stay at initial:0
                 opacity and look "empty" until a hard refresh). The inner
-                PageStagger handles the per-section cascade. */}
+                PageStagger handles the per-section cascade.
+
+                Suspense fallback is path-aware via <RouteSkeleton> so
+                each page's loading state mirrors its actual layout — no
+                jump when the lazy chunk resolves. */}
             <PageMount key={location.pathname}>
-              <Suspense fallback={<RoutePending />}>
+              <Suspense fallback={<RouteSkeleton pathname={location.pathname} />}>
                 <Outlet />
               </Suspense>
             </PageMount>
@@ -83,23 +87,5 @@ function PageMount({ children }: { children: React.ReactNode }) {
     >
       {children}
     </motion.div>
-  )
-}
-
-function RoutePending() {
-  return (
-    <div className="flex flex-col gap-6">
-      <Skeleton className="h-8 w-48 rounded-none" />
-      <div className="zv-kpi-strip">
-        {[0, 1, 2, 3].map((i) => (
-          <div className="zv-kpi" key={i}>
-            <Skeleton className="h-3 w-20 rounded-none" />
-            <Skeleton className="h-7 w-24 rounded-none" />
-            <Skeleton className="h-[26px] w-full rounded-none" />
-          </div>
-        ))}
-      </div>
-      <Skeleton className="h-64 rounded-none" />
-    </div>
   )
 }
