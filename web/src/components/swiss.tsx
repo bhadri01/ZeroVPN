@@ -1,5 +1,6 @@
 import * as React from "react"
 
+import { WithTooltip } from "@/components/ui/with-tooltip"
 import { cn } from "@/lib/utils"
 
 /* ── Logomark / Wordmark ───────────────────────────────────────────────
@@ -421,24 +422,28 @@ export function IconBtn({
   title,
   type = "button",
   className,
+  disabled,
 }: {
   children: React.ReactNode
   onClick?: React.MouseEventHandler<HTMLButtonElement>
   title?: string
   type?: "button" | "submit" | "reset"
   className?: string
+  disabled?: boolean
 }) {
-  return (
+  const btn = (
     <button
       type={type}
       className={cn("zv-icon-btn", className)}
       onClick={onClick}
-      title={title}
       aria-label={title}
+      disabled={disabled}
     >
       {children}
     </button>
   )
+  if (!title) return btn
+  return <WithTooltip label={title}>{btn}</WithTooltip>
 }
 
 /* ── LiveDot ───────────────────────────────────────────────────────────

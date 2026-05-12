@@ -70,6 +70,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
+import { WithTooltip } from "@/components/ui/with-tooltip"
 import { useBreadcrumbOverride } from "@/hooks/useBreadcrumbOverride"
 import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import {
@@ -1141,26 +1142,27 @@ function CopyIcon({ value, title }: { value: string; title?: string }) {
     return () => clearTimeout(t)
   }, [copied])
   return (
-    <button
-      type="button"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(value)
-          setCopied(true)
-        } catch {
-          toast.error("Failed to copy")
-        }
-      }}
-      title={title ?? "Copy"}
-      className="text-muted-foreground hover:text-foreground border-border hover:border-foreground/40 flex size-6 shrink-0 items-center justify-center border transition-colors"
-      aria-label={title ?? "Copy value"}
-    >
-      {copied ? (
-        <IconCheck size={12} className="text-status-online" />
-      ) : (
-        <IconCopy size={12} />
-      )}
-    </button>
+    <WithTooltip label={copied ? "Copied" : (title ?? "Copy")}>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(value)
+            setCopied(true)
+          } catch {
+            toast.error("Failed to copy")
+          }
+        }}
+        className="text-muted-foreground hover:text-foreground border-border hover:border-foreground/40 flex size-6 shrink-0 items-center justify-center border transition-colors"
+        aria-label={title ?? "Copy value"}
+      >
+        {copied ? (
+          <IconCheck size={12} className="text-status-online" />
+        ) : (
+          <IconCopy size={12} />
+        )}
+      </button>
+    </WithTooltip>
   )
 }
 
@@ -1229,16 +1231,17 @@ function DnsNameChip({
         {value}
       </span>
       <CopyIcon value={value} />
-      <button
-        type="button"
-        onClick={onRemove}
-        disabled={pending}
-        className="text-muted-foreground hover:text-destructive hover:border-destructive border-border flex size-6 shrink-0 items-center justify-center border transition-colors"
-        aria-label={`Remove ${value}`}
-        title="Remove"
-      >
-        <IconX size={12} />
-      </button>
+      <WithTooltip label={`Remove ${value}`}>
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={pending}
+          className="text-muted-foreground hover:text-destructive hover:border-destructive border-border flex size-6 shrink-0 items-center justify-center border transition-colors"
+          aria-label={`Remove ${value}`}
+        >
+          <IconX size={12} />
+        </button>
+      </WithTooltip>
     </div>
   )
 }

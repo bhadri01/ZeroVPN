@@ -18,6 +18,7 @@ import { type Status as PillStatus } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { WithTooltip } from "@/components/ui/with-tooltip"
 import { listDevices } from "@/lib/api"
 import {
   connState,
@@ -217,14 +218,16 @@ export function FinderPage() {
                 autoFocus
               />
               {queryInput && (
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground absolute right-2 top-1/2 -translate-y-1/2"
-                  onClick={() => setQueryInput("")}
-                  aria-label="Clear"
-                >
-                  <IconX size={14} />
-                </button>
+                <WithTooltip label="Clear search">
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground absolute right-2 top-1/2 -translate-y-1/2"
+                    onClick={() => setQueryInput("")}
+                    aria-label="Clear"
+                  >
+                    <IconX size={14} />
+                  </button>
+                </WithTooltip>
               )}
             </div>
             {parsed.kind === "ips" && parsed.invalid.length > 0 && (

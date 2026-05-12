@@ -4,6 +4,7 @@ import { Outlet, useLocation } from "react-router"
 
 import { AuthSkeleton } from "@/components/layout/AuthShell"
 import { Skeleton } from "@/components/ui/skeleton"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { useReducedMotion } from "@/lib/motion"
 
 /** Swiss public shell. Flat paper background — auth & landing pages
@@ -22,13 +23,15 @@ export function PublicShell() {
   const location = useLocation()
 
   return (
-    <div className="bg-background text-foreground relative min-h-svh">
-      <PageMount key={location.pathname}>
-        <Suspense fallback={<PublicFallback pathname={location.pathname} />}>
-          <Outlet />
-        </Suspense>
-      </PageMount>
-    </div>
+    <TooltipProvider delayDuration={250}>
+      <div className="bg-background text-foreground relative min-h-svh">
+        <PageMount key={location.pathname}>
+          <Suspense fallback={<PublicFallback pathname={location.pathname} />}>
+            <Outlet />
+          </Suspense>
+        </PageMount>
+      </div>
+    </TooltipProvider>
   )
 }
 

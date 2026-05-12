@@ -5,6 +5,7 @@ import { Link } from "react-router"
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
 import { RelativeTime } from "@/components/RelativeTime"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
+import { WithTooltip } from "@/components/ui/with-tooltip"
 import type { PublicDevice } from "@/lib/api"
 import { connState, peerState } from "@/lib/deviceState"
 import { compactBytes, formatBps } from "@/lib/units"
@@ -122,13 +123,15 @@ export function DeviceCard({
           <StatusPill status={rowPill(d)} />
           {actions}
           {showOpenLink && !actions && (
-            <Link
-              to={`/app/devices/${d.id}`}
-              aria-label="Open device"
-              className="text-muted-foreground hover:text-foreground -mr-1 p-1 transition-colors"
-            >
-              <IconExternalLink className="size-3.5" />
-            </Link>
+            <WithTooltip label="Open device">
+              <Link
+                to={`/app/devices/${d.id}`}
+                aria-label="Open device"
+                className="text-muted-foreground hover:text-foreground -mr-1 p-1 transition-colors"
+              >
+                <IconExternalLink className="size-3.5" />
+              </Link>
+            </WithTooltip>
           )}
         </div>
       </div>

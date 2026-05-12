@@ -32,6 +32,7 @@ import {
 } from "@/components/swiss"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
+import { WithTooltip } from "@/components/ui/with-tooltip"
 import {
   Dialog,
   DialogClose,
@@ -418,14 +419,16 @@ export function DevicesPage() {
                 className="h-7 w-48 pl-6 font-mono text-xs"
               />
               {query && (
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground absolute right-1 top-1/2 -translate-y-1/2"
-                  onClick={() => setQuery("")}
-                  aria-label="Clear filter"
-                >
-                  <IconX size={12} />
-                </button>
+                <WithTooltip label="Clear filter">
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground absolute right-1 top-1/2 -translate-y-1/2"
+                    onClick={() => setQuery("")}
+                    aria-label="Clear filter"
+                  >
+                    <IconX size={12} />
+                  </button>
+                </WithTooltip>
               )}
             </div>
           </>
@@ -1018,17 +1021,18 @@ function ViewModeButton({
   children: React.ReactNode
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      aria-label={label}
-      title={label}
-      data-active={active ? "1" : "0"}
-      className="text-muted-foreground hover:text-foreground data-[active=1]:bg-muted/60 data-[active=1]:text-foreground inline-flex w-7 items-center justify-center transition-colors first:border-r first:border-border"
-    >
-      {children}
-    </button>
+    <WithTooltip label={label}>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={active}
+        aria-label={label}
+        data-active={active ? "1" : "0"}
+        className="text-muted-foreground hover:text-foreground data-[active=1]:bg-muted/60 data-[active=1]:text-foreground inline-flex w-7 items-center justify-center transition-colors first:border-r first:border-border"
+      >
+        {children}
+      </button>
+    </WithTooltip>
   )
 }
 

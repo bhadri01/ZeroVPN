@@ -20,6 +20,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
+import { WithTooltip } from "@/components/ui/with-tooltip"
 import { usePageVisible } from "@/hooks/usePageVisible"
 import {
   getMyTopology,
@@ -732,52 +733,61 @@ export function LiveTopology({
           so the canvas stays uncluttered. Reset clears node-drag overrides
           too, so users can always undo a layout they don't like. */}
       <div className="absolute bottom-2 right-2 flex flex-col gap-1">
-        <button
-          type="button"
-          aria-label={isFullscreen ? "Exit fullscreen" : "Open fullscreen"}
-          title={isFullscreen ? "Exit fullscreen" : "Open fullscreen"}
-          className="zv-icon-btn bg-card"
-          onClick={toggleFullscreen}
+        <WithTooltip
+          side="left"
+          label={isFullscreen ? "Exit fullscreen" : "Open fullscreen"}
         >
-          {isFullscreen ? (
-            <IconArrowsMinimize size={14} />
-          ) : (
-            <IconArrowsMaximize size={14} />
-          )}
-        </button>
-        <button
-          type="button"
-          aria-label="Zoom in"
-          className="zv-icon-btn bg-card"
-          onClick={() => zoom(1.25)}
-          disabled={view.scale >= MAX_SCALE}
-        >
-          <IconPlus size={14} />
-        </button>
-        <button
-          type="button"
-          aria-label="Zoom out"
-          className="zv-icon-btn bg-card"
-          onClick={() => zoom(0.8)}
-          disabled={view.scale <= MIN_SCALE}
-        >
-          <IconMinus size={14} />
-        </button>
-        <button
-          type="button"
-          aria-label="Reset view"
-          title="Reset view + clear node positions"
-          className="zv-icon-btn bg-card"
-          onClick={resetView}
-          disabled={
-            view.tx === 0 &&
-            view.ty === 0 &&
-            view.scale === 1 &&
-            nodePositions.size === 0
-          }
-        >
-          <IconFocusCentered size={14} />
-        </button>
+          <button
+            type="button"
+            aria-label={isFullscreen ? "Exit fullscreen" : "Open fullscreen"}
+            className="zv-icon-btn bg-card"
+            onClick={toggleFullscreen}
+          >
+            {isFullscreen ? (
+              <IconArrowsMinimize size={14} />
+            ) : (
+              <IconArrowsMaximize size={14} />
+            )}
+          </button>
+        </WithTooltip>
+        <WithTooltip side="left" label="Zoom in">
+          <button
+            type="button"
+            aria-label="Zoom in"
+            className="zv-icon-btn bg-card"
+            onClick={() => zoom(1.25)}
+            disabled={view.scale >= MAX_SCALE}
+          >
+            <IconPlus size={14} />
+          </button>
+        </WithTooltip>
+        <WithTooltip side="left" label="Zoom out">
+          <button
+            type="button"
+            aria-label="Zoom out"
+            className="zv-icon-btn bg-card"
+            onClick={() => zoom(0.8)}
+            disabled={view.scale <= MIN_SCALE}
+          >
+            <IconMinus size={14} />
+          </button>
+        </WithTooltip>
+        <WithTooltip side="left" label="Reset view + clear node positions">
+          <button
+            type="button"
+            aria-label="Reset view"
+            className="zv-icon-btn bg-card"
+            onClick={resetView}
+            disabled={
+              view.tx === 0 &&
+              view.ty === 0 &&
+              view.scale === 1 &&
+              nodePositions.size === 0
+            }
+          >
+            <IconFocusCentered size={14} />
+          </button>
+        </WithTooltip>
       </div>
     </div>
   )

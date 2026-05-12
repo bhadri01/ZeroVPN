@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
+import { WithTooltip } from "@/components/ui/with-tooltip"
 import {
   ApiError,
   resetPassword,
@@ -175,15 +176,19 @@ export function ResetPasswordPage() {
                   className="pr-9"
                   aria-invalid={pwTooShort || pwTooLong}
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPw((v) => !v)}
-                  aria-label={showPw ? "Hide password" : "Show password"}
-                  className="text-muted-foreground hover:text-foreground absolute right-2 top-1/2 -translate-y-1/2 transition-colors"
-                  tabIndex={-1}
+                <WithTooltip
+                  label={showPw ? "Hide password" : "Show password"}
                 >
-                  {showPw ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((v) => !v)}
+                    aria-label={showPw ? "Hide password" : "Show password"}
+                    className="text-muted-foreground hover:text-foreground absolute right-2 top-1/2 -translate-y-1/2 transition-colors"
+                    tabIndex={-1}
+                  >
+                    {showPw ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                  </button>
+                </WithTooltip>
               </div>
               <p
                 className={`font-mono text-[11px] ${pwTooShort || pwTooLong ? "text-destructive" : "text-muted-foreground"}`}

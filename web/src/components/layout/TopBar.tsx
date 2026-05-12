@@ -5,6 +5,7 @@ import { Link, useMatches, useNavigate } from "react-router"
 import { UserMenu } from "@/components/layout/UserMenu"
 import { ModeToggle } from "@/components/mode-toggle"
 import { Kbd, LiveDot } from "@/components/swiss"
+import { WithTooltip } from "@/components/ui/with-tooltip"
 import { useBreadcrumbStore } from "@/stores/breadcrumb"
 
 type Crumb = { to?: string; label: string }
@@ -118,30 +119,33 @@ function BackButton({ parentTo }: { parentTo?: string }) {
   const navigate = useNavigate()
   if (!parentTo) return null
   return (
-    <button
-      type="button"
-      onClick={() => navigate(parentTo)}
-      aria-label="Back to parent"
-      title="Back"
-      className="text-muted-foreground hover:text-foreground border-border hover:border-foreground inline-flex size-7 shrink-0 items-center justify-center border transition-colors"
-    >
-      <IconArrowLeft className="size-3.5" />
-    </button>
+    <WithTooltip label="Back to parent" side="bottom">
+      <button
+        type="button"
+        onClick={() => navigate(parentTo)}
+        aria-label="Back to parent"
+        className="text-muted-foreground hover:text-foreground border-border hover:border-foreground inline-flex size-7 shrink-0 items-center justify-center border transition-colors"
+      >
+        <IconArrowLeft className="size-3.5" />
+      </button>
+    </WithTooltip>
   )
 }
 
 function SearchTrigger({ onClick }: { onClick?: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="text-muted-foreground border-border bg-background hover:border-foreground focus-visible:ring-ring focus-visible:border-foreground flex h-7 w-44 items-center gap-2 border px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 md:w-64"
-      aria-label="Open search"
-    >
-      <IconSearch className="size-3.5 shrink-0" />
-      <span className="flex-1 text-left">Search · jump…</span>
-      <Kbd className="hidden md:inline-flex">⌘K</Kbd>
-    </button>
+    <WithTooltip label="Search · jump (⌘K)" side="bottom">
+      <button
+        type="button"
+        onClick={onClick}
+        className="text-muted-foreground border-border bg-background hover:border-foreground focus-visible:ring-ring focus-visible:border-foreground flex h-7 w-44 items-center gap-2 border px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 md:w-64"
+        aria-label="Open search"
+      >
+        <IconSearch className="size-3.5 shrink-0" />
+        <span className="flex-1 text-left">Search · jump…</span>
+        <Kbd className="hidden md:inline-flex">⌘K</Kbd>
+      </button>
+    </WithTooltip>
   )
 }
 
