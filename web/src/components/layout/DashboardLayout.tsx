@@ -1,4 +1,4 @@
-import { AnimatePresence, motion } from "motion/react"
+import { motion } from "motion/react"
 import { Suspense, useState } from "react"
 import {
   Outlet,
@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { pageVariants, useReducedMotion } from "@/lib/motion"
+import { useReducedMotion } from "@/lib/motion"
 
 /**
  * Reads the persisted sidebar collapse state from cookie. The shadcn
@@ -32,7 +32,6 @@ function readSidebarCookie(): boolean {
 }
 
 export function DashboardLayout() {
-  const reduceMotion = useReducedMotion()
   const location = useLocation()
   const [paletteOpen, setPaletteOpen] = useState(false)
   const sidebarOpen = readSidebarCookie()
@@ -47,20 +46,18 @@ export function DashboardLayout() {
           <MaintenanceBanner />
           <ScrollRestoration />
           <main className="relative flex-1">
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div
-                key={location.pathname}
-                initial={reduceMotion ? false : "initial"}
-                animate="animate"
-                exit="exit"
-                variants={reduceMotion ? undefined : pageVariants}
-                className="flex flex-col gap-6 px-6 py-6"
-              >
-                <Suspense fallback={<RoutePending />}>
-                  <Outlet />
-                </Suspense>
-              </motion.div>
-            </AnimatePresence>
+            {/* Route-level entry. Keyed on pathname so each navigation
+                remounts (and re-fires the entry animation). Plain mount
+                animation — no AnimatePresence, no `mode="wait"` — which
+                was previously interacting badly with React Suspense for
+                lazy-loaded routes (the page would stay at initial:0
+                opacity and look "empty" until a hard refresh). The inner
+                PageStagger handles the per-section cascade. */}
+            <PageMount key={location.pathname}>
+              <Suspense fallback={<RoutePending />}>
+                <Outlet />
+              </Suspense>
+            </PageMount>
           </main>
         </SidebarInset>
         <CommandPalette
@@ -69,6 +66,23 @@ export function DashboardLayout() {
         />
       </SidebarProvider>
     </TooltipProvider>
+  )
+}
+
+function PageMount({ children }: { children: React.ReactNode }) {
+  const reduce = useReducedMotion()
+  if (reduce) {
+    return <div className="flex flex-col gap-6 px-6 py-6">{children}</div>
+  }
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+      className="flex flex-col gap-6 px-6 py-6"
+    >
+      {children}
+    </motion.div>
   )
 }
 

@@ -1,4 +1,4 @@
--- Migration 8: per-user UI preferences.
+-- Migration 12: per-user UI preferences.
 --
 -- Backs the settings page's Preferences / Notifications / Appearance
 -- (server-persisted) sections so a user's choices sync across every

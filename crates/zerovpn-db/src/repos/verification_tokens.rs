@@ -58,6 +58,21 @@ pub async fn find_active(pool: &PgPool, token_hash: &str) -> sqlx::Result<Option
     .await
 }
 
+/// Look up a token by hash regardless of expiry/consumed state. Used by the
+/// pre-flight verify endpoint so the frontend can tell the user *why* a
+/// link doesn't work (used vs. expired vs. unknown), rather than collapsing
+/// all three into "expired".
+pub async fn find_by_hash(pool: &PgPool, token_hash: &str) -> sqlx::Result<Option<VerificationToken>> {
+    sqlx::query_as::<_, VerificationToken>(
+        r#"SELECT id, user_id, purpose, expires_at, consumed_at
+             FROM verification_tokens
+            WHERE token_hash = $1"#,
+    )
+    .bind(token_hash)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn consume(pool: &PgPool, id: Uuid) -> sqlx::Result<u64> {
     let res = sqlx::query("UPDATE verification_tokens SET consumed_at = NOW() WHERE id = $1")
         .bind(id)

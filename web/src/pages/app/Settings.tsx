@@ -16,6 +16,7 @@ import { toast } from "sonner"
 import { FadeIn, PageStagger, StaggerItem } from "@/components/motion"
 import { useTheme, type Accent } from "@/components/theme-provider"
 import { Eyebrow, PageHead, Panel, Seg } from "@/components/swiss"
+import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -29,6 +30,7 @@ import {
   type UnitsPref,
   type UserPreferences,
 } from "@/lib/api"
+import { notify } from "@/lib/notify"
 import { AccountSections } from "@/pages/app/Account"
 import { SecuritySections } from "@/pages/app/Security"
 
@@ -437,6 +439,28 @@ function NotificationsSection() {
           }}
           id="pref-browser-notifications"
         />
+      </Panel>
+
+      <Panel title="Test" sub="Fires a sample notification with your current settings">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              notify.info("Test notification", {
+                description: "Position, chime, and browser alert reflect your settings.",
+                important: true,
+                id: "settings-test",
+              })
+            }
+          >
+            Send test
+          </Button>
+          <p className="text-muted-foreground font-mono text-[11px] self-center">
+            Hide this tab before clicking to see a browser-level alert.
+          </p>
+        </div>
       </Panel>
     </div>
   )

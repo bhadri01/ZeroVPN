@@ -233,35 +233,43 @@ pub struct VerifyResetTokenResponse {
 
 /// Pre-flight check for a reset-password link. Lets the frontend show an
 /// "expired link" state up front instead of letting the user type a new
-/// password and then surfacing the failure at submit-time. Mirrors the
-/// validation in `reset_password` exactly so a valid response here
-/// guarantees `reset_password` will accept the same token within the
-/// remaining TTL.
+/// password and then surfacing the failure at submit-time.
+///
+/// We deliberately look up by hash WITHOUT the active-window filter so we
+/// can tell the user *why* a link doesn't work — "used" (likely a stale
+/// link from before they requested a newer one), "expired" (actually past
+/// TTL), or "invalid" (hash not in DB at all, e.g. mangled URL or token
+/// from a DB that's since been reset). Reporting all three as "expired"
+/// made it impossible to distinguish a real expiry from "you clicked the
+/// older of two emails", which is a very easy mistake to make.
 pub async fn verify_reset_token(
     State(state): State<AppState>,
     Json(body): Json<VerifyResetTokenBody>,
 ) -> ApiResult<impl IntoResponse> {
     if body.validate().is_err() {
+        info!("verify_reset_token: malformed token in request body");
         return Ok(Json(VerifyResetTokenResponse {
             valid: false,
             reason: Some("invalid"),
         }));
     }
     let hash = hash_token(&body.token);
-    let token = verification_tokens::find_active(&state.pool, &hash).await?;
-    match token {
-        Some(t) if t.purpose == TokenPurpose::PasswordReset => Ok(Json(
-            VerifyResetTokenResponse { valid: true, reason: None },
-        )),
-        Some(_) => Ok(Json(VerifyResetTokenResponse {
-            valid: false,
-            reason: Some("wrong_purpose"),
-        })),
-        None => Ok(Json(VerifyResetTokenResponse {
-            valid: false,
-            reason: Some("expired"),
-        })),
+    let row = verification_tokens::find_by_hash(&state.pool, &hash).await?;
+    let now = time::OffsetDateTime::now_utc();
+    let (valid, reason) = match row {
+        None => (false, Some("invalid")),
+        Some(t) if t.purpose != TokenPurpose::PasswordReset => (false, Some("wrong_purpose")),
+        Some(t) if t.consumed_at.is_some() => (false, Some("used")),
+        Some(t) if t.expires_at <= now => (false, Some("expired")),
+        Some(_) => (true, None),
+    };
+    if !valid {
+        info!(
+            reason = ?reason,
+            "verify_reset_token: rejecting link",
+        );
     }
+    Ok(Json(VerifyResetTokenResponse { valid, reason }))
 }
 
 pub async fn reset_password(

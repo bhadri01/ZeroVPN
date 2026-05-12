@@ -1,7 +1,13 @@
 import { AnimatePresence, motion, type Variants } from "motion/react"
-import { Children, isValidElement, type ReactNode } from "react"
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react"
 
-import { cardVariants, stagger, useReducedMotion } from "@/lib/motion"
+import { cardVariants, useReducedMotion } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 /**
@@ -9,23 +15,19 @@ import { cn } from "@/lib/utils"
  * boilerplate. Built around `lib/motion.ts` — keeps `.ts` pure (variants
  * + timing) and `.tsx` for components that render motion nodes.
  *
- * - <PageStagger> wraps a page's top-level container. Stages children in
- *   with the small `cardVariants` y-offset + opacity, staggered by 40 ms.
- *   Mirror `<div className="flex flex-col gap-6">` semantics — drop-in.
- * - <StaggerItem> is the child variant. Wrap any block (Panel, KpiStrip,
- *   etc.) that you want to slide in as part of the cascade.
- * - <FadeIn> is a single-shot fade for content that's not part of a
- *   cascade (e.g. a "no results" state after a search).
+ * Design note on stagger:
+ *   We don't use motion's `staggerChildren` + variant inheritance for the
+ *   page-level cascade — that pattern is fragile under React Router +
+ *   Suspense + AnimatePresence (the child can mount while the parent is
+ *   already past its entry transition, and end up stuck at `initial`,
+ *   leaving the page blank until a hard refresh).
  *
- * All three honor `prefers-reduced-motion` — when on, the wrappers render
- * a plain div with no animation rather than fighting the user's setting.
+ *   Instead, <PageStagger> uses cloneElement to inject an incrementing
+ *   `_staggerIndex` prop into each direct child, and <StaggerItem> is
+ *   fully self-driven: it sets its own initial/animate/exit with a
+ *   `delay` derived from that index. This is robust under any router /
+ *   suspense ordering.
  */
-
-const parentVariants: Variants = {
-  initial: {},
-  animate: { transition: stagger(0.045) },
-  exit: { transition: stagger(0.03) },
-}
 
 interface PageStaggerProps {
   children: ReactNode
@@ -40,19 +42,32 @@ export function PageStagger({
   gap = "gap-6",
 }: PageStaggerProps) {
   const reduce = useReducedMotion()
+  const items = Children.toArray(children).filter(isValidElement)
   if (reduce) {
-    return <div className={cn("flex flex-col", gap, className)}>{children}</div>
+    return (
+      <div className={cn("flex flex-col", gap, className)}>{items}</div>
+    )
   }
+  // Walk direct children and clone any that accept _staggerIndex (i.e.
+  // StaggerItem). Non-StaggerItem children are passed through untouched —
+  // dialogs, AnimatePresence wrappers, fragments, etc. all still render
+  // normally because cloneElement only adds the prop, it doesn't trigger
+  // re-rendering with new behavior on components that ignore it.
+  let stagger = 0
   return (
-    <motion.div
-      initial="initial"
-      animate="animate"
-      exit="exit"
-      variants={parentVariants}
-      className={cn("flex flex-col", gap, className)}
-    >
-      {children}
-    </motion.div>
+    <div className={cn("flex flex-col", gap, className)}>
+      {items.map((child) => {
+        if (!isValidElement(child)) return child
+        if (child.type === StaggerItem) {
+          const idx = stagger++
+          return cloneElement(
+            child as ReactElement<StaggerItemInternalProps>,
+            { _staggerIndex: idx },
+          )
+        }
+        return child
+      })}
+    </div>
   )
 }
 
@@ -61,13 +76,37 @@ interface StaggerItemProps {
   className?: string
 }
 
-export function StaggerItem({ children, className }: StaggerItemProps) {
+interface StaggerItemInternalProps extends StaggerItemProps {
+  /** Auto-injected by <PageStagger> — do not set manually. */
+  _staggerIndex?: number
+}
+
+export function StaggerItem({
+  children,
+  className,
+  _staggerIndex = 0,
+}: StaggerItemInternalProps) {
   const reduce = useReducedMotion()
   if (reduce) {
     return className ? <div className={className}>{children}</div> : <>{children}</>
   }
+  // Self-driven entry: no reliance on parent variant inheritance, so the
+  // page always renders even if the AnimatePresence + Suspense ordering
+  // skips the parent's `animate` transition.
   return (
-    <motion.div variants={cardVariants} className={className}>
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -2 }}
+      transition={{
+        duration: 0.18,
+        ease: [0.16, 1, 0.3, 1],
+        // Cap the delay so a 12-item page doesn't have items still
+        // waiting half a second in — feels sluggish past ~6 items.
+        delay: Math.min(0.32, 0.02 + _staggerIndex * 0.045),
+      }}
+      className={className}
+    >
       {children}
     </motion.div>
   )
@@ -109,6 +148,8 @@ export function FadeIn({
  * `props.key`. Children without a key are still animated but won't
  * benefit from AnimatePresence's exit choreography.
  */
+const listChildVariants: Variants = cardVariants
+
 export function AnimatedList({
   children,
   className,
@@ -130,7 +171,7 @@ export function AnimatedList({
           <motion.div
             key={(child.key as string) ?? `item-${i}`}
             layout
-            variants={cardVariants}
+            variants={listChildVariants}
             initial="initial"
             animate="animate"
             exit="exit"

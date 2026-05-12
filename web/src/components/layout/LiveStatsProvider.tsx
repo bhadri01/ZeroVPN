@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef } from "react"
 
 import { isPageVisible } from "@/hooks/usePageVisible"
 import { useWebSocket } from "@/hooks/useWebSocket"
+import type { PublicDevice } from "@/lib/api"
+import { notify } from "@/lib/notify"
 import type { Event } from "@/lib/wire"
 import { useEventTail } from "@/stores/eventTail"
 import { useLiveStats } from "@/stores/liveStats"
@@ -73,13 +75,34 @@ export function LiveStatsProvider() {
             skippedWhileHiddenRef.current = true
           }
           break
-        case "peer_status_changed":
+        case "peer_status_changed": {
           // Status flips are rare AND structural — always apply, the cost
           // is a single query invalidation. Lets `/devices` repaint
           // immediately when the tab comes back to find a paused peer.
+          const cached = qc.getQueryData<PublicDevice[]>(["devices"])
+          const dev = cached?.find((d) => d.id === event.device_id)
+          const label = dev?.name ?? "A device"
+          if (event.status === "revoked") {
+            notify.error(`${label} was revoked`, {
+              description: "All sessions for this device have been ended.",
+              important: true,
+              id: `dev-${event.device_id}-revoked`,
+            })
+          } else if (event.status === "paused") {
+            notify.warning(`${label} was paused`, {
+              description: "Reconnect from the device settings when ready.",
+              important: true,
+              id: `dev-${event.device_id}-paused`,
+            })
+          } else if (event.status === "active" && dev && dev.status !== "active") {
+            notify.success(`${label} is active again`, {
+              id: `dev-${event.device_id}-active`,
+            })
+          }
           void qc.invalidateQueries({ queryKey: ["devices"] })
           void qc.invalidateQueries({ queryKey: ["device", event.device_id] })
           break
+        }
         case "handshake_change":
           if (visible) {
             void qc.invalidateQueries({ queryKey: ["device", event.device_id] })

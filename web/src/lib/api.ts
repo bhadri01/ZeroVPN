@@ -228,11 +228,13 @@ export const resetPassword = (token: string, new_password: string) =>
 
 /** Pre-flight check for a reset-password link. Lets the form surface
  *  an "expired" state before the user types a new password. `reason`
- *  is one of "invalid" | "wrong_purpose" | "expired" when `valid` is
- *  false, otherwise omitted. */
+ *  distinguishes "invalid" (no such token — usually a stale link from a
+ *  reset DB or a mangled URL), "used" (consumed, typically because the
+ *  user requested a newer reset email after this one), "expired" (past
+ *  TTL), or "wrong_purpose". Omitted when valid. */
 export interface ResetTokenCheck {
   valid: boolean
-  reason?: "invalid" | "wrong_purpose" | "expired"
+  reason?: "invalid" | "used" | "wrong_purpose" | "expired"
 }
 export const verifyResetToken = (token: string) =>
   apiFetch<ResetTokenCheck>("/auth/verify-reset-token", {

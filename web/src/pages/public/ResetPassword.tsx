@@ -269,10 +269,15 @@ function reasonCopy(reason: ResetTokenCheck["reason"] | undefined): {
         title: "This reset link has expired.",
         body: "Reset links are good for 1 hour. Request a fresh one to continue.",
       }
+    case "used":
+      return {
+        title: "This reset link is no longer active.",
+        body: "It's either already been used, or you requested a newer reset email after this one — only the most recent link works. Check your inbox for the latest email, or request a fresh one.",
+      }
     case "invalid":
       return {
-        title: "This reset link is malformed.",
-        body: "The token in the URL doesn't look right. Try copying the link again from the email, or request a fresh one.",
+        title: "This reset link isn't recognized.",
+        body: "The token in the URL doesn't match anything on our side — it may have been mangled by your email client, or it's from a different environment. Try copying the link again from the email, or request a fresh one.",
       }
     case "wrong_purpose":
       return {

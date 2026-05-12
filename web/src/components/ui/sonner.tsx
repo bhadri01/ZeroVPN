@@ -5,17 +5,45 @@ import {
   IconInfoCircle,
   IconLoader,
 } from "@tabler/icons-react"
+import { useQuery } from "@tanstack/react-query"
+import { useEffect } from "react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
 import { useTheme } from "@/components/theme-provider"
+import { getMyPreferences } from "@/lib/api"
+import { setNotifyConfig } from "@/lib/notify"
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { resolvedTheme } = useTheme()
 
+  // Reflect the user's saved notification preferences into the global
+  // toaster (position) and the notify() helper (sound, browser alerts).
+  // Logged-out visitors get a single 401 which we don't retry — defaults
+  // apply until a session is established. `staleTime` keeps Settings-page
+  // mutations live without a manual invalidation, since that mutation
+  // writes the same query key.
+  const prefsQ = useQuery({
+    queryKey: ["me", "preferences"],
+    queryFn: getMyPreferences,
+    retry: false,
+    staleTime: 60_000,
+  })
+
+  const position = prefsQ.data?.toast_position ?? "bottom-right"
+
+  useEffect(() => {
+    if (!prefsQ.data) return
+    setNotifyConfig({
+      toastSound: prefsQ.data.toast_sound,
+      browserNotifications: prefsQ.data.browser_notifications,
+      position: prefsQ.data.toast_position,
+    })
+  }, [prefsQ.data])
+
   return (
     <Sonner
       theme={resolvedTheme}
-      position="bottom-right"
+      position={position}
       duration={4000}
       gap={8}
       visibleToasts={5}
