@@ -3,9 +3,12 @@ use std::net::IpAddr;
 use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "user_role", rename_all = "snake_case")]
 pub enum UserRole {
@@ -13,7 +16,9 @@ pub enum UserRole {
     User,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "user_status", rename_all = "snake_case")]
 pub enum UserStatus {
@@ -23,7 +28,9 @@ pub enum UserStatus {
     Deleted,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "device_status", rename_all = "snake_case")]
 pub enum DeviceStatus {
@@ -32,7 +39,9 @@ pub enum DeviceStatus {
     Revoked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "device_os", rename_all = "snake_case")]
 pub enum DeviceOs {
@@ -44,7 +53,7 @@ pub enum DeviceOs {
     Other,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
 pub struct User {
     pub id: Uuid,
     pub email: String,
@@ -66,7 +75,7 @@ pub struct User {
     pub password_changed_at: OffsetDateTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
 pub struct Server {
     pub id: Uuid,
     pub name: String,
@@ -74,7 +83,13 @@ pub struct Server {
     pub endpoint_host: String,
     pub endpoint_port: i32,
     pub public_key: String,
+    /// CIDR for the server's subnet. Serialised as a string ("10.10.0.0/22").
+    #[schema(value_type = String, example = "10.10.0.0/22")]
     pub cidr: IpNetwork,
+    /// Default DNS resolvers handed to peers, each formatted as a host
+    /// prefix ("10.10.0.1/32"). The frontend usually trims the prefix
+    /// for display.
+    #[schema(value_type = Vec<String>, example = json!(["10.10.0.1/32"]))]
     pub dns_servers: Vec<IpNetwork>,
     pub mtu: i32,
     pub is_active: bool,
@@ -86,7 +101,7 @@ impl Server {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
 pub struct Device {
     pub id: Uuid,
     pub user_id: Uuid,
@@ -94,10 +109,13 @@ pub struct Device {
     pub name: String,
     pub os: DeviceOs,
     pub public_key: String,
+    /// Peer's allocated address as a host prefix ("10.10.0.5/32" or "fd00::5/128").
+    #[schema(value_type = String, example = "10.10.0.5/32")]
     pub allocated_ip: IpNetwork,
     pub status: DeviceStatus,
     pub dns_names: Vec<String>,
     pub allowed_ips_override: Option<Vec<String>>,
+    #[schema(value_type = Option<Vec<String>>)]
     pub dns_override: Option<Vec<IpNetwork>>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub last_handshake_at: Option<OffsetDateTime>,
@@ -105,6 +123,9 @@ pub struct Device {
     pub created_at: OffsetDateTime,
     /// KEK-encrypted WG private key, when the user opted in at create time.
     /// None for devices created with the default zero-knowledge behaviour.
+    /// Never exposed by list/get endpoints — the field is `serde(skip)` at
+    /// the API boundary; included here for completeness of the domain shape.
+    #[schema(value_type = Option<String>, format = Byte)]
     pub private_key_encrypted: Option<Vec<u8>>,
 }
 

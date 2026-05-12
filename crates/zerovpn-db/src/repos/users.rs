@@ -338,6 +338,41 @@ pub async fn admin_count(pool: &PgPool, search: Option<&str>) -> sqlx::Result<i6
     Ok(row.0)
 }
 
+/// Deployment-wide user + device counts for the admin overview KPI strip.
+/// Returned in a single query so the strip doesn't fan out to 5
+/// round-trips. Ignores soft-deleted users (the admin UI never surfaces
+/// them) but counts every non-revoked device the remaining users own.
+pub async fn admin_stats(pool: &PgPool) -> sqlx::Result<AdminStats> {
+    let row: AdminStats = sqlx::query_as::<_, AdminStats>(
+        r#"SELECT
+              COUNT(*) FILTER (WHERE deleted_at IS NULL)::BIGINT
+                AS total,
+              COUNT(*) FILTER (WHERE deleted_at IS NULL AND status = 'active')::BIGINT
+                AS active,
+              COUNT(*) FILTER (WHERE deleted_at IS NULL AND status = 'suspended')::BIGINT
+                AS suspended,
+              COUNT(*) FILTER (WHERE deleted_at IS NULL AND status = 'pending_verification')::BIGINT
+                AS pending_verification,
+              (SELECT COUNT(*) FROM devices d
+                 JOIN users u ON u.id = d.user_id
+                WHERE u.deleted_at IS NULL AND d.status <> 'revoked')::BIGINT
+                AS devices_total
+           FROM users"#,
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct AdminStats {
+    pub total: i64,
+    pub active: i64,
+    pub suspended: i64,
+    pub pending_verification: i64,
+    pub devices_total: i64,
+}
+
 pub async fn admin_set_status(
     pool: &PgPool,
     user_id: Uuid,

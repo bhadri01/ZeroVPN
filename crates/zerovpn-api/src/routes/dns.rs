@@ -8,6 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
+use utoipa::ToSchema;
 use uuid::Uuid;
 use zerovpn_db::repos::{audit, devices};
 use zerovpn_dns::{PeerDnsEntry, validate_hostname, write_hosts_file};
@@ -20,16 +21,30 @@ use crate::{
 
 const MAX_DNS_NAMES_PER_DEVICE: usize = 4;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SetDnsBody {
     pub dns_names: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DnsResponse {
     pub dns_names: Vec<String>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/devices/{id}/dns",
+    tag = "Devices",
+    params(("id" = uuid::Uuid, Path, description = "Device UUID")),
+    request_body = SetDnsBody,
+    responses(
+        (status = 200, description = "DNS names updated", body = DnsResponse),
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Device not found"),
+        (status = 409, description = "DNS name already in use"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn set(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -92,12 +107,12 @@ pub async fn set(
     Ok(Json(DnsResponse { dns_names: wanted }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema, utoipa::IntoParams)]
 pub struct CheckQuery {
     pub name: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CheckResponse {
     /// True iff the candidate name matches the server's hostname regex.
     pub valid: bool,
@@ -115,6 +130,16 @@ pub struct CheckResponse {
 /// `<device>.<user>.vpn.local` collides with another peer. Cheap: a
 /// regex check + one indexed list of every existing dns_name. Safe to
 /// call repeatedly (debounced from the client side).
+#[utoipa::path(
+    get,
+    path = "/devices/dns-check",
+    tag = "Devices",
+    params(CheckQuery),
+    responses(
+        (status = 200, description = "Availability probe result", body = CheckResponse),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn check_availability(
     State(state): State<AppState>,
     CurrentUser(_user): CurrentUser,

@@ -13,6 +13,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tower_sessions::Session;
 use tracing::{info, warn};
+use utoipa::ToSchema;
 use zerovpn_core::models::{UserRole, UserStatus};
 use zerovpn_db::repos::{audit, users, verification_tokens};
 use zerovpn_db::repos::verification_tokens::TokenPurpose;
@@ -27,19 +28,19 @@ use crate::{
 const VERIFY_TOKEN_TTL: time::Duration = time::Duration::hours(24);
 const RESET_TOKEN_TTL: time::Duration = time::Duration::hours(1);
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ForgotBody {
     #[garde(email)]
     pub email: String,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct VerifyBody {
     #[garde(length(min = 16))]
     pub token: String,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ResetBody {
     #[garde(length(min = 16))]
     pub token: String,
@@ -47,8 +48,9 @@ pub struct ResetBody {
     pub new_password: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct Ack {
+    #[schema(example = "ok")]
     pub status: &'static str,
 }
 
@@ -110,15 +112,16 @@ pub async fn issue_verify_email(
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct VerifiedUser {
     pub id: uuid::Uuid,
     pub email: String,
     pub role: UserRole,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct VerifyEmailResponse {
+    #[schema(example = "ok")]
     pub status: &'static str,
     /// Present on first successful verify: the verify endpoint upgrades
     /// the caller's anonymous session into an authenticated one so the
@@ -128,6 +131,16 @@ pub struct VerifyEmailResponse {
     pub user: VerifiedUser,
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/verify-email",
+    tag = "Auth",
+    request_body = VerifyBody,
+    responses(
+        (status = 200, description = "Email verified; session established", body = VerifyEmailResponse),
+        (status = 400, description = "Invalid / expired / wrong-purpose token"),
+    ),
+)]
 pub async fn verify_email(
     State(state): State<AppState>,
     session: Session,
@@ -195,6 +208,15 @@ pub async fn verify_email(
     }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/forgot-password",
+    tag = "Auth",
+    request_body = ForgotBody,
+    responses(
+        (status = 200, description = "Acknowledged (enumeration-safe — same response whether the email exists or not)", body = Ack),
+    ),
+)]
 pub async fn forgot_password(
     State(state): State<AppState>,
     Json(body): Json<ForgotBody>,
@@ -265,17 +287,18 @@ pub async fn forgot_password(
     Ok(Json(Ack { status: "ok" }))
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct VerifyResetTokenBody {
     #[garde(length(min = 16))]
     pub token: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct VerifyResetTokenResponse {
     pub valid: bool,
     /// Reason `valid` is false. Omitted on success. Stable enum-shaped
-    /// values so the frontend can switch on them.
+    /// values so the frontend can switch on them. One of
+    /// `"invalid" | "used" | "wrong_purpose" | "expired"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'static str>,
 }
@@ -291,6 +314,15 @@ pub struct VerifyResetTokenResponse {
 /// from a DB that's since been reset). Reporting all three as "expired"
 /// made it impossible to distinguish a real expiry from "you clicked the
 /// older of two emails", which is a very easy mistake to make.
+#[utoipa::path(
+    post,
+    path = "/auth/verify-reset-token",
+    tag = "Auth",
+    request_body = VerifyResetTokenBody,
+    responses(
+        (status = 200, description = "Pre-flight check result", body = VerifyResetTokenResponse),
+    ),
+)]
 pub async fn verify_reset_token(
     State(state): State<AppState>,
     Json(body): Json<VerifyResetTokenBody>,
@@ -321,6 +353,16 @@ pub async fn verify_reset_token(
     Ok(Json(VerifyResetTokenResponse { valid, reason }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/reset-password",
+    tag = "Auth",
+    request_body = ResetBody,
+    responses(
+        (status = 200, description = "Password updated; every existing session for the user is now dead", body = Ack),
+        (status = 400, description = "Invalid / expired / wrong-purpose token"),
+    ),
+)]
 pub async fn reset_password(
     State(state): State<AppState>,
     Json(body): Json<ResetBody>,
@@ -356,7 +398,7 @@ pub async fn reset_password(
     Ok(Json(Ack { status: "ok" }))
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ResendBody {
     #[garde(email)]
     pub email: String,
@@ -368,6 +410,15 @@ pub struct ResendBody {
 const RESEND_CAP: i64 = 3;
 const RESEND_WINDOW_SECS: i64 = 10 * 60;
 
+#[utoipa::path(
+    post,
+    path = "/auth/resend-verify",
+    tag = "Auth",
+    request_body = ResendBody,
+    responses(
+        (status = 200, description = "Acknowledged (enumeration-safe; rate-limited per address)", body = Ack),
+    ),
+)]
 pub async fn resend_verify(
     State(state): State<AppState>,
     Json(body): Json<ResendBody>,

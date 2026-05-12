@@ -1,7 +1,7 @@
 import { useMemo } from "react"
 import {
-  Area,
-  AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   ResponsiveContainer,
   Tooltip,
@@ -22,6 +22,17 @@ interface Props {
 const RX_COLOR = "var(--chart-1)"
 const TX_COLOR = "var(--primary)"
 
+/**
+ * Per-bucket RX/TX bar chart. Each bar is the bytes that flowed *within*
+ * one bucket window (hour or day) — not a running total. Two side-by-side
+ * bars per bucket so RX and TX peaks are individually readable instead of
+ * one summed area where high-TX/low-RX would visually compress together.
+ *
+ * Note on the "current" bucket: the rightmost bar represents an in-flight
+ * bucket (the worker re-rolls it every minute), so its height grows until
+ * the bucket closes. That's not a cumulative artifact — it's just the
+ * partial total for the bucket that hasn't ended yet.
+ */
 export function BandwidthChart({ buckets, height = 220 }: Props) {
   const data = useMemo(
     () =>
@@ -47,18 +58,8 @@ export function BandwidthChart({ buckets, height = 220 }: Props) {
   return (
     <div className="border-border bg-card border p-2">
       <ResponsiveContainer width="100%" height={height}>
-        <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-          <defs>
-            <linearGradient id="bw-rx" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={RX_COLOR} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={RX_COLOR} stopOpacity={0.05} />
-            </linearGradient>
-            <linearGradient id="bw-tx" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={TX_COLOR} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={TX_COLOR} stopOpacity={0.05} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="1 3" stroke="var(--border)" />
+        <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="1 3" stroke="var(--border)" vertical={false} />
           <XAxis
             dataKey="ts"
             type="number"
@@ -98,27 +99,23 @@ export function BandwidthChart({ buckets, height = 220 }: Props) {
               fontSize: 11,
               fontFamily: "var(--font-mono)",
             }}
-            cursor={{ stroke: "var(--muted-foreground)", strokeDasharray: "2 2" }}
+            cursor={{ fill: "var(--muted)", fillOpacity: 0.4 }}
           />
-          <Area
-            type="monotone"
+          <Bar
             dataKey="rx"
-            name="RX"
-            stroke={RX_COLOR}
-            fill="url(#bw-rx)"
-            strokeWidth={1.4}
+            name="rx"
+            fill={RX_COLOR}
             isAnimationActive={false}
+            radius={[1, 1, 0, 0]}
           />
-          <Area
-            type="monotone"
+          <Bar
             dataKey="tx"
-            name="TX"
-            stroke={TX_COLOR}
-            fill="url(#bw-tx)"
-            strokeWidth={1.4}
+            name="tx"
+            fill={TX_COLOR}
             isAnimationActive={false}
+            radius={[1, 1, 0, 0]}
           />
-        </AreaChart>
+        </BarChart>
       </ResponsiveContainer>
     </div>
   )

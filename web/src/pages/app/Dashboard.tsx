@@ -5,10 +5,7 @@ import { useMemo, useState } from "react"
 import { Link } from "react-router"
 import { toast } from "sonner"
 
-import {
-  LiveIndicator,
-  NetworkMonitorChart,
-} from "@/components/charts/LazyNetworkMonitorChart"
+import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
 import { BandwidthChart } from "@/components/charts/BandwidthChart"
 import { CopyableCode } from "@/components/CopyableCode"
 import { LiveEventStream } from "@/components/dashboard/LiveEventStream"
@@ -47,6 +44,7 @@ import {
   userBandwidth,
 } from "@/lib/api"
 import { connState } from "@/lib/deviceState"
+import { formatBytes } from "@/lib/units"
 import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import { useAuth } from "@/stores/auth"
 import { useLiveStats } from "@/stores/liveStats"
@@ -99,6 +97,15 @@ export function DashboardPage() {
     queryFn: () => userBandwidth(range),
     refetchInterval: range === "24h" ? 30_000 : 5 * 60_000,
   })
+  // Separate, always-30d query that feeds the KPI "Total" cards. Pinning
+  // to the longest available aggregate window means the headline numbers
+  // don't shift when the user toggles the chart range — "Total RX" stays
+  // "Total RX" instead of becoming "RX over the last 24h" mid-interaction.
+  const totalsQ = useQuery({
+    queryKey: ["bandwidth", "user", "30d"],
+    queryFn: () => userBandwidth("30d"),
+    refetchInterval: 5 * 60_000,
+  })
 
   const addM = useMutation({
     mutationFn: () => createDevice({ name: name.trim(), os: osChoice }),
@@ -117,6 +124,19 @@ export function DashboardPage() {
   const devices = devicesQ.data ?? []
   const active = devices.filter((d) => d.status === "active").length
   const paused = devices.filter((d) => d.status === "paused").length
+
+  // Headline totals derived from the user-level bandwidth rollups. Always
+  // backed by the 30-day query so the "Total" cards stay stable when the
+  // user toggles the chart range below.
+  const totalRxBytes = useMemo(
+    () => (totalsQ.data?.buckets ?? []).reduce((s, b) => s + b.rx_bytes, 0),
+    [totalsQ.data?.buckets],
+  )
+  const totalTxBytes = useMemo(
+    () => (totalsQ.data?.buckets ?? []).reduce((s, b) => s + b.tx_bytes, 0),
+    [totalsQ.data?.buckets],
+  )
+  const totalUsageBytes = totalRxBytes + totalTxBytes
 
   // Only currently-online devices contribute to "live" numbers. A device
   // that's offline / paused / revoked cannot be transmitting RIGHT NOW,
@@ -241,58 +261,57 @@ export function DashboardPage() {
         </DialogContent>
       </Dialog>
 
-      {/* KPI strip — 4-up. Devices · TX · RX · (Hubs for admin / Paused for users) */}
+      {/* KPI strip — 4-up. Devices online · Usage (range) · TX · RX.
+          Headline numbers are window-scoped totals from the user's
+          bandwidth rollups so the dashboard reflects the same activity
+          the chart below renders; the live bps rate sits in the footer
+          so "right now" is still readable at a glance. */}
       <StaggerItem>
         <KpiStrip>
         <Kpi
-          label="Devices · live"
-          value={active}
+          label="Devices · online"
+          value={onlineCount}
           unit={devices.length > 0 ? `/ ${devices.length}` : undefined}
-          footL={paused > 0 ? `${paused} paused` : "all active"}
+          footL={
+            paused > 0
+              ? `${active} active · ${paused} paused`
+              : onlineCount === 0 && active > 0
+                ? `${active} active · awaiting handshake`
+                : `${active} active`
+          }
           footR={devicesQ.dataUpdatedAt ? "updated now" : ""}
-          deltaTone="up"
+          deltaTone={onlineCount > 0 ? "up" : undefined}
         />
         <Kpi
-          label="Throughput · TX"
-          value={formatRate(totalTx)}
+          label="Total usage"
+          value={
+            totalsQ.isLoading ? "—" : formatBytes(totalUsageBytes)
+          }
+          footL={`RX ${formatBytes(totalRxBytes)} · TX ${formatBytes(totalTxBytes)}`}
+          footR={isAdmin && servers.length > 0 ? `${liveHubs}/${servers.length} hubs` : undefined}
+        />
+        <Kpi
+          label="Total TX"
+          value={totalsQ.isLoading ? "—" : formatBytes(totalTxBytes)}
           spark={liveHistory.tx}
           sparkColor="var(--primary)"
           footL={
             onlineCount === 0
               ? "no online devices"
-              : totalTx > 0
-                ? "live"
-                : "idle"
+              : `live · ${formatRate(totalTx)}`
           }
         />
         <Kpi
-          label="Throughput · RX"
-          value={formatRate(totalRx)}
+          label="Total RX"
+          value={totalsQ.isLoading ? "—" : formatBytes(totalRxBytes)}
           spark={liveHistory.rx}
           sparkColor="var(--chart-1)"
           footL={
             onlineCount === 0
               ? "no online devices"
-              : totalRx > 0
-                ? "live"
-                : "idle"
+              : `live · ${formatRate(totalRx)}`
           }
         />
-        {isAdmin ? (
-          <Kpi
-            label="Hubs · backbone"
-            value={liveHubs}
-            unit={servers.length > 0 ? `/ ${servers.length}` : undefined}
-            footL={`${liveHubs}/${servers.length} reachable`}
-            footR={serversQ.isLoading ? "…" : "live"}
-          />
-        ) : (
-          <Kpi
-            label="Devices · paused"
-            value={paused}
-            footL={paused === 0 ? "none paused" : "review on /devices"}
-          />
-        )}
         </KpiStrip>
       </StaggerItem>
 
@@ -306,17 +325,7 @@ export function DashboardPage() {
       <StaggerItem>
         <Panel
         title="Bandwidth"
-        sub={
-          <>
-            All devices · {range}{" "}
-            <Link
-              to="/app/bandwidth"
-              className="hover:text-foreground underline"
-            >
-              · historical →
-            </Link>
-          </>
-        }
+        sub={`All devices · ${range}`}
         right={
           <Seg
             value={range}
@@ -332,11 +341,13 @@ export function DashboardPage() {
             Failed to load bandwidth.
           </div>
         ) : (
-          <NetworkAggregateOrHistorical
-            range={range}
-            historical={bandwidthQ.data?.buckets ?? []}
-            liveRxHistory={liveHistory.rx}
-            liveTxHistory={liveHistory.tx}
+          // Bucketed historical view across every device the user owns
+          // — sourced from bandwidth_aggregates so it survives reloads
+          // and reflects the real window the user picked, not the last
+          // 60 s of WS frames. The KPI cards above carry the live rate.
+          <BandwidthChart
+            buckets={bandwidthQ.data?.buckets ?? []}
+            height={220}
           />
         )}
         </Panel>
@@ -393,38 +404,6 @@ export function DashboardPage() {
       </StaggerItem>
     </PageStagger>
   )
-}
-
-/** When live data is present, prefer the 60-frame WS-driven aggregate
- *  (matches the design's "feels alive" intent). Once the live histories
- *  drain or aren't populated yet, fall back to the historical buckets from
- *  the bandwidth API so the chart isn't blank. Both inputs are real. */
-function NetworkAggregateOrHistorical({
-  range,
-  historical,
-  liveRxHistory,
-  liveTxHistory,
-}: {
-  range: BandwidthRange
-  historical: { bucket_start: string; rx_bytes: number; tx_bytes: number }[]
-  liveRxHistory: number[]
-  liveTxHistory: number[]
-}) {
-  // For the 24h tab and when there's an active live stream, show the live
-  // monitor (rates in bps over the last minute). Otherwise show the bucketed
-  // historical chart (bytes per bucket).
-  const haveLive = liveRxHistory.length > 0 || liveTxHistory.length > 0
-  if (range === "24h" && haveLive) {
-    return (
-      <NetworkMonitorChart
-        rxHistory={liveRxHistory}
-        txHistory={liveTxHistory}
-        variant="combined"
-        height={220}
-      />
-    )
-  }
-  return <BandwidthChart buckets={historical} height={220} />
 }
 
 function CreatedDeviceCard({

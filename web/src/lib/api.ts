@@ -513,6 +513,25 @@ export const adminListUsers = (q?: string, limit = 50, offset = 0) => {
   )
 }
 
+export interface AdminStats {
+  total: number
+  active: number
+  suspended: number
+  pending_verification: number
+  devices_total: number
+}
+/** Deployment-wide user + device counts. Use this for the admin KPI
+ *  strip rather than summing client-side over a paginated list. */
+export const adminStats = () => apiFetch<AdminStats>("/admin/stats")
+
+export interface AdminFleetBandwidth {
+  rx_bytes: number
+  tx_bytes: number
+  window_days: number
+}
+export const adminFleetBandwidth = () =>
+  apiFetch<AdminFleetBandwidth>("/admin/bandwidth")
+
 export const adminSetUserStatus = (id: string, status: UserStatus) =>
   apiFetch<{ status: string }>(`/admin/users/${id}/status`, {
     method: "PUT",

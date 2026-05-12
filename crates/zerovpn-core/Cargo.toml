@@ -19,3 +19,6 @@ compact_str = { workspace = true }
 # parallel set of DB-side wrapper enums. Compile-time-only impact; no
 # runtime side effects on consumers that don't use it.
 sqlx = { workspace = true }
+# Derive ToSchema on the public domain types so the API crate can fold
+# them straight into the OpenAPI document. Compile-time only.
+utoipa = { workspace = true }

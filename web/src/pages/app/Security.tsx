@@ -206,7 +206,9 @@ function ChangePasswordForm() {
       setCurrent("")
       setNext("")
       setConfirm("")
-      toast.success("Password changed. Other sessions have been signed out.")
+      toast.success(
+        "Password changed. Any other signed-in sessions will be signed out on their next request.",
+      )
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)

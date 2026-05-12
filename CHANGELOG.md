@@ -33,6 +33,66 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Polish + correctness pass (2026-05-12)
+
+**Self-contained polish sweep against the existing v1 surface. No new features; tightens flows the user hit while exercising the app and corrects stale state in the working tree.**
+
+**Auth + sessions**
+- New `POST /me/change-password` (authenticated, in-place). Verifies the current password with argon2, hashes the new one, calls `users::update_password` (bumps `password_changed_at`), then re-syncs the current session's `SESSION_KEY_PW_CHANGED_AT` snapshot so this request's session stays alive while every *other* session for the same user is rejected on its next hop. Audited as `user.password_changed`. New repo helpers `users::find_password_hash` + `users::find_password_changed_at`.
+- Settings → Security replaces the `<a href="/app/change-password">` link with an inline current+new+confirm form posting to the new endpoint (≥12 chars, blocks "same as current").
+- `/app/change-password` (the forced-rotation page reached when `must_change_password=true`) now drives the same inline form against `/me/change-password` instead of detouring through the forgot-password email loop. After success it clears the client-side gate and routes to `/app`.
+
+**Email transport**
+- `Mailer::send` now builds a `SinglePart` with `text/plain; charset=utf-8` and explicit `Base64` Content-Transfer-Encoding. Previously lettre auto-picked quoted-printable for templates containing the em-dash, which escaped `=` as `=3D` and soft-wrapped at 76 cols mid-token. The result: verify/reset URLs arriving fragmented (`?token=3D…=\n…`) in clients that didn't decode QP. Base64 reconstructs the body verbatim in every modern MUA.
+- Suspicious-login email link fixed: was `/app/security` (a route that no longer exists), now `/app/settings#security`.
+
+**Navigation + nav guards**
+- Finder moved under `/admin/finder` and the admin role guard. Sidebar entry, command-palette entry, and `g f` chord now appear only for admins; the workspace-tier `/app/finder` route is gone.
+- Account and Security collapsed into Settings tabs. `/app/account` and `/app/security` routes deleted; the user-menu top-bar links deep-link to `/app/settings#account` and `/app/settings#security`. `AccountSections` and `SecuritySections` remain as the section components consumed by Settings.
+
+**Live stats — sidebar server-stats visible to all users**
+- WS broadcast filter (`routes::ws::visible_to`) now passes `Event::ServerHealth` to all signed-in users. `Heartbeat` and `ServerSample` (per-WG-server traffic) stay admin-only. Sidebar `<ServerStats />` dropped its `isAdmin` gate so CPU / mem / disk-I/O sparkline / net-I/O / uptime panel renders for everyone when the sidebar is expanded.
+
+**IPv6 CIDR allocation**
+- `IpAllocator` is now an enum dispatching on family:
+  - **V4** keeps the existing `FixedBitSet` bitmap (one bit per host, network + gateway + broadcast pre-reserved).
+  - **V6** uses a sparse `HashSet<u128>` of allocated offsets plus a monotonic cursor hint. Memory cost scales with active peers, not subnet size — bitmapping 2⁶⁴ entries is impossible. Network and gateway offsets reserved; no broadcast in IPv6.
+- API widened from `Ipv4Addr` to `IpAddr`. Family mismatches return a dedicated `AllocError::FamilyMismatch` rather than silently misbehaving.
+- `bootstrap::build_ip_allocators` dropped the "IPv6 not supported, skipping" branch — both families now seed correctly from the `devices` table.
+- Device routes (`devices::create`, `revoke`, `delete_account`) pass `IpAddr` directly; `allocated_cidr` uses `/32` or `/128` based on family.
+- 9 unit tests in `zerovpn-wg::ip_alloc::tests` (5 V4 + 4 V6 including replay-skips-used, exhaustion on `/126`, mismatch).
+
+**CLI**
+- `zerovpn-cli rotate-server-keys` no longer prints "not yet implemented". Accepts `--server-id <uuid>`, `--all`, `--yes`. Mirrors the admin HTTP handler at `routes::admin::rotate_server_keys`: mints a fresh X25519 keypair, rewrites `wg0.conf` on the shared volume, updates `servers.public_key`, writes an `cli.server_keys_rotated` audit row. Refuses to act ambiguously when multiple active servers exist without `--server-id` or `--all`.
+
+**UI — tooltips**
+- New shared `<WithTooltip label="…" side="…">` helper wraps any clickable child with a Radix tooltip via `asChild`.
+- `swiss::IconBtn` auto-wraps with a tooltip when given `title` (covers device-row Pause / Unpause / Revoke automatically).
+- Explicit wraps added to: topology fullscreen + zoom + reset controls, TopBar back + ⌘K search, Devices clear-filter X + view-mode list/grid toggle, Finder clear, DeviceCard "Open device" external-link, DeviceDetail Copy + DNS-name Remove, ResetPassword show/hide-password eye.
+- `ModeToggle` + `UserMenu` avatar dropdown triggers now tooltip on hover too — the tooltip is suppressed while their dropdown is open so the two floating elements don't collide.
+- `PublicShell` gets a `TooltipProvider` so non-authed pages (ResetPassword) can host tooltips.
+
+**Cleanups**
+- Deleted orphan `crates/zerovpn-auth/src/api_token.rs` and removed `core::ids::ApiTokenId`. API tokens were removed in migration 9; the auth-side module had outlived its consumers.
+- `TODO.md` updated: API tokens + webhooks marked 🚫 (removed in migrations 9 + 10), Server config editor + Force key rotation marked done (they've been shipped via `Servers.tsx`), suspicious-login email marked done (already wired in `routes/auth.rs`), session entries for the work above.
+
+**WG runtime — native netlink/UAPI backend**
+- New `KernelController` in `crates/zerovpn-wg/src/control.rs` (gated on `cfg(target_os = "linux")`). Talks to the in-kernel WireGuard module via netlink through `defguard_wireguard_rs::WGApi<Kernel>`; runs the blocking netlink calls on `tokio::task::spawn_blocking` so the async runtime isn't pinned. Idempotent `remove_peer` — missing peer is logged at warn and not propagated, matching the legacy shell controller's revoke-retry semantics.
+- `from_env()` selector now resolves `ZEROVPN_WG__BACKEND` ∈ `{ noop | kernel | shell }`. The legacy `shell` backend is retained (still useful for setups where the api/worker run outside the WG netns and need an `nsenter` wrapper); `kernel` is the new prod default with no `wg` binary required in the worker/api image.
+- `.env.prod.example` and `docs/runbook.md` updated to point operators at `kernel`. Production deployments need `CAP_NET_ADMIN` and visibility of the WG interface's netns (either join via `network_mode: container:wg` or share the netns); the runbook documents this.
+- `ControlError` gains a generic `Other(String)` arm so we can pipe `WireguardInterfaceError` and `tokio::task::JoinError` through cleanly without losing context.
+
+**OpenAPI — utoipa derive everywhere**
+- Every route handler now carries an explicit `#[utoipa::path]` attribute with method + path + tag + responses + body/params type references. Every DTO derives `ToSchema`; query types that get extracted as axum `Query` extractors also derive `utoipa::IntoParams` so query params land in the spec correctly.
+- `routes::openapi::ApiDoc` is the single `#[derive(OpenApi)]` aggregator — `paths(...)` enumerates every handler, `components(schemas(...))` pins the cross-crate domain types (User/Device/Server/UserPreferences/FailedLoginReason) so they always appear in the spec regardless of derive-time visibility. A `Modify`-based `SessionCookieSecurity` registers the `session_cookie` apiKey-in-cookie scheme handlers reference via `security(("session_cookie" = []))`.
+- `routes::openapi::spec` now hands `Json(ApiDoc::openapi())` straight back. The 250-line hand-curated `json!()` blob is gone.
+- Two unit tests in `routes::openapi::tests`: one renders + serialises the doc (catches utoipa-derive bugs that the type system doesn't), one asserts a representative path from every tag is present (drift detector — a new handler that doesn't end up in `ApiDoc::paths` or doesn't carry the attribute will fail this).
+- Side benefit: frontend `openapi-typescript` codegen from `/openapi.json` (still deferred per TODO) is now a 1-line step against the runtime spec — no hand-maintained intermediate.
+
+**Build status** — `cargo check --workspace` clean. `cargo test --workspace --lib` reports 18 passing tests (up from 14; 4 new IPv6 allocator tests). `npx tsc --noEmit` clean in `web/`.
+
+**Not exercised against a live stack this session** — the verification-email base64 round-trip, the new `/me/change-password` flow end-to-end, the WS filter delivering `server_health` to a non-admin browser, the CLI rotate against a real DB, and IPv6 device create/revoke against a server with an `fd00::/64` CIDR. All compile + type-check + unit-tested where applicable; runtime verification is the operator's responsibility before sign-off.
+
 ### Added — Phase 1C: full WG runtime, observability + backups, hardening, OpenAPI, tests, WASM, runbook (2026-05-07)
 
 **Closes the remaining v1 backlog: red-tier (real WG plumbing), yellow-tier (production hardening), and green-tier (polish) all landed in one push. Suspicious-login email is the only intentional carry-over (deferred — needs request-IP plumbing through Caddy + per-user seen-IP cache).**

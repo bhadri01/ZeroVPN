@@ -3,6 +3,7 @@ pub mod auth;
 pub mod bandwidth;
 pub mod devices;
 pub mod dns;
+pub mod dto;
 pub mod email_auth;
 pub mod health;
 pub mod me;

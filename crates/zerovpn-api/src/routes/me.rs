@@ -7,24 +7,41 @@ use serde_json::json;
 use time::OffsetDateTime;
 use tower_sessions::Session;
 use tracing::info;
+use utoipa::ToSchema;
 use zerovpn_db::repos::{audit, devices, servers, topology_positions, user_prefs, users};
 
 use crate::{
     error::{ApiError, ApiResult},
     extractors::auth::{CurrentUser, SESSION_KEY_PW_CHANGED_AT},
+    routes::dto::StatusAck,
     state::AppState,
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DataExport {
+    #[serde(with = "time::serde::rfc3339")]
     pub generated_at: OffsetDateTime,
+    /// The authenticated user's `User` row (no password / TOTP material).
     pub user: serde_json::Value,
+    /// Every device owned by the user, regardless of status.
     pub devices: serde_json::Value,
+    /// Audit entries this user authored. Admin-target rows on this user
+    /// are deliberately excluded from this scope.
     pub audit: serde_json::Value,
 }
 
 /// GDPR data export: returns a JSON blob with everything we have on the
 /// authenticated user, excluding password hashes / TOTP secrets.
+#[utoipa::path(
+    get,
+    path = "/me/data-export",
+    tag = "Account",
+    responses(
+        (status = 200, description = "User-scoped data export", body = DataExport),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn export(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -84,7 +101,7 @@ pub async fn export(
     }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct MyServerInfo {
     /// CIDR of the WG subnet (e.g. "10.10.0.0/22"). Used by the create-
     /// device dialog to render "must be inside <cidr>" hints and to
@@ -105,6 +122,16 @@ pub struct MyServerInfo {
 /// that already end up in every `.conf` file the user downloads — no
 /// secrets (private keys, internal kek, etc) are included. Anyone with
 /// a valid session can call this.
+#[utoipa::path(
+    get,
+    path = "/me/server",
+    tag = "Account",
+    responses(
+        (status = 200, description = "Public WG server defaults for the create-device dialog", body = MyServerInfo),
+        (status = 404, description = "No active server yet"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn server_info(
     State(state): State<AppState>,
     CurrentUser(_user): CurrentUser,
@@ -129,22 +156,40 @@ pub async fn server_info(
 // rows in topology_positions, serialised over the wire as a flat
 // {node_id: {x, y}} object — same shape the frontend uses in localStorage.
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct TopologyPositionsResponse {
     pub positions: HashMap<String, Pos>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct Pos {
     pub x: f64,
     pub y: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TopologyPositionsRequest {
     pub positions: HashMap<String, Pos>,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TopologyAck {
+    #[schema(example = "ok")]
+    pub status: &'static str,
+    /// Number of (node_id, x, y) rows actually persisted after server-
+    /// side sanitisation (non-finite coords + over-long ids are dropped).
+    pub count: usize,
+}
+
+#[utoipa::path(
+    get,
+    path = "/me/topology",
+    tag = "Account",
+    responses(
+        (status = 200, description = "Saved node positions for the live topology", body = TopologyPositionsResponse),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn get_topology(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -163,6 +208,17 @@ pub async fn get_topology(
     Ok(Json(TopologyPositionsResponse { positions }))
 }
 
+#[utoipa::path(
+    put,
+    path = "/me/topology",
+    tag = "Account",
+    request_body = TopologyPositionsRequest,
+    responses(
+        (status = 200, description = "Positions persisted (count = rows actually written)", body = TopologyAck),
+        (status = 400, description = "Too many entries"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn set_topology(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -201,6 +257,15 @@ pub async fn set_topology(
 
 /// Returns the user's settings-page preferences. Falls through to
 /// defaults for users who've never saved — the next PUT creates the row.
+#[utoipa::path(
+    get,
+    path = "/me/preferences",
+    tag = "Account",
+    responses(
+        (status = 200, description = "Current preferences (defaults if never saved)", body = user_prefs::UserPreferences),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn get_preferences(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -213,6 +278,17 @@ pub async fn get_preferences(
 /// text fields against the same set the DB CHECK enforces so we can
 /// surface a clean 400 instead of a sqlx error if a future client sends
 /// a stray value.
+#[utoipa::path(
+    put,
+    path = "/me/preferences",
+    tag = "Account",
+    request_body = user_prefs::UserPreferencesPatch,
+    responses(
+        (status = 200, description = "Patched preferences (server returns the full merged state)", body = user_prefs::UserPreferences),
+        (status = 400, description = "Validation error (unknown enum value)"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn set_preferences(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -261,7 +337,7 @@ pub async fn set_preferences(
 
 /// Soft-delete the user's account: nulls PII, revokes devices/sessions/
 /// tokens, flushes the current session.
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ChangePasswordBody {
     #[garde(length(min = 1))]
     pub current_password: String,
@@ -275,6 +351,18 @@ pub struct ChangePasswordBody {
 /// re-snapshot the new watermark into the current session — the user
 /// stays signed in here while every *other* session for this account
 /// dies on its next request.
+#[utoipa::path(
+    post,
+    path = "/me/change-password",
+    tag = "Account",
+    request_body = ChangePasswordBody,
+    responses(
+        (status = 200, description = "Password rotated; this session is kept alive while every other session for the user dies on next request", body = StatusAck),
+        (status = 400, description = "Wrong current password / new == current / new too short"),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn change_password(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -324,6 +412,16 @@ pub async fn change_password(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/me/account",
+    tag = "Account",
+    responses(
+        (status = 200, description = "Account soft-deleted, devices revoked, session flushed", body = StatusAck),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn delete_account(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,

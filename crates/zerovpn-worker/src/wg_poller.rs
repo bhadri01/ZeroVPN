@@ -20,7 +20,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 use zerovpn_db::{
     PgPool,
-    repos::{audit, devices, server_samples, servers},
+    repos::{audit, bandwidth, devices, server_samples, servers},
 };
 use zerovpn_wire::Event;
 
@@ -201,6 +201,27 @@ async fn poll_once(
         // there's no real handshake on record so the live stream only
         // carries traffic for sessions that actually established.
         let report_rates = latest_handshake > 0;
+
+        // Persist the delta for historical aggregation. Without this row
+        // the hourly/daily rollups have nothing to sum, so the dashboard
+        // chart stays empty in real WG mode. Best-effort — a transient DB
+        // error doesn't stop the live broadcast below. Skipped for peers
+        // that haven't handshook yet so initiator-handshake bytes don't
+        // pollute the history.
+        if report_rates && (drx > 0 || dtx > 0) {
+            if let Err(e) = bandwidth::insert_sample(
+                pool,
+                device_id,
+                now,
+                drx as i64,
+                dtx as i64,
+            )
+            .await
+            {
+                warn!(?e, %device_id, "bandwidth sample insert failed");
+            }
+        }
+
         let event = Event::StatsDelta {
             device_id,
             user_id,

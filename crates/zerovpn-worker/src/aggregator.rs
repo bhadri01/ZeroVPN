@@ -1,14 +1,21 @@
 //! Bandwidth aggregation task.
 //!
-//! Every 5 minutes:
-//! - Roll up the closed previous hour into `bandwidth_aggregates(bucket=hour)`.
-//! - At day boundary (00:05 UTC), roll up the closed previous day from the
-//!   24 hourly buckets into `bandwidth_aggregates(bucket=day)`.
+//! Every minute:
+//! - Roll up the **current** (in-progress) hour into
+//!   `bandwidth_aggregates(bucket=hour)` so the dashboard chart shows
+//!   live activity instead of waiting for the hour to close.
+//! - Roll up the closed **previous** hour too — covers the case where a
+//!   tick straddles the hour boundary.
+//! - Roll up the current day (so today appears in the 30d view) and the
+//!   previous day (covers the midnight straddle in the same way).
 //!
-//! Idempotent: re-running the same window updates the existing row in
-//! place. The same task also runs the partial-retention window once a day
-//! to drop `bandwidth_samples` older than 7 days; samples are only the
-//! input to aggregation so dropping them is safe.
+//! Idempotent: every `rollup_*` is `INSERT ... ON CONFLICT DO UPDATE`,
+//! so re-running the same window just overwrites the bucket with the
+//! latest sum. The same task also drops `bandwidth_samples` older than
+//! 7 days; samples are only the input to aggregation so this is safe.
+//!
+//! Startup also runs a rollup immediately rather than waiting one full
+//! interval — important for dev where the worker is restarted often.
 
 use std::time::Duration;
 
@@ -16,31 +23,56 @@ use time::OffsetDateTime;
 use tracing::{info, warn};
 use zerovpn_db::{PgPool, repos::bandwidth};
 
-const TICK: Duration = Duration::from_secs(300); // 5 minutes
+/// 1-minute cadence. Each tick re-rolls the current hour (idempotently),
+/// so the dashboard never trails by more than a minute.
+const TICK: Duration = Duration::from_secs(60);
 
 pub async fn run(pool: PgPool) {
     info!("bandwidth aggregator started");
+    // First pass before the ticker so a freshly-started worker doesn't
+    // leave the dashboard chart empty for the first interval.
+    run_once(&pool).await;
+
     let mut ticker = tokio::time::interval(TICK);
+    ticker.tick().await; // skip the immediate tick the interval emits
     loop {
         ticker.tick().await;
-        let now = OffsetDateTime::now_utc();
+        run_once(&pool).await;
+    }
+}
 
-        // Roll up the closed previous hour. `truncate_to_hour` gives the
-        // start of the current hour; subtract 1h to get the previous one.
-        let prev_hour = truncate_to_hour(now) - time::Duration::hours(1);
-        match bandwidth::rollup_hourly(&pool, prev_hour).await {
-            Ok(n) => info!(?prev_hour, rows = n, "hourly rollup"),
-            Err(e) => warn!(?e, "hourly rollup failed"),
-        }
+async fn run_once(pool: &PgPool) {
+    let now = OffsetDateTime::now_utc();
+    let cur_hour = truncate_to_hour(now);
+    let prev_hour = cur_hour - time::Duration::hours(1);
 
-        // Daily rollup at 00:05 UTC (after midnight + a buffer).
-        if now.hour() == 0 && now.minute() < 10 {
-            let prev_day = truncate_to_day(now) - time::Duration::days(1);
-            match bandwidth::rollup_daily(&pool, prev_day).await {
-                Ok(n) => info!(?prev_day, rows = n, "daily rollup"),
-                Err(e) => warn!(?e, "daily rollup failed"),
-            }
-        }
+    // Current hour — partial bucket gets overwritten with the running
+    // total on every tick. Without this the dashboard chart shows
+    // "No data yet" until the user crosses the next hour boundary.
+    match bandwidth::rollup_hourly(pool, cur_hour).await {
+        Ok(n) => info!(?cur_hour, rows = n, "current-hour rollup"),
+        Err(e) => warn!(?e, "current-hour rollup failed"),
+    }
+    // Previous hour — covers the case where the tick lands a few seconds
+    // after the hour boundary and we haven't yet finalized the closing
+    // row. Cheap because there's only one of these per device per hour.
+    match bandwidth::rollup_hourly(pool, prev_hour).await {
+        Ok(n) => info!(?prev_hour, rows = n, "previous-hour rollup"),
+        Err(e) => warn!(?e, "previous-hour rollup failed"),
+    }
+
+    // Same idea at day granularity. We roll the daily bucket from the
+    // hour rows we just refreshed, so today's RX/TX appears in the 30d
+    // view without waiting for midnight.
+    let cur_day = truncate_to_day(now);
+    let prev_day = cur_day - time::Duration::days(1);
+    match bandwidth::rollup_daily(pool, cur_day).await {
+        Ok(n) => info!(?cur_day, rows = n, "current-day rollup"),
+        Err(e) => warn!(?e, "current-day rollup failed"),
+    }
+    match bandwidth::rollup_daily(pool, prev_day).await {
+        Ok(n) => info!(?prev_day, rows = n, "previous-day rollup"),
+        Err(e) => warn!(?e, "previous-day rollup failed"),
     }
 }
 

@@ -9,19 +9,25 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Full preference payload. Mirrors the `user_preferences` table 1:1
 /// with the constraint-checked text columns surfaced as Rust enums on
 /// the wire. Optional on partial PATCH-style updates; required on the
 /// returned shape.
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
 pub struct UserPreferences {
+    /// One of `"bps" | "Bps"`
     pub units: String,
+    /// One of `"iso" | "us" | "eu"`
     pub date_format: String,
+    /// One of `"h24" | "h12"`
     pub time_format: String,
     pub reduced_motion: bool,
+    /// One of `"dashboard" | "devices" | "topology"`
     pub default_landing: String,
+    /// One of `"top-left" | "top-center" | "top-right" | "bottom-left" | "bottom-center" | "bottom-right"`
     pub toast_position: String,
     pub toast_sound: bool,
     pub browser_notifications: bool,
@@ -45,7 +51,7 @@ impl Default for UserPreferences {
 /// Partial update — every field optional so PATCH-style writes don't
 /// have to round-trip the full state. Server applies whatever's present
 /// and leaves the rest alone.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct UserPreferencesPatch {
     pub units: Option<String>,
     pub date_format: Option<String>,

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { IconSearch } from "@tabler/icons-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import {
@@ -20,13 +20,15 @@ import {
   type AdminServerRow,
   type AdminUser,
   type UserStatus,
+  adminFleetBandwidth,
   adminGetMaintenance,
   adminListServers,
   adminListUsers,
   adminSetMaintenance,
   adminSetUserStatus,
+  adminStats,
 } from "@/lib/api"
-import { formatBps } from "@/lib/units"
+import { formatBps, formatBytes } from "@/lib/units"
 import { useAuth } from "@/stores/auth"
 import { useLiveStats } from "@/stores/liveStats"
 
@@ -42,9 +44,33 @@ export function AdminOverviewPage() {
   const qc = useQueryClient()
 
   const [search, setSearch] = useState("")
+  const PAGE_SIZE = 50
+  const [page, setPage] = useState(0)
+  // Reset to page 0 whenever the search term changes — otherwise a
+  // narrower query can leave us pointing past the end of the result set.
+  useEffect(() => {
+    setPage(0)
+  }, [search])
   const usersQ = useQuery({
-    queryKey: ["admin", "users", search],
-    queryFn: () => adminListUsers(search || undefined),
+    queryKey: ["admin", "users", search, page],
+    queryFn: () => adminListUsers(search || undefined, PAGE_SIZE, page * PAGE_SIZE),
+    placeholderData: (prev) => prev,
+  })
+
+  // Deployment-wide aggregate counts. Decoupled from the (paginated)
+  // users query so the KPI strip reflects the whole fleet, not just
+  // whatever page the admin is looking at.
+  const statsQ = useQuery({
+    queryKey: ["admin", "stats"],
+    queryFn: adminStats,
+    refetchInterval: 30_000,
+  })
+
+  // Fleet-wide RX/TX over the last 30 days for the bandwidth KPI.
+  const fleetBwQ = useQuery({
+    queryKey: ["admin", "fleet-bandwidth"],
+    queryFn: adminFleetBandwidth,
+    refetchInterval: 5 * 60_000,
   })
 
   const maintQ = useQuery({
@@ -90,11 +116,27 @@ export function AdminOverviewPage() {
   })
 
   const items = usersQ.data?.items ?? []
-  const total = usersQ.data?.total ?? 0
-  const active = items.filter((u) => u.status === "active").length
-  const suspended = items.filter((u) => u.status === "suspended").length
-  const totalDevices = items.reduce((s, u) => s + u.device_count, 0)
+  // Filtered total reported by the API for the current search — drives
+  // the pagination strip below. Deployment-wide totals come from
+  // `statsQ` so the KPI strip doesn't lie when the user is filtering.
+  const filteredTotal = usersQ.data?.total ?? 0
+  const stats = statsQ.data
+  const total = stats?.total ?? 0
+  const active = stats?.active ?? 0
+  const suspended = stats?.suspended ?? 0
+  const pending = stats?.pending_verification ?? 0
+  const totalDevices = stats?.devices_total ?? 0
+  const fleetRx = fleetBwQ.data?.rx_bytes ?? 0
+  const fleetTx = fleetBwQ.data?.tx_bytes ?? 0
+  const fleetWindow = fleetBwQ.data?.window_days ?? 30
   const maintOn = !!maintQ.data?.maintenance_mode
+
+  const servers = serversQ.data ?? []
+  const liveHubs = servers.filter((s) => s.is_active).length
+
+  const pageCount = Math.max(1, Math.ceil(filteredTotal / PAGE_SIZE))
+  const fromIdx = filteredTotal === 0 ? 0 : page * PAGE_SIZE + 1
+  const toIdx = Math.min(filteredTotal, page * PAGE_SIZE + items.length)
 
   return (
     <PageStagger>
@@ -117,19 +159,34 @@ export function AdminOverviewPage() {
 
       <StaggerItem>
         <KpiStrip>
-        <Kpi label="Total users" value={total} footL={`${active} active`} />
-        <Kpi
-          label="Suspended"
-          value={suspended}
-          footL="locked out"
-          deltaTone={suspended > 0 ? "dn" : undefined}
-        />
-        <Kpi label="Devices" value={totalDevices} footL="WireGuard peers" />
-        <Kpi
-          label="Maintenance"
-          value={maintOn ? "ON" : "OFF"}
-          footL={maintOn ? "writes blocked" : "writes allowed"}
-        />
+          <Kpi
+            label="Users · total"
+            value={statsQ.isLoading ? "—" : total}
+            footL={`${active} active${pending > 0 ? ` · ${pending} pending` : ""}`}
+            footR={suspended > 0 ? `${suspended} suspended` : undefined}
+            deltaTone={suspended > 0 ? "dn" : undefined}
+          />
+          <Kpi
+            label="Devices · fleet"
+            value={statsQ.isLoading ? "—" : totalDevices}
+            footL="WireGuard peers · non-revoked"
+          />
+          <Kpi
+            label={`Fleet bandwidth · ${fleetWindow}d`}
+            value={fleetBwQ.isLoading ? "—" : formatBytes(fleetRx + fleetTx)}
+            footL={`RX ${formatBytes(fleetRx)} · TX ${formatBytes(fleetTx)}`}
+          />
+          <Kpi
+            label="Hubs · backbone"
+            value={serversQ.isLoading ? "—" : liveHubs}
+            unit={servers.length > 0 ? `/ ${servers.length}` : undefined}
+            footL={
+              maintOn
+                ? "writes blocked · maintenance ON"
+                : `${liveHubs}/${servers.length} reachable`
+            }
+            footR={maintOn ? "● maintenance" : undefined}
+          />
         </KpiStrip>
       </StaggerItem>
 
@@ -179,7 +236,11 @@ export function AdminOverviewPage() {
       <Panel
         flush
         title="Users"
-        sub={`${total.toLocaleString()} total · search, suspend, unsuspend`}
+        sub={
+          search
+            ? `${filteredTotal.toLocaleString()} match "${search}" · ${total.toLocaleString()} total`
+            : `${total.toLocaleString()} total · search, suspend, unsuspend`
+        }
         right={
           <div className="relative w-64">
             <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
@@ -225,6 +286,41 @@ export function AdminOverviewPage() {
             )}
           </tbody>
         </table>
+
+        {/* Pagination strip — only renders when the result set spills
+            past one page. Uses the API-reported `total` so the page
+            count stays honest under a filtered search. */}
+        {filteredTotal > PAGE_SIZE && (
+          <div className="border-border flex items-center justify-between gap-2 border-t px-4 py-2 font-mono text-[11px]">
+            <span className="text-muted-foreground tabular-nums">
+              {fromIdx.toLocaleString()}–{toIdx.toLocaleString()} of{" "}
+              {filteredTotal.toLocaleString()}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0 || usersQ.isFetching}
+              >
+                ← Prev
+              </Button>
+              <span className="text-muted-foreground tabular-nums">
+                page {page + 1} / {pageCount}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  setPage((p) => Math.min(pageCount - 1, p + 1))
+                }
+                disabled={page >= pageCount - 1 || usersQ.isFetching}
+              >
+                Next →
+              </Button>
+            </div>
+          </div>
+        )}
       </Panel>
       </StaggerItem>
     </PageStagger>

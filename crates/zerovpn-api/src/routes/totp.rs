@@ -2,6 +2,7 @@ use axum::{Json, extract::State, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
+use utoipa::ToSchema;
 use zerovpn_auth::totp;
 use zerovpn_db::repos::{audit, users};
 use zerovpn_wg::qr;
@@ -9,12 +10,13 @@ use zerovpn_wg::qr;
 use crate::{
     error::{ApiError, ApiResult},
     extractors::auth::CurrentUser,
+    routes::dto::StatusAck,
     state::AppState,
 };
 
 const ISSUER: &str = "ZeroVPN";
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SetupResponse {
     /// Plaintext base32 secret (shown once for manual entry).
     pub secret: String,
@@ -24,25 +26,35 @@ pub struct SetupResponse {
     pub qr_svg: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct EnableBody {
     pub secret: String,
     pub code: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct EnableResponse {
     /// Plaintext recovery codes — shown once. After this, only hashes survive.
     pub recovery_codes: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct VerifyBody {
     pub code: String,
 }
 
 /// Generate a fresh TOTP secret + QR. Doesn't persist anything; the user
 /// must call `enable` with the same secret + a working code to commit.
+#[utoipa::path(
+    post,
+    path = "/auth/totp/setup",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Provisional TOTP material — call /auth/totp/enable to commit", body = SetupResponse),
+        (status = 409, description = "2FA already enabled"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn setup(
     State(_state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -63,6 +75,18 @@ pub async fn setup(
 
 /// Verify the user-typed code against the proposed secret, then persist
 /// the secret encrypted with KEK and a fresh batch of recovery codes.
+#[utoipa::path(
+    post,
+    path = "/auth/totp/enable",
+    tag = "Auth",
+    request_body = EnableBody,
+    responses(
+        (status = 200, description = "2FA enabled; recovery codes shown ONCE", body = EnableResponse),
+        (status = 400, description = "Invalid TOTP code"),
+        (status = 409, description = "2FA already enabled"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn enable(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -102,6 +126,18 @@ pub async fn enable(
 
 /// Disable 2FA. Requires a current valid TOTP code so a stolen session
 /// alone can't disable it.
+#[utoipa::path(
+    post,
+    path = "/auth/totp/disable",
+    tag = "Auth",
+    request_body = VerifyBody,
+    responses(
+        (status = 200, description = "2FA disabled", body = StatusAck),
+        (status = 400, description = "Invalid TOTP code"),
+        (status = 409, description = "2FA not enabled"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn disable(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,

@@ -90,7 +90,7 @@ The default `make up` runs the management plane only — **no actual WireGuard i
    sudo modprobe wireguard
    ```
 
-2. **Set `ZEROVPN_WG__BACKEND=shell` in `.env.prod`.** (`.env.prod.example` already ships with this default.) The api/worker now route `add_peer/remove_peer` to `wg set` instead of the no-op stub.
+2. **Set `ZEROVPN_WG__BACKEND=kernel` in `.env.prod`.** (`.env.prod.example` already ships with this default.) The api/worker drive peers directly via the kernel WireGuard netlink UAPI through `defguard_wireguard_rs` — no `wg` binary on the host, no `nsenter` shell hop. The legacy `shell` backend that shells out to `wg set` is still available for environments where netlink isn't reachable. Either way, the container running the controller needs `CAP_NET_ADMIN` and visibility of the WG interface's netns.
 
 3. **Bring up the wg container alongside the rest of the prod stack:**
    ```
@@ -219,7 +219,7 @@ The default `linuxserver/wireguard` image is fine for vanilla WireGuard. For Amn
 - [ ] `secrets/prod/*.txt` mode 0600, `.env.prod` mode 0600 and not in git (`git check-ignore .env.prod` should print the file)
 - [ ] Admin email/password rotated from the bootstrap default
 - [ ] Backup `AGE_RECIPIENT` configured + verify a restore drill before relying on it
-- [ ] `ZEROVPN_WG__BACKEND=shell` and `docker compose --profile wg up -d` to actually route packets
+- [ ] `ZEROVPN_WG__BACKEND=kernel` (or `shell` for legacy `wg`-binary deployments) and `docker compose --profile wg up -d` to actually route packets
 
 ## Container hardening notes (1C)
 

@@ -11,6 +11,7 @@ use std::net::IpAddr;
 use time::OffsetDateTime;
 use tower_sessions::Session;
 use tracing::{info, warn};
+use utoipa::ToSchema;
 use zerovpn_core::models::{User, UserRole, UserStatus};
 use zerovpn_db::repos::{audit, failed_logins, users};
 
@@ -43,10 +44,11 @@ fn client_ip_prefix(headers: &HeaderMap) -> Option<ipnetwork::IpNetwork> {
 use crate::{
     error::{ApiError, ApiResult},
     extractors::auth::{CurrentUser, SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_USER_ID},
+    routes::dto::StatusAck,
     state::AppState,
 };
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RegisterBody {
     #[garde(email)]
     pub email: String,
@@ -54,14 +56,25 @@ pub struct RegisterBody {
     pub password: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct RegisterAck {
     /// Always returned regardless of whether the email is already taken
     /// (enumeration prevention). The actual account creation only happens
     /// for new emails.
+    #[schema(example = "ok")]
     pub status: &'static str,
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/register",
+    tag = "Auth",
+    request_body = RegisterBody,
+    responses(
+        (status = 200, description = "Acknowledged (enumeration-safe — same shape whether email is new or taken)", body = RegisterAck),
+        (status = 400, description = "Validation error"),
+    ),
+)]
 pub async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterBody>,
@@ -124,7 +137,7 @@ pub async fn register(
     Ok(Json(RegisterAck { status: "ok" }))
 }
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct LoginBody {
     #[garde(email)]
     pub email: String,
@@ -137,20 +150,32 @@ pub struct LoginBody {
     pub totp_code: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct LoginResponse {
     pub user: PublicUser,
     pub must_change_password: bool,
     pub totp_required: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PublicUser {
     pub id: uuid::Uuid,
     pub email: String,
     pub role: UserRole,
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/login",
+    tag = "Auth",
+    request_body = LoginBody,
+    responses(
+        (status = 200, description = "Session established. `must_change_password` and `totp_required` are gates the client must honor before unlocking the dashboard.", body = LoginResponse),
+        (status = 401, description = "Bad credentials, missing TOTP code, or wrong TOTP code"),
+        (status = 403, description = "Account suspended"),
+        (status = 429, description = "Too many recent failed attempts for this email"),
+    ),
+)]
 pub async fn login(
     State(state): State<AppState>,
     session: Session,
@@ -383,6 +408,15 @@ async fn verify_totp_or_recovery(
     Ok(false)
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/logout",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "Session flushed", body = StatusAck),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn logout(session: Session) -> ApiResult<impl IntoResponse> {
     session
         .flush()
@@ -391,6 +425,16 @@ pub async fn logout(session: Session) -> ApiResult<impl IntoResponse> {
     Ok(Json(json!({ "status": "ok" })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/me",
+    tag = "Account",
+    responses(
+        (status = 200, description = "Authenticated user", body = PublicUser),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn me(CurrentUser(user): CurrentUser) -> impl IntoResponse {
     Json(PublicUser { id: user.id, email: user.email, role: user.role })
 }

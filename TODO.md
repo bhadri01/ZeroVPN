@@ -125,15 +125,15 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] Per-row rate sparklines (↑ Mbps · ↓ Mbps)
 - [x] Stats simulator (real WG poller is 1B-C)
 
-### Done in 1B-D (email + API tokens + device editor + retention + WG skeleton)
+### Done in 1B-D (email + device editor + retention + WG skeleton)
 - [x] Email verification + password reset + resend-verify flows (lettre + MailHog dev fallback)
-- [x] API tokens: create / list / revoke (backend + UI page)
 - [x] Per-device editor: split tunnel + custom DNS + DNS names (`PATCH /devices/{id}` + DeviceDetail page)
 - [x] Audit log CSV export endpoint + frontend download button
 - [x] Maintenance-mode enforcement middleware (503 for non-admin writes) + site-wide sticky banner
 - [x] Bandwidth quota admin endpoint (`PUT /admin/users/{id}/quota`)
 - [x] Retention purger (worker task: bandwidth samples 7d, verification tokens 24h, audit IPs 30d, soft-delete hard-purge 30d, failed_logins 30d)
 - [x] WgController trait + Noop/Shell impls; controller wired into AppState (default Noop)
+- 🚫 API tokens — **removed** in migration 9. The auth crate's `api_token` module + matching routes + UI page were ripped out; do not rebuild without explicit product decision.
 
 ### Done in 1B-E (WG runtime wiring + quota enforcement + observability + frontend polish)
 - [x] `state.wg.add_peer/remove_peer` called from device create/revoke/pause/unpause (Noop in dev, Shell in prod)
@@ -141,9 +141,9 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] Prometheus `/metrics` endpoint on api
 - [x] WG container in `docker-compose.yml` under `--profile wg` (linuxserver/wireguard, NET_ADMIN, host-net)
 - [x] `docker-compose.observability.yml` with Prometheus + Grafana + provisioned datasource
-- [x] Route-splitting: admin + device-detail + security + account + api-tokens + change-password are lazy chunks
+- [x] Route-splitting: admin + device-detail + change-password are lazy chunks (account + security pages are now sections inside `/app/settings`)
 - [x] Idle session timeout warning toast (25min warn, 30min hard sign-out)
-- [x] Force-change-password gate (login response → ProtectedRoute → /app/change-password → email reset link)
+- [x] Force-change-password gate (login response → ProtectedRoute → /app/change-password). As of 2026-05-12 the page does an inline `POST /me/change-password` (current+new+confirm) instead of an email-reset detour.
 
 ### Done in 1C (real WG runtime + production hardening + tests + WASM + lazy-load + runbook)
 - [x] Bootstrap writes `wg0.conf` to shared `wg_config` volume on first boot
@@ -152,7 +152,7 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] Container hardening: `read_only`, `tmpfs`, `cap_drop: [ALL]`, `no-new-privileges` on api/worker/caddy/frontend
 - [x] Loki + Promtail in observability profile (Grafana datasource pre-provisioned)
 - [x] Backup container (`offen/docker-volume-backup`) with optional age encryption + 14-day retention
-- [x] Webhook backend: `webhooks` table + enum + repo + admin CRUD endpoints + worker dispatcher (HTTP POST with timeouts + delivery success tracking)
+- 🚫 Webhooks — **removed** in migration 10. Table + enum + repo + admin endpoints + dispatcher were all ripped out; the landing page copy still mentions them but no working surface remains.
 - [x] OpenAPI 3.1 spec at `GET /openapi.json` (hand-curated, 30+ paths)
 - [x] Integration test crate (`tests/`) using `testcontainers-modules`; one happy-path test: create + find_by_email + quota counter + soft-delete
 - [x] Playwright E2E setup (`web/playwright.config.ts` + `web/e2e/smoke.spec.ts`) with register → login → add device flow
@@ -161,12 +161,24 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] Production runbook (`docs/runbook.md`) with WG-on-Linux setup, observability bring-up, backup/restore drill, security checklist, hardening notes
 
 ### Still open (true v1 carry-overs — small)
-- [ ] Suspicious-login email on new IP-prefix per user (template ready; needs IP plumbing through login + per-user seen-IP cache)
-- [ ] OpenAPI generation via `utoipa` derives (current spec is hand-curated; auto-derive when API surface stabilises)
-- [ ] Webhook UI on the admin page (backend done; admin manages via curl for now)
+- [x] Suspicious-login email on new IP-prefix per user — wired in `routes/auth.rs` (login flow compares the request's IP prefix against `users.last_login_ip_prefix` and fires a `SuspiciousLogin` template on mismatch).
+- [x] OpenAPI generation via `utoipa` derives — every handler annotated with `#[utoipa::path]`, every DTO derives `ToSchema`, single `ApiDoc` aggregator in `routes/openapi.rs` builds the spec at runtime. Hand-curated path list is gone; drift detector test in `openapi::tests` fails the build if a new handler is added without a path attribute.
+- [x] `defguard-wireguard-rs` UAPI peer add/remove — new `KernelController` (Linux-only, gated on `cfg(target_os = "linux")`) drives peers via netlink/UAPI through `WGApi<Kernel>`. Selected via `ZEROVPN_WG__BACKEND=kernel`; legacy `shell` backend retained for environments that can't reach the netlink socket. Falls back to `NoopController` on non-Linux hosts.
 - [ ] WASM wire deserializer wired into the frontend WS hook (crate + bindings ready; JS path used today)
-- [ ] Suspicious-login alert email on new IP-prefix per user
 - [ ] More integration-test coverage beyond the one happy-path
+- [ ] GitHub Actions CI workflow (`.github/workflows/ci.yml`) — never landed
+
+### Done 2026-05-12 (session corrections + polish)
+- [x] **IPv6 CIDR allocation** — `IpAllocator` is now an enum dispatching V4 (bitmap) / V6 (sparse HashSet + monotonic cursor). Bootstrap no longer skips IPv6 server rows. 9 unit tests including 4 IPv6 paths.
+- [x] **`zerovpn-cli rotate-server-keys`** — real implementation. Accepts `--server-id <uuid>`, `--all`, `--yes`. Mirrors the API handler: mints new keypair → rewrites `wg0.conf` → updates `servers.public_key` → audits as `cli.server_keys_rotated`.
+- [x] **`POST /me/change-password`** — authenticated in-place change. Verifies current password, hashes new, calls `update_password` (which bumps `password_changed_at`), then re-syncs the current session's snapshot so this tab stays alive while every *other* session dies on its next request. UI lives in `Settings → Security` and on the forced-change `/app/change-password` page.
+- [x] **Verification email base64 transfer encoding** — `Mailer::send` now uses `SinglePart` with explicit `Base64` Content-Transfer-Encoding. Fixes the previous QP-induced URL fragmentation (`=3D` artifacts + 76-col soft wrap mid-token).
+- [x] **Server-stats panel visible to all users** — WS filter now passes `ServerHealth` events to non-admins; sidebar drops the `isAdmin` gate. `Heartbeat` and `ServerSample` stay admin-only.
+- [x] **Finder moved under `/admin/finder`** — workspace nav entry deleted; admin-only by route guard + sidebar + command palette.
+- [x] **Account / Security merged into Settings tabs** — standalone `/app/account` and `/app/security` routes removed; UserMenu links now deep-link to `/app/settings#account` / `#security`.
+- [x] **Tooltips across the app** — shared `<WithTooltip>` helper; auto-applied via the `IconBtn` swiss primitive; explicit wraps on topology controls, TopBar, Devices, Finder, DeviceCard, DeviceDetail, ResetPassword. ModeToggle + UserMenu now tooltip on hover (suppressed while their dropdown is open).
+- [x] **Orphan code removed** — `crates/zerovpn-auth/src/api_token.rs` + `ApiTokenId` newtype (feature was dropped in migration 9 but the module lingered).
+- [x] **Broken suspicious-login email link fixed** — was `/app/security` (route deleted), now `/app/settings#security`.
 
 These are minor polish items; the core v1 product is done.
 
@@ -179,18 +191,18 @@ These are minor polish items; the core v1 product is done.
 - [x] Backup container (offen/docker-volume-backup) with age encryption
 - [x] Container hardening: read-only FS, drop caps, distroless non-root
 - [x] OpenAPI spec at `/openapi.json` (hand-curated; utoipa derive deferred)
-- [x] Webhook backend (peer connected/disconnected, bandwidth threshold)
+- 🚫 Webhook backend — **removed** in migration 10.
 - [x] E2E tests (Playwright)
 - [x] Integration tests (testcontainers)
 - [x] Production deployment guide + runbook (`docs/runbook.md`)
 - [x] WASM wire deserializer crate (wasm-pack pipeline ready; opt-in)
-- [ ] Server config editor (admin) — deferred
-- [ ] Force key rotation (admin) — deferred
+- [x] Server config editor (admin) — `/admin/servers/{id}` PATCH + `pages/admin/Servers.tsx` (`adminPatchServer`)
+- [x] Force key rotation (admin) — `/admin/servers/{id}/rotate-keys` POST + UI confirm dialog in `Servers.tsx`
 - [ ] Load test harness (Locust/k6 against API; wg-bench for tunnel) — deferred
 - [ ] WASM topology layout for >200 peers — deferred (JS path scales fine for v1)
-- [ ] frontend type generation from `/openapi.json` in CI — deferred
+- [ ] frontend type generation from `/openapi.json` in CI — now a one-liner with `openapi-typescript` since the spec is utoipa-derived from handler attributes
 
-**Phase 1C verification (2026-05-07): 22/22 smoke tests passing against rebuilt stack. `/openapi.json` returns 32 paths. `/metrics` and `/admin/webhooks` both reachable. Stack memory ~600 MB idle.**
+**Phase 1C verification (2026-05-07): 22/22 smoke tests passing against rebuilt stack. `/openapi.json` returns 32 paths. `/metrics` reachable. Stack memory ~600 MB idle.**
 
 ---
 

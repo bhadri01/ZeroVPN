@@ -5,6 +5,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use zerovpn_db::repos::{bandwidth, devices, server_samples};
 
@@ -14,14 +15,14 @@ use crate::{
     state::AppState,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
 pub struct RangeQuery {
     /// "24h", "7d", "30d" — defaults to 24h.
     #[serde(default)]
     pub range: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct Bucket {
     #[serde(with = "time::serde::rfc3339")]
     pub bucket_start: OffsetDateTime,
@@ -35,7 +36,7 @@ impl From<bandwidth::BandwidthBucket> for Bucket {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct BandwidthResponse {
     pub bucket: &'static str, // "hour" or "day"
     pub range: String,
@@ -43,6 +44,21 @@ pub struct BandwidthResponse {
 }
 
 /// Per-device bandwidth history.
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/bandwidth",
+    tag = "Bandwidth",
+    params(
+        ("id" = uuid::Uuid, Path, description = "Device UUID"),
+        RangeQuery,
+    ),
+    responses(
+        (status = 200, description = "Bucketed rx/tx history", body = BandwidthResponse),
+        (status = 400, description = "Invalid range"),
+        (status = 404, description = "Device not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn for_device(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -79,7 +95,7 @@ pub async fn for_device(
 
 // ── Raw tick-level history ─────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
 pub struct HistoryQuery {
     /// RFC3339 lower bound (inclusive). Defaults to 1 hour ago.
     #[serde(default, with = "time::serde::rfc3339::option")]
@@ -91,7 +107,7 @@ pub struct HistoryQuery {
     pub limit: Option<i64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeviceHistoryPoint {
     #[serde(with = "time::serde::rfc3339")]
     pub sampled_at: OffsetDateTime,
@@ -99,7 +115,7 @@ pub struct DeviceHistoryPoint {
     pub tx_bytes: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeviceHistoryResponse {
     pub device_id: Uuid,
     #[serde(with = "time::serde::rfc3339")]
@@ -112,6 +128,20 @@ pub struct DeviceHistoryResponse {
 /// Per-device raw samples (1 row per poll tick). Backs the "every-moment"
 /// detailed chart on DeviceDetail; bound your window or you'll pull a huge
 /// payload (~86k rows/day at 1 Hz).
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/history",
+    tag = "Bandwidth",
+    params(
+        ("id" = uuid::Uuid, Path, description = "Device UUID"),
+        HistoryQuery,
+    ),
+    responses(
+        (status = 200, description = "Raw rx/tx samples in the requested window", body = DeviceHistoryResponse),
+        (status = 404, description = "Device not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn device_history(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -142,7 +172,7 @@ pub async fn device_history(
     }))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ServerHistoryPoint {
     #[serde(with = "time::serde::rfc3339")]
     pub sampled_at: OffsetDateTime,
@@ -153,7 +183,7 @@ pub struct ServerHistoryPoint {
     pub handshake_count: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ServerHistoryResponse {
     pub server_id: Uuid,
     #[serde(with = "time::serde::rfc3339")]
@@ -164,6 +194,20 @@ pub struct ServerHistoryResponse {
 }
 
 /// Per-server raw history. Admin-only because it aggregates across users.
+#[utoipa::path(
+    get,
+    path = "/servers/{id}/history",
+    tag = "Admin",
+    params(
+        ("id" = uuid::Uuid, Path, description = "Server UUID"),
+        HistoryQuery,
+    ),
+    responses(
+        (status = 200, description = "Per-server aggregate samples", body = ServerHistoryResponse),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn server_history(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
@@ -194,6 +238,17 @@ pub async fn server_history(
 }
 
 /// Aggregate across all of a user's devices.
+#[utoipa::path(
+    get,
+    path = "/bandwidth",
+    tag = "Bandwidth",
+    params(RangeQuery),
+    responses(
+        (status = 200, description = "User-aggregate bucketed bandwidth", body = BandwidthResponse),
+        (status = 400, description = "Invalid range"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn for_user(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,

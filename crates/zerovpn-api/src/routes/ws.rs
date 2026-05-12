@@ -19,6 +19,21 @@ use crate::{
 /// poll, so 64 is plenty.
 pub const BROADCAST_BUFFER: usize = 64;
 
+/// Upgrade the connection to a WebSocket and stream live events
+/// (`heartbeat`, `stats_delta`, `server_health`, etc.) as MessagePack
+/// frames. Filtering: regular users only see events scoped to their
+/// own user_id; admins see everything except `Heartbeat` and
+/// `ServerSample` (admin-only).
+#[utoipa::path(
+    get,
+    path = "/ws",
+    tag = "Realtime",
+    responses(
+        (status = 101, description = "Switching Protocols — WebSocket upgrade succeeded"),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn ws(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,

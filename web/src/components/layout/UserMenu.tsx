@@ -17,6 +17,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { logout as apiLogout } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
@@ -25,6 +30,9 @@ export function UserMenu() {
   const reset = useAuth((s) => s.reset)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
+  // Suppress the avatar's hover tooltip while the dropdown is open so
+  // the two floating elements don't visually collide.
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const handleLogout = async () => {
     setSigningOut(true)
@@ -44,19 +52,24 @@ export function UserMenu() {
 
   return (
     <>
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="rounded-none"
-          aria-label={`Open user menu for ${user.email}`}
-        >
-          <span className="bg-muted text-muted-foreground border-border flex size-7 items-center justify-center border font-mono text-[11px] font-medium uppercase">
-            {initial}
-          </span>
-        </Button>
-      </DropdownMenuTrigger>
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <Tooltip open={menuOpen ? false : undefined}>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-none"
+              aria-label={`Open user menu for ${user.email}`}
+            >
+              <span className="bg-muted text-muted-foreground border-border flex size-7 items-center justify-center border font-mono text-[11px] font-medium uppercase">
+                {initial}
+              </span>
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{user.email}</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="end" className="min-w-[14rem]">
         <DropdownMenuLabel className="font-normal">
           <p className="text-foreground truncate text-sm font-medium">

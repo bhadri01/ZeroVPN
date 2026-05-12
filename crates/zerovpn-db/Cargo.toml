@@ -17,3 +17,6 @@ uuid = { workspace = true }
 ipnetwork = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }
+# Derive ToSchema on a handful of repo-level types that the OpenAPI
+# document wants to fold in (user_prefs payloads, etc). Compile-time only.
+utoipa = { workspace = true }

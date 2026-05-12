@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tracing::info;
+use utoipa::ToSchema;
 use uuid::Uuid;
 use zerovpn_core::models::{Device, DeviceOs, DeviceStatus};
 use zerovpn_db::repos::{audit, devices, servers};
@@ -21,13 +22,14 @@ use zerovpn_wg::{config, ip_alloc::IpAllocator, keys, qr};
 use crate::{
     error::{ApiError, ApiResult},
     extractors::auth::CurrentUser,
+    routes::dto::StatusAck,
     state::AppState,
 };
 
 const MAX_DEVICES_PER_USER: usize = 5;
 const PERSISTENT_KEEPALIVE: u16 = 25;
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateBody {
     #[garde(length(min = 1, max = 64))]
     pub name: String,
@@ -57,19 +59,23 @@ pub struct CreateBody {
     pub store_private_key: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CreatedDevice {
     pub device: PublicDevice,
+    /// Rendered WireGuard .conf (full text). Shown to the user once at
+    /// create / rotate / redownload time.
     pub config: String,
+    /// SVG of the .conf as a QR code (for mobile clients).
     pub qr_svg: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct PublicDevice {
     pub id: Uuid,
     pub name: String,
     pub os: DeviceOs,
     pub public_key: String,
+    #[schema(value_type = String, example = "10.10.0.5")]
     pub allocated_ip: IpAddr,
     pub status: DeviceStatus,
     pub server_id: Uuid,
@@ -117,6 +123,16 @@ impl From<Device> for PublicDevice {
 const SPLIT_TUNNEL_ALLOWED_IPS: &str =
     "10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fd00::/8";
 
+#[utoipa::path(
+    get,
+    path = "/devices",
+    tag = "Devices",
+    responses(
+        (status = 200, description = "User's devices in display order", body = Vec<PublicDevice>),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn list(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -126,6 +142,19 @@ pub async fn list(
     Ok(Json(out))
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    responses(
+        (status = 200, description = "Device row", body = PublicDevice),
+        (status = 404, description = "Not found / not owned"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn get(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -137,7 +166,7 @@ pub async fn get(
     Ok(Json(PublicDevice::from(d)))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeviceEvent {
     pub id: i64,
     pub action: String,
@@ -146,7 +175,7 @@ pub struct DeviceEvent {
     pub created_at: time::OffsetDateTime,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, utoipa::IntoParams)]
 pub struct EventsQuery {
     /// Page size. Clamped to [1, 500] server-side. Defaults to 100 when
     /// omitted — enough to render a full day of typical activity.
@@ -158,6 +187,20 @@ pub struct EventsQuery {
 /// (created / paused / unpaused / revoked), config + DNS changes, key
 /// rotations, conf re-downloads, and the worker-emitted online/offline
 /// transitions. Ownership is enforced — the caller must own the device.
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/events",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+        EventsQuery,
+    ),
+    responses(
+        (status = 200, description = "Audit entries targeting this device, newest first", body = Vec<DeviceEvent>),
+        (status = 404, description = "Not found / not owned"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn events(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -183,6 +226,18 @@ pub async fn events(
     Ok(Json(out))
 }
 
+#[utoipa::path(
+    post,
+    path = "/devices",
+    tag = "Devices",
+    request_body = CreateBody,
+    responses(
+        (status = 201, description = "Device created with fresh keypair + .conf + QR (shown ONCE)", body = CreatedDevice),
+        (status = 400, description = "Validation error / invalid IP"),
+        (status = 409, description = "Per-user device cap hit or chosen IP unavailable"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn create(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -414,9 +469,19 @@ pub async fn create(
 }
 
 /// Generates a fresh keypair for an existing (non-revoked) device, swaps
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ReorderBody {
     pub ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ReorderAck {
+    #[schema(example = "ok")]
+    pub status: &'static str,
+    /// Rows actually updated. Ids the caller doesn't own are silently
+    /// filtered out by the UPDATE, so `updated < ids.len()` simply means
+    /// some ids were unknown.
+    pub updated: u64,
 }
 
 /// Persist the user's preferred device order. Caller sends the full list
@@ -425,6 +490,17 @@ pub struct ReorderBody {
 /// fetch. Ignores ids that don't belong to the caller (the UPDATE's
 /// `user_id` clause filters them out) so a malicious body can't reorder
 /// another user's devices.
+#[utoipa::path(
+    put,
+    path = "/devices/order",
+    tag = "Devices",
+    request_body = ReorderBody,
+    responses(
+        (status = 200, description = "Display order persisted", body = ReorderAck),
+        (status = 400, description = "Too many ids (>500)"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn reorder(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -459,7 +535,7 @@ pub async fn reorder(
 /// server-side private-key storage for the rotated key. Omit / null →
 /// inherit the device's current setting; `true` → start storing (or
 /// keep storing); `false` → stop storing.
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, ToSchema)]
 pub struct RotateBody {
     #[serde(default)]
     pub store_private_key: Option<bool>,
@@ -469,6 +545,21 @@ pub struct RotateBody {
 /// returns the rendered config + QR so the user can scan the new
 /// credentials on their device. Mirrors the `create` response shape so
 /// the same dialog UI can render it.
+#[utoipa::path(
+    post,
+    path = "/devices/{id}/rotate-keys",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    request_body(content = RotateBody, description = "Optional; flips server-side private-key storage", content_type = "application/json"),
+    responses(
+        (status = 200, description = "New keypair, conf, and QR (shown ONCE)", body = CreatedDevice),
+        (status = 404, description = "Not found / not owned"),
+        (status = 409, description = "Device is revoked"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn rotate_keys(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -613,6 +704,19 @@ pub async fn rotate_keys(
     }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/devices/{id}",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    responses(
+        (status = 200, description = "Device revoked + IP released back to the allocator", body = StatusAck),
+        (status = 404, description = "Not found / not owned"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn delete(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -648,7 +752,7 @@ pub async fn delete(
     Ok(Json(json!({ "status": "ok" })))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PatchBody {
     pub name: Option<String>,
     pub os: Option<DeviceOs>,
@@ -656,10 +760,30 @@ pub struct PatchBody {
     pub dns_override: Option<Vec<String>>,
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct StoredKeyAck {
+    #[schema(example = "ok")]
+    pub status: &'static str,
+    pub private_key_stored: bool,
+}
+
 /// Stop storing the device's encrypted private key on the server. The
 /// device keeps working — only the recovery path (re-download .conf
 /// without rotating) is removed. To re-enable storage on a device that
 /// was previously cleared, rotate keys with `{"store_private_key":true}`.
+#[utoipa::path(
+    delete,
+    path = "/devices/{id}/stored-key",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    responses(
+        (status = 200, description = "Stored key cleared (idempotent)", body = StoredKeyAck),
+        (status = 404, description = "Not found / not owned"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn clear_stored_key(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -694,6 +818,20 @@ pub async fn clear_stored_key(
 /// Returns 404 if the device doesn't exist, 409 if the device was
 /// created without `store_private_key` (no key to recover). Owner-only;
 /// audit-logged so a stolen session leaves a paper trail.
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/conf",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    responses(
+        (status = 200, description = "Re-rendered .conf + QR using current overrides", body = CreatedDevice),
+        (status = 404, description = "Not found / not owned"),
+        (status = 409, description = "Device is revoked, or was not created with stored private key"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn redownload_conf(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -797,6 +935,21 @@ pub async fn redownload_conf(
     }))
 }
 
+#[utoipa::path(
+    patch,
+    path = "/devices/{id}",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    request_body = PatchBody,
+    responses(
+        (status = 200, description = "Device updated", body = StatusAck),
+        (status = 400, description = "Validation error (bad CIDR / IP)"),
+        (status = 404, description = "Not found / not owned"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn patch(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -872,6 +1025,19 @@ pub async fn patch(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/devices/{id}/pause",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    responses(
+        (status = 200, description = "Device paused; peer removed from running WG", body = StatusAck),
+        (status = 404, description = "Not found / not owned"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn pause(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -881,6 +1047,19 @@ pub async fn pause(
     Ok(Json(json!({ "status": "paused" })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/devices/{id}/unpause",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    responses(
+        (status = 200, description = "Device resumed; peer re-added to running WG", body = StatusAck),
+        (status = 404, description = "Not found / not owned"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn unpause(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,

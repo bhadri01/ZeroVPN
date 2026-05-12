@@ -8,18 +8,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tracing::info;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use zerovpn_core::models::{Server, UserRole, UserStatus};
-use zerovpn_db::repos::{audit, servers, users};
+use zerovpn_db::repos::{audit, bandwidth, servers, users};
 
 use crate::{
     error::{ApiError, ApiResult},
     extractors::auth::RequireAdmin,
+    routes::dto::StatusAck,
     state::AppState,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct ListQuery {
+    /// Free-text email search (substring, case-insensitive).
     #[serde(default)]
     pub q: Option<String>,
     #[serde(default = "default_limit")]
@@ -29,7 +32,7 @@ pub struct ListQuery {
 }
 fn default_limit() -> i64 { 50 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AdminUser {
     pub id: Uuid,
     pub email: String,
@@ -43,15 +46,26 @@ pub struct AdminUser {
     pub device_count: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AdminUserList {
     pub total: i64,
     pub items: Vec<AdminUser>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/users",
+    tag = "Admin",
+    params(ListQuery),
+    responses(
+        (status = 200, description = "Paginated user list", body = AdminUserList),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn list_users(
     State(state): State<AppState>,
-    RequireAdmin(_): RequireAdmin,
+    RequireAdmin(_admin): RequireAdmin,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<impl IntoResponse> {
     let limit = q.limit.clamp(1, 200);
@@ -74,11 +88,27 @@ pub async fn list_users(
     Ok(Json(AdminUserList { total, items }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct StatusBody {
     pub status: UserStatus,
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/users/{id}/status",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Target user UUID"),
+    ),
+    request_body = StatusBody,
+    responses(
+        (status = 200, description = "Status updated", body = StatusAck),
+        (status = 400, description = "Cannot change your own status"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "User not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn set_user_status(
     State(state): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -110,7 +140,7 @@ pub async fn set_user_status(
 
 // ---- Audit log ------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct AuditQuery {
     #[serde(default = "default_limit")]
     pub limit: i64,
@@ -121,7 +151,7 @@ pub struct AuditQuery {
     pub action: Option<String>,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
 pub struct AuditRow {
     pub id: i64,
     pub actor_user_id: Option<Uuid>,
@@ -133,14 +163,25 @@ pub struct AuditRow {
     pub created_at: OffsetDateTime,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AuditList {
     pub items: Vec<AuditRow>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/audit",
+    tag = "Admin",
+    params(AuditQuery),
+    responses(
+        (status = 200, description = "Audit log entries, newest first", body = AuditList),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn list_audit(
     State(state): State<AppState>,
-    RequireAdmin(_): RequireAdmin,
+    RequireAdmin(_admin): RequireAdmin,
     Query(q): Query<AuditQuery>,
 ) -> ApiResult<impl IntoResponse> {
     let limit = q.limit.clamp(1, 500);
@@ -162,7 +203,7 @@ pub async fn list_audit(
 
 // ---- Failed logins --------------------------------------------------------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
 pub struct FailedLoginRow {
     pub id: i64,
     pub email_attempted: Option<String>,
@@ -171,15 +212,26 @@ pub struct FailedLoginRow {
     pub attempted_at: OffsetDateTime,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct FailedLoginList {
     pub items: Vec<FailedLoginRow>,
 }
 
 /// Audit log as CSV for download.
+#[utoipa::path(
+    get,
+    path = "/admin/audit.csv",
+    tag = "Admin",
+    params(AuditQuery),
+    responses(
+        (status = 200, description = "CSV download", content_type = "text/csv"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn list_audit_csv(
     State(state): State<AppState>,
-    RequireAdmin(_): RequireAdmin,
+    RequireAdmin(_admin): RequireAdmin,
     Query(q): Query<AuditQuery>,
 ) -> ApiResult<axum::response::Response> {
     let limit = q.limit.clamp(1, 5000);
@@ -228,12 +280,26 @@ pub async fn list_audit_csv(
     Ok(resp)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct QuotaBody {
     /// Cap in bytes for the current month. Null/0 → unlimited.
     pub monthly_byte_cap: Option<i64>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/users/{id}/quota",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Target user UUID"),
+    ),
+    request_body = QuotaBody,
+    responses(
+        (status = 200, description = "Quota updated (null/0 = unlimited)", body = StatusAck),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn set_user_quota(
     State(state): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -266,9 +332,20 @@ pub async fn set_user_quota(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/failed-logins",
+    tag = "Admin",
+    params(AuditQuery),
+    responses(
+        (status = 200, description = "Recent failed login attempts", body = FailedLoginList),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn list_failed_logins(
     State(state): State<AppState>,
-    RequireAdmin(_): RequireAdmin,
+    RequireAdmin(_admin): RequireAdmin,
     Query(q): Query<AuditQuery>,
 ) -> ApiResult<impl IntoResponse> {
     let limit = q.limit.clamp(1, 500);
@@ -288,16 +365,27 @@ pub async fn list_failed_logins(
 
 // ---- Maintenance mode -----------------------------------------------------
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
 pub struct MaintenanceState {
     pub maintenance_mode: bool,
     pub maintenance_message: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/maintenance",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Current maintenance state", body = MaintenanceState),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn get_maintenance(
     State(state): State<AppState>,
-    RequireAdmin(_): RequireAdmin,
+    RequireAdmin(_admin): RequireAdmin,
 ) -> ApiResult<impl IntoResponse> {
     let row: MaintenanceState = sqlx::query_as(
         "SELECT maintenance_mode, maintenance_message, updated_at FROM app_settings WHERE id = 1",
@@ -307,12 +395,23 @@ pub async fn get_maintenance(
     Ok(Json(row))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct MaintenanceBody {
     pub maintenance_mode: bool,
     pub maintenance_message: Option<String>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/maintenance",
+    tag = "Admin",
+    request_body = MaintenanceBody,
+    responses(
+        (status = 200, description = "Maintenance toggled (writes blocked for non-admins while ON)", body = StatusAck),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn set_maintenance(
     State(state): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -343,7 +442,7 @@ pub async fn set_maintenance(
 
 // --- Server admin -----------------------------------------------------------
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AdminServer {
     pub id: Uuid,
     pub name: String,
@@ -351,7 +450,9 @@ pub struct AdminServer {
     pub endpoint_host: String,
     pub endpoint_port: i32,
     pub public_key: String,
+    /// CIDR rendered as a string ("10.10.0.0/22").
     pub cidr: String,
+    /// DNS resolvers as plain IP strings (no /32 suffix).
     pub dns_servers: Vec<String>,
     pub mtu: i32,
     pub is_active: bool,
@@ -374,16 +475,26 @@ impl From<Server> for AdminServer {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/servers",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Active WG servers", body = Vec<AdminServer>),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn list_servers(
     State(state): State<AppState>,
-    RequireAdmin(_): RequireAdmin,
+    RequireAdmin(_admin): RequireAdmin,
 ) -> ApiResult<impl IntoResponse> {
     let rows = servers::list_active(&state.pool).await?;
     let out: Vec<AdminServer> = rows.into_iter().map(Into::into).collect();
     Ok(Json(out))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PatchServerBody {
     pub endpoint_host: Option<String>,
     pub endpoint_port: Option<i32>,
@@ -391,6 +502,21 @@ pub struct PatchServerBody {
     pub dns_servers: Option<Vec<String>>,
 }
 
+#[utoipa::path(
+    patch,
+    path = "/admin/servers/{id}",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Server UUID"),
+    ),
+    request_body = PatchServerBody,
+    responses(
+        (status = 200, description = "Server config updated", body = StatusAck),
+        (status = 400, description = "Validation error (port / MTU / DNS shape)"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn patch_server(
     State(state): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -456,6 +582,29 @@ pub async fn patch_server(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RotateServerAck {
+    #[schema(example = "ok")]
+    pub status: &'static str,
+    pub new_public_key: String,
+    pub wg0_conf_rewritten: bool,
+    pub warning: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/servers/{id}/rotate-keys",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Server UUID"),
+    ),
+    responses(
+        (status = 200, description = "Keypair rotated; every peer .conf is now stale", body = RotateServerAck),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "Server not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn rotate_server_keys(
     State(state): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -524,4 +673,78 @@ pub async fn rotate_server_keys(
         "wg0_conf_rewritten": conf_write_ok,
         "warning": "All peer .conf files reference the OLD server pubkey and must be re-downloaded. Restart the wg container to pick up the new private key.",
     })))
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminStatsResponse {
+    pub total: i64,
+    pub active: i64,
+    pub suspended: i64,
+    pub pending_verification: i64,
+    pub devices_total: i64,
+}
+
+/// Deployment-wide user + device counts. Powers the admin overview KPI
+/// strip; replaces the previous client-side counts which were bounded to
+/// whatever page of the user list the admin was looking at.
+#[utoipa::path(
+    get,
+    path = "/admin/stats",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Aggregate user + device counts", body = AdminStatsResponse),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn stats(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+) -> ApiResult<impl IntoResponse> {
+    let s = users::admin_stats(&state.pool).await?;
+    Ok(Json(AdminStatsResponse {
+        total: s.total,
+        active: s.active,
+        suspended: s.suspended,
+        pending_verification: s.pending_verification,
+        devices_total: s.devices_total,
+    }))
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminFleetBandwidthResponse {
+    /// Total bytes received by every user's devices in the window.
+    pub rx_bytes: i64,
+    /// Total bytes transmitted by every user's devices in the window.
+    pub tx_bytes: i64,
+    /// Length of the window in days. Always 30 for now; exposed so the
+    /// frontend can label the card honestly if the value ever changes.
+    pub window_days: i64,
+}
+
+/// Fleet-wide bandwidth over the last 30 days. Pulled from the hourly
+/// `bandwidth_aggregates` rollups so the value survives reloads and
+/// doesn't depend on a live WS connection.
+#[utoipa::path(
+    get,
+    path = "/admin/bandwidth",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Fleet RX/TX totals", body = AdminFleetBandwidthResponse),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn fleet_bandwidth(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+) -> ApiResult<impl IntoResponse> {
+    let window_days = 30i64;
+    let since = OffsetDateTime::now_utc() - time::Duration::days(window_days);
+    let (rx_bytes, tx_bytes) = bandwidth::fleet_totals(&state.pool, since).await?;
+    Ok(Json(AdminFleetBandwidthResponse {
+        rx_bytes,
+        tx_bytes,
+        window_days,
+    }))
 }

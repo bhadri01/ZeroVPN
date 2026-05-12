@@ -233,6 +233,8 @@ async fn main() -> Result<()> {
                     "/me/preferences",
                     get(routes::me::get_preferences).put(routes::me::set_preferences),
                 )
+                .route("/admin/stats", get(routes::admin::stats))
+                .route("/admin/bandwidth", get(routes::admin::fleet_bandwidth))
                 .route("/admin/users", get(routes::admin::list_users))
                 .route(
                     "/admin/users/{id}/status",

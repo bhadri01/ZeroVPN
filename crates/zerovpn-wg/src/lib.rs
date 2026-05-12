@@ -12,3 +12,5 @@ pub mod pause;
 pub mod qr;
 
 pub use control::{ControlError, NoopController, ShellController, WgController};
+#[cfg(target_os = "linux")]
+pub use control::KernelController;

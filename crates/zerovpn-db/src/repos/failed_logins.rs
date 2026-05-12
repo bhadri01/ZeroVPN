@@ -1,10 +1,11 @@
 use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 
 use crate::PgPool;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "failed_login_reason", rename_all = "snake_case")]
 pub enum FailedLoginReason {
