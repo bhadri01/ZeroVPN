@@ -25,8 +25,6 @@ async fn install_schema(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     pool.execute(&*sql).await?;
     let sql2 = std::fs::read_to_string("migrations/00000000000002_revoked_devices_release_ip.sql")?;
     pool.execute(&*sql2).await?;
-    let sql3 = std::fs::read_to_string("migrations/00000000000003_webhooks.sql")?;
-    pool.execute(&*sql3).await?;
     Ok(())
 }
 

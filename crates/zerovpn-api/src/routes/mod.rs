@@ -1,5 +1,4 @@
 pub mod admin;
-pub mod api_tokens;
 pub mod auth;
 pub mod bandwidth;
 pub mod devices;
@@ -10,5 +9,4 @@ pub mod me;
 pub mod metrics;
 pub mod openapi;
 pub mod totp;
-pub mod webhooks;
 pub mod ws;

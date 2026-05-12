@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
@@ -90,6 +90,58 @@ pub async fn set(
 
     info!(user_id = %user.id, device_id = %id, count = wanted.len(), "dns names updated");
     Ok(Json(DnsResponse { dns_names: wanted }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CheckQuery {
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckResponse {
+    /// True iff the candidate name matches the server's hostname regex.
+    pub valid: bool,
+    /// True iff the candidate is both valid and not currently held by
+    /// any device in the deployment. Always false when `valid` is false.
+    pub available: bool,
+    /// Short reason when not available (e.g. "invalid", "taken").
+    /// Omitted on `available: true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Pre-flight DNS-name availability probe. Used by the create-device
+/// dialog so the user knows before submit whether their requested
+/// `<device>.<user>.vpn.local` collides with another peer. Cheap: a
+/// regex check + one indexed list of every existing dns_name. Safe to
+/// call repeatedly (debounced from the client side).
+pub async fn check_availability(
+    State(state): State<AppState>,
+    CurrentUser(_user): CurrentUser,
+    Query(q): Query<CheckQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let name = q.name.trim().to_lowercase();
+    if validate_hostname(&name).is_err() {
+        return Ok(Json(CheckResponse {
+            valid: false,
+            available: false,
+            reason: Some("invalid".into()),
+        }));
+    }
+    let all = devices::all_dns_names(&state.pool).await?;
+    let taken = all.iter().any(|n| n == &name);
+    if taken {
+        return Ok(Json(CheckResponse {
+            valid: true,
+            available: false,
+            reason: Some("taken".into()),
+        }));
+    }
+    Ok(Json(CheckResponse {
+        valid: true,
+        available: true,
+        reason: None,
+    }))
 }
 
 async fn sync_dnsmasq(pool: &zerovpn_db::PgPool) -> anyhow::Result<()> {

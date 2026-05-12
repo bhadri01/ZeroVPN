@@ -19,7 +19,7 @@ export function AuditLogPage() {
       <PageHead
         eyebrow="Admin · 03"
         title="Audit log"
-        sub="180-day retention · CSV export · signed via webhook mirror"
+        sub="180-day retention · CSV export"
         right={
           <Button asChild variant="outline" size="sm">
             <a href={adminAuditCsvUrl(5000)}>

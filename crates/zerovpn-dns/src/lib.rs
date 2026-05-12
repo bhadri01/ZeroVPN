@@ -13,8 +13,15 @@ use thiserror::Error;
 use tokio::{fs, io::AsyncWriteExt};
 use tracing::info;
 
+// Multi-label hostnames are permitted under `.vpn.local` so user-supplied
+// formats like `<device>.<user>.vpn.local` round-trip. Each label is the
+// same 1–30 char alphanumeric-with-hyphens shape as before; the optional
+// repeated group lets additional labels stack to the left.
 static HOSTNAME_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?\.vpn\.local$").unwrap()
+    Regex::new(
+        r"^[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?)*\.vpn\.local$",
+    )
+    .unwrap()
 });
 
 #[derive(Debug, Error)]
@@ -67,9 +74,16 @@ mod tests {
         assert!(validate_hostname("laptop.vpn.local").is_ok());
         assert!(validate_hostname("my-phone.vpn.local").is_ok());
         assert!(validate_hostname("a.vpn.local").is_ok());
+        // Multi-label hostnames: <device>.<user>.vpn.local
+        assert!(validate_hostname("mac.bhadri.vpn.local").is_ok());
+        assert!(validate_hostname("my-phone.user-1.vpn.local").is_ok());
         assert!(validate_hostname("LAPTOP.vpn.local").is_err());
         assert!(validate_hostname("-bad.vpn.local").is_err());
         assert!(validate_hostname("bad-.vpn.local").is_err());
         assert!(validate_hostname("laptop.example.com").is_err());
+        // Empty label rejected (consecutive dots)
+        assert!(validate_hostname("a..b.vpn.local").is_err());
+        // Label can't start with hyphen even in a middle segment.
+        assert!(validate_hostname("mac.-bad.vpn.local").is_err());
     }
 }

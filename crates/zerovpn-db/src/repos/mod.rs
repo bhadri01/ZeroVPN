@@ -1,4 +1,3 @@
-pub mod api_tokens;
 pub mod audit;
 pub mod bandwidth;
 pub mod devices;
@@ -8,4 +7,3 @@ pub mod servers;
 pub mod topology_positions;
 pub mod users;
 pub mod verification_tokens;
-pub mod webhooks;

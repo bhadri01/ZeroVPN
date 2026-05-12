@@ -56,7 +56,6 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 export type UserRole = "admin" | "user"
 export type DeviceOs = "ios" | "android" | "macos" | "windows" | "linux" | "other"
 export type DeviceStatus = "active" | "paused" | "revoked"
-export type ApiTokenScope = "read" | "read_write" | "admin"
 export type UserStatus =
   | "active"
   | "suspended"
@@ -93,6 +92,11 @@ export interface PublicDevice {
   dns_override: string[] | null
   last_handshake_at: string | null
   created_at: string
+  /** Presence flag: the server holds a KEK-encrypted copy of the
+   *  device's WG private key. Enables re-download via
+   *  `GET /devices/{id}/conf`. The key itself is never exposed by
+   *  list / get responses. */
+  private_key_stored: boolean
 }
 
 export interface CreatedDevice {
@@ -197,11 +201,22 @@ export const createDevice = (body: {
   /** Optional manual IPv4 — when set, the server reserves exactly this
    *  address. Omit to let the allocator pick the next free slot. */
   allocated_ip?: string
+  /** When true, the server encrypts the generated WG private key with
+   *  its KEK and persists it on the device row so the user can re-
+   *  download the .conf later. Default false (zero-knowledge). */
+  store_private_key?: boolean
 }) =>
   apiFetch<CreatedDevice>("/devices", {
     method: "POST",
     body: JSON.stringify(body),
   })
+
+/** Re-render the device's .conf from the server's stored private key.
+ *  Returns the same shape as `createDevice` so the existing "device
+ *  created" dialog UI can render it. Requires the device to have been
+ *  created with `store_private_key: true`. */
+export const redownloadDeviceConf = (id: string) =>
+  apiFetch<CreatedDevice>(`/devices/${id}/conf`)
 
 export const patchDevice = (
   id: string,
@@ -225,11 +240,74 @@ export const pauseDevice = (id: string) =>
 export const unpauseDevice = (id: string) =>
   apiFetch<{ status: string }>(`/devices/${id}/unpause`, { method: "POST" })
 
+/** Regenerate the device's keypair server-side. Returns the same shape
+ *  as `createDevice` — the device row, a freshly rendered wg-conf with
+ *  the new private key, and a QR SVG. The old config stops working the
+ *  moment this call returns; the user must re-import / re-scan.
+ *
+ *  Optional `store_private_key` overrides the device's existing opt-in:
+ *   - `true`  → store (KEK-encrypt) the rotated key on the server
+ *   - `false` → don't store, and clear any prior stored key
+ *   - omit    → keep whatever the device was already doing */
+export const rotateDeviceKeys = (
+  id: string,
+  opts: { store_private_key?: boolean } = {},
+) =>
+  apiFetch<CreatedDevice>(`/devices/${id}/rotate-keys`, {
+    method: "POST",
+    body: JSON.stringify(opts),
+  })
+
+/** Stop storing the device's encrypted private key on the server. The
+ *  tunnel keeps working — only the recovery path (re-download .conf
+ *  without rotating) is gone. */
+export const clearStoredDeviceKey = (id: string) =>
+  apiFetch<{ status: string; private_key_stored: boolean }>(
+    `/devices/${id}/stored-key`,
+    { method: "DELETE" },
+  )
+
+/** Persist the user's preferred device order. The server bulk-assigns
+ *  `display_order` so the arrangement reflects on every signed-in
+ *  session. `ids` must be the full set of the caller's device ids in
+ *  the new order. */
+export const reorderDevices = (ids: string[]) =>
+  apiFetch<{ status: string; updated: number }>("/devices/order", {
+    method: "PUT",
+    body: JSON.stringify({ ids }),
+  })
+
 export const setDeviceDns = (id: string, dns_names: string[]) =>
   apiFetch<{ dns_names: string[] }>(`/devices/${id}/dns`, {
     method: "PUT",
     body: JSON.stringify({ dns_names }),
   })
+
+/** A single entry in the device's activity timeline. `action` is a dotted
+ *  identifier — see the action catalogue in DeviceTimeline. `metadata`
+ *  is an opaque JSON blob shaped per-action. */
+export interface DeviceEvent {
+  id: number
+  action: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export const listDeviceEvents = (id: string, limit = 100) =>
+  apiFetch<DeviceEvent[]>(`/devices/${id}/events?limit=${limit}`)
+
+/** Pre-flight DNS-name availability probe used by the create-device
+ *  dialog. Returns whether the candidate FQDN matches the server regex
+ *  and whether it's currently held by some other device. */
+export interface DnsCheck {
+  valid: boolean
+  available: boolean
+  reason?: "invalid" | "taken"
+}
+export const checkDnsName = (name: string) =>
+  apiFetch<DnsCheck>(
+    `/devices/dns-check?name=${encodeURIComponent(name)}`,
+  )
 
 // --- bandwidth -----------------------------------------------------------
 
@@ -339,42 +417,6 @@ export const exportData = () => apiFetch<unknown>("/me/data-export")
 export const deleteAccount = () =>
   apiFetch<{ status: string }>("/me/account", { method: "DELETE" })
 
-// --- API tokens ----------------------------------------------------------
-
-export interface ApiTokenRow {
-  id: string
-  name: string
-  scope: ApiTokenScope
-  last_used_at: string | null
-  expires_at: string | null
-  revoked_at: string | null
-  created_at: string
-}
-
-export interface CreatedApiToken {
-  id: string
-  name: string
-  scope: ApiTokenScope
-  plaintext_token: string
-  created_at: string
-  expires_at: string | null
-}
-
-export const listApiTokens = () => apiFetch<ApiTokenRow[]>("/api-tokens")
-
-export const createApiToken = (body: {
-  name: string
-  scope?: ApiTokenScope
-  expires_in_days?: number
-}) =>
-  apiFetch<CreatedApiToken>("/api-tokens", {
-    method: "POST",
-    body: JSON.stringify(body),
-  })
-
-export const revokeApiToken = (id: string) =>
-  apiFetch<{ status: string }>(`/api-tokens/${id}`, { method: "DELETE" })
-
 // --- admin ---------------------------------------------------------------
 
 export interface AdminUser {
@@ -463,53 +505,6 @@ export const adminSetMaintenance = (
       maintenance_message: maintenance_message ?? null,
     }),
   })
-
-// ---------------------------------------------------------------------------
-// Webhooks (admin)
-// ---------------------------------------------------------------------------
-
-export type WebhookEventKind =
-  | "peer_connected"
-  | "peer_disconnected"
-  | "device_paused"
-  | "device_revoked"
-  | "bandwidth_threshold"
-
-export const ALL_WEBHOOK_EVENTS: WebhookEventKind[] = [
-  "peer_connected",
-  "peer_disconnected",
-  "device_paused",
-  "device_revoked",
-  "bandwidth_threshold",
-]
-
-export interface WebhookRow {
-  id: string
-  name: string
-  url: string
-  events: WebhookEventKind[]
-  active: boolean
-  last_delivery_at: string | null
-  last_status: number | null
-  failure_count: number
-  created_at: string
-}
-
-export const adminListWebhooks = () => apiFetch<WebhookRow[]>("/admin/webhooks")
-
-export const adminCreateWebhook = (body: {
-  name: string
-  url: string
-  events: WebhookEventKind[]
-  secret?: string
-}) =>
-  apiFetch<{ id: string }>("/admin/webhooks", {
-    method: "POST",
-    body: JSON.stringify(body),
-  })
-
-export const adminDeleteWebhook = (id: string) =>
-  apiFetch<{ status: string }>(`/admin/webhooks/${id}`, { method: "DELETE" })
 
 // ---------------------------------------------------------------------------
 // Servers (admin)

@@ -4,6 +4,7 @@ import {
   IconChevronDown,
   IconDeviceTablet,
   IconDownload,
+  IconGripVertical,
   IconPlayerPause,
   IconPlayerPlay,
   IconPlus,
@@ -18,6 +19,7 @@ import { toast } from "sonner"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { EmptyState } from "@/components/EmptyState"
+import { FilterDropdown } from "@/components/FilterDropdown"
 import {
   Eyebrow,
   fmtRel,
@@ -58,12 +60,16 @@ import {
   ApiError,
   type CreatedDevice,
   type DeviceOs,
+  type DnsCheck,
   type PublicDevice,
+  checkDnsName,
   createDevice,
   deleteDevice,
   listDevices,
   meServer,
   pauseDevice,
+  reorderDevices,
+  setDeviceDns,
   unpauseDevice,
 } from "@/lib/api"
 import {
@@ -72,6 +78,7 @@ import {
   type ConnState,
   type PeerState,
 } from "@/lib/deviceState"
+import { useAuth } from "@/stores/auth"
 import { useLiveStats } from "@/stores/liveStats"
 
 /** Pill that <StatusPill> uses to render the cell. Connection is the
@@ -107,6 +114,11 @@ export function DevicesPage() {
   const [query, setQuery] = useState("")
   const [addOpen, setAddOpen] = useState(false)
   const [revokeId, setRevokeId] = useState<string | null>(null)
+  // Pause / resume both flip the live tunnel state for the user, so each
+  // is gated behind its own confirm. `pauseId` / `unpauseId` hold the
+  // pending device id while their respective dialog is open.
+  const [pauseId, setPauseId] = useState<string | null>(null)
+  const [unpauseId, setUnpauseId] = useState<string | null>(null)
 
   const liveDevices = useLiveStats((s) => s.devices)
   const rates = useMemo(() => {
@@ -120,6 +132,7 @@ export function DevicesPage() {
   const pauseM = useMutation({
     mutationFn: (id: string) => pauseDevice(id),
     onSuccess: () => {
+      setPauseId(null)
       void qc.invalidateQueries({ queryKey: ["devices"] })
       toast.info("Device paused")
     },
@@ -127,6 +140,7 @@ export function DevicesPage() {
   const unpauseM = useMutation({
     mutationFn: (id: string) => unpauseDevice(id),
     onSuccess: () => {
+      setUnpauseId(null)
       void qc.invalidateQueries({ queryKey: ["devices"] })
       toast.success("Device active")
     },
@@ -139,6 +153,46 @@ export function DevicesPage() {
       toast.warning("Device revoked")
     },
   })
+
+  // Optimistic-reorder: we update the React Query cache up front so the
+  // table reflects the new order the instant the user drops, then fire
+  // the bulk PUT. On error we rollback to the previous cache snapshot
+  // and toast — server stays authoritative on next refetch.
+  const reorderM = useMutation({
+    mutationFn: (ids: string[]) => reorderDevices(ids),
+    onMutate: async (ids) => {
+      await qc.cancelQueries({ queryKey: ["devices"] })
+      const prev = qc.getQueryData<PublicDevice[]>(["devices"])
+      if (prev) {
+        const byId = new Map(prev.map((d) => [d.id, d]))
+        const reordered = ids
+          .map((id) => byId.get(id))
+          .filter((d): d is PublicDevice => d !== undefined)
+        // Preserve any rows the caller didn't include (shouldn't happen,
+        // but defensively appends them at the end so nothing disappears).
+        const seen = new Set(ids)
+        for (const d of prev) if (!seen.has(d.id)) reordered.push(d)
+        qc.setQueryData<PublicDevice[]>(["devices"], reordered)
+      }
+      return { prev }
+    },
+    onError: (_e, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["devices"], ctx.prev)
+      toast.error("Failed to save device order")
+    },
+    onSuccess: () => {
+      toast.success("Order saved")
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["devices"] })
+    },
+  })
+
+  // Drag-and-drop state: which device id is currently being dragged, and
+  // which row the pointer is hovering over (for the visual indicator).
+  // Both clear on dragend / drop. Kept as plain state — no library.
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
 
   const devices = devicesQ.data ?? []
 
@@ -188,10 +242,27 @@ export function DevicesPage() {
     setPeerFilter(new Set())
   }
 
-  const onlinePct =
-    devices.length === 0
-      ? 0
-      : Math.round((counts.online / devices.length) * 100)
+  // Drop handler: build the next full ordering by moving `dragId` to
+  // `dropTargetId`'s position WITHIN the underlying `devices` array
+  // (not the filtered view). That way reorder-while-filtered still does
+  // the obvious thing for the user — the two visible rows swap relative
+  // positions in the persistent list. No-op if the filter is hiding
+  // either endpoint or the ids are the same.
+  const onDropOn = (targetId: string) => {
+    const src = dragId
+    setDragId(null)
+    setDropTargetId(null)
+    if (!src || src === targetId) return
+    const ids = devices.map((d) => d.id)
+    const fromIdx = ids.indexOf(src)
+    const toIdx = ids.indexOf(targetId)
+    if (fromIdx < 0 || toIdx < 0) return
+    const next = ids.slice()
+    next.splice(fromIdx, 1)
+    next.splice(toIdx, 0, src)
+    if (next.every((id, i) => id === ids[i])) return // unchanged
+    reorderM.mutate(next)
+  }
 
   // Throughput summary scoped to the *currently filtered* device set,
   // and then narrowed again to devices that are actually `online` — an
@@ -221,28 +292,28 @@ export function DevicesPage() {
     [onlineFilteredIds, liveDevices],
   )
 
-  // Top-3 ranked by current rate — limited to currently-online devices
-  // so we never headline a stale sample from something that's offline.
-  const topTraffic = useMemo(() => {
-    const ranked = filtered
-      .filter(({ c }) => c === "online")
-      .map(({ d, c }) => {
-        const r = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
-        return { device: d, conn: c, total: r.rxBps + r.txBps, rxBps: r.rxBps, txBps: r.txBps }
-      })
-      .filter((x) => x.total > 0)
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 3)
-    const peak = ranked[0]?.total ?? 0
-    return { rows: ranked, peak }
-  }, [filtered, rates])
+  // OS breakdown of the *currently filtered* fleet — fixed, useful at-a-
+  // glance composition view that the table itself doesn't surface
+  // visually. Counts per OS plus how many of each are currently online,
+  // sorted by total descending so the biggest cohorts read first.
+  const osBreakdown = useMemo(() => {
+    const acc = new Map<DeviceOs, { os: DeviceOs; total: number; online: number }>()
+    for (const { d, c } of filtered) {
+      const cur = acc.get(d.os) ?? { os: d.os, total: 0, online: 0 }
+      cur.total += 1
+      if (c === "online") cur.online += 1
+      acc.set(d.os, cur)
+    }
+    const rows = Array.from(acc.values()).sort((a, b) => b.total - a.total)
+    const peak = rows[0]?.total ?? 0
+    return { rows, peak }
+  }, [filtered])
 
   return (
     <div className="flex flex-col gap-6">
       <PageHead
         eyebrow="Workspace · 02"
         title="Devices"
-        sub={`${devices.length} total · ${counts.online} online`}
         right={
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
@@ -268,12 +339,11 @@ export function DevicesPage() {
         devices={devices}
         filteredCount={filtered.length}
         counts={counts}
-        onlinePct={onlinePct}
         totalRxBps={filteredTotalRxBps}
         totalTxBps={filteredTotalTxBps}
         rxHistory={filteredRxHistory}
         txHistory={filteredTxHistory}
-        topTraffic={topTraffic}
+        osBreakdown={osBreakdown}
         loading={devicesQ.isLoading}
       />
 
@@ -364,9 +434,10 @@ export function DevicesPage() {
           </p>
         )}
         {filtered.length > 0 && (
-          <table className="zv-table">
+          <table className="zv-table zv-table-draggable">
             <thead>
               <tr>
+                <th className="w-6" aria-label="Drag handle" />
                 <th>Name</th>
                 <th>OS</th>
                 <th>VPN IP</th>
@@ -391,8 +462,53 @@ export function DevicesPage() {
                     ? d.dns_override.join(", ")
                     : "server default"
                 const rowStatus = rowPill(c, p)
+                const isDragging = dragId === d.id
+                const isDropTarget = dropTargetId === d.id && dragId !== null && dragId !== d.id
                 return (
-                  <tr key={d.id}>
+                  <tr
+                    key={d.id}
+                    data-dragging={isDragging ? "1" : undefined}
+                    data-drop-target={isDropTarget ? "1" : undefined}
+                    // Double-click anywhere on the row opens detail. We let
+                    // the Name <Link> handle single-click navigation as
+                    // before; this is the "any cell" affordance.
+                    onDoubleClick={() => navigate(`/app/devices/${d.id}`)}
+                    onDragOver={(e) => {
+                      // Standard HTML5 drop target wiring: cancelling the
+                      // dragover event marks the element as a valid drop
+                      // zone. We also track which row the pointer is over
+                      // for the visual indicator.
+                      if (!dragId || dragId === d.id) return
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = "move"
+                      if (dropTargetId !== d.id) setDropTargetId(d.id)
+                    }}
+                    onDragLeave={() => {
+                      if (dropTargetId === d.id) setDropTargetId(null)
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      onDropOn(d.id)
+                    }}
+                  >
+                    <td
+                      className="zv-drag-handle"
+                      draggable
+                      onDragStart={(e) => {
+                        setDragId(d.id)
+                        e.dataTransfer.effectAllowed = "move"
+                        // Firefox requires SOMETHING in dataTransfer to
+                        // initiate a drag; the value isn't used by us.
+                        e.dataTransfer.setData("text/plain", d.id)
+                      }}
+                      onDragEnd={() => {
+                        setDragId(null)
+                        setDropTargetId(null)
+                      }}
+                      title="Drag to reorder"
+                    >
+                      <IconGripVertical size={14} />
+                    </td>
                     <td>
                       <Link
                         to={`/app/devices/${d.id}`}
@@ -449,8 +565,8 @@ export function DevicesPage() {
                     <td className="zv-actions">
                       <RowActions
                         device={d}
-                        onPause={() => pauseM.mutate(d.id)}
-                        onUnpause={() => unpauseM.mutate(d.id)}
+                        onPause={() => setPauseId(d.id)}
+                        onUnpause={() => setUnpauseId(d.id)}
                         onRevoke={() => setRevokeId(d.id)}
                         pending={pauseM.isPending || unpauseM.isPending}
                       />
@@ -472,6 +588,26 @@ export function DevicesPage() {
         destructive
         pending={deleteM.isPending}
         onConfirm={() => revokeId && deleteM.mutate(revokeId)}
+      />
+
+      <ConfirmDialog
+        open={!!pauseId}
+        onOpenChange={(o) => !o && setPauseId(null)}
+        title="Pause device?"
+        description="The peer is removed from WireGuard until you resume it. The device's IP is held — no traffic is tunnelled while paused."
+        confirmLabel="Pause"
+        pending={pauseM.isPending}
+        onConfirm={() => pauseId && pauseM.mutate(pauseId)}
+      />
+
+      <ConfirmDialog
+        open={!!unpauseId}
+        onOpenChange={(o) => !o && setUnpauseId(null)}
+        title="Resume device?"
+        description="The peer is re-added to WireGuard with its previously allocated IP. Traffic will start tunnelling as soon as the device handshakes."
+        confirmLabel="Resume"
+        pending={unpauseM.isPending}
+        onConfirm={() => unpauseId && unpauseM.mutate(unpauseId)}
       />
     </div>
   )
@@ -516,30 +652,22 @@ function FleetSummary({
   devices,
   filteredCount,
   counts,
-  onlinePct,
   totalRxBps,
   totalTxBps,
   rxHistory,
   txHistory,
-  topTraffic,
+  osBreakdown,
   loading,
 }: {
   devices: PublicDevice[]
   filteredCount: number
   counts: { online: number; offline: number; live: number; paused: number; revoked: number }
-  onlinePct: number
   totalRxBps: number
   totalTxBps: number
   rxHistory: number[]
   txHistory: number[]
-  topTraffic: {
-    rows: {
-      device: PublicDevice
-      conn: ConnState
-      total: number
-      rxBps: number
-      txBps: number
-    }[]
+  osBreakdown: {
+    rows: { os: DeviceOs; total: number; online: number }[]
     peak: number
   }
   loading: boolean
@@ -591,7 +719,6 @@ function FleetSummary({
               </span>
             )}
           </div>
-          <FleetOnlineBar pct={onlinePct} />
         </div>
 
         {/* ── Section 2 · Throughput (respects filter) ───────────────── */}
@@ -626,30 +753,30 @@ function FleetSummary({
           )}
         </div>
 
-        {/* ── Section 3 · Top traffic ─────────────────────────────────── */}
+        {/* ── Section 3 · OS distribution ─────────────────────────────── */}
         <div className="flex flex-col gap-3 p-5">
           <SectionHeader
             num="03"
-            label="Top traffic"
-            hint={topTraffic.rows.length > 0 ? "by current rate" : undefined}
+            label="By OS"
+            hint={
+              osBreakdown.rows.length > 0
+                ? `${osBreakdown.rows.length} ${osBreakdown.rows.length === 1 ? "type" : "types"}`
+                : undefined
+            }
           />
-          {topTraffic.rows.length === 0 ? (
+          {osBreakdown.rows.length === 0 ? (
             <p className="text-muted-foreground/70 font-mono text-[11px]">
-              {counts.online === 0
-                ? "no online devices in the current filter"
-                : "no transmitting devices right now"}
+              no devices match the current filter
             </p>
           ) : (
             <div className="flex flex-col gap-2.5">
-              {topTraffic.rows.map((row, i) => (
-                <TopTrafficRow
-                  key={row.device.id}
-                  rank={i + 1}
-                  name={row.device.name}
-                  ip={row.device.allocated_ip}
-                  conn={row.conn}
+              {osBreakdown.rows.map((row) => (
+                <OsBreakdownRow
+                  key={row.os}
+                  os={row.os}
                   total={row.total}
-                  peak={topTraffic.peak}
+                  online={row.online}
+                  peak={osBreakdown.peak}
                 />
               ))}
             </div>
@@ -690,24 +817,6 @@ function SectionHeader({
   )
 }
 
-/** Compact left-aligned progress bar — same hairline tone as the rest
- *  of the Swiss kit, no rounded corners. */
-function FleetOnlineBar({ pct }: { pct: number }) {
-  return (
-    <div className="mt-auto flex items-center gap-2 pt-1">
-      <div className="border-border relative h-1.5 flex-1 border bg-card">
-        <div
-          className="bg-status-online absolute inset-y-0 left-0"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <span className="text-muted-foreground font-mono text-[10px] tabular-nums">
-        {pct}%
-      </span>
-    </div>
-  )
-}
-
 function FleetRate({
   label,
   value,
@@ -740,149 +849,51 @@ function FleetRate({
   )
 }
 
-function TopTrafficRow({
-  rank,
-  name,
-  ip,
-  conn,
+const OS_LABELS: Record<DeviceOs, string> = {
+  ios: "iOS",
+  android: "Android",
+  macos: "macOS",
+  windows: "Windows",
+  linux: "Linux",
+  other: "Other",
+}
+
+/** Single row in the OS-distribution panel — OS label on the left, a
+ *  hairline bar showing this OS's share of the largest cohort, and a
+ *  `online / total` count on the right. Gives an at-a-glance read of
+ *  fleet composition that the table below doesn't surface visually. */
+function OsBreakdownRow({
+  os,
   total,
+  online,
   peak,
 }: {
-  rank: number
-  name: string
-  ip: string
-  conn: ConnState
+  os: DeviceOs
   total: number
+  online: number
   peak: number
 }) {
   const pct = peak > 0 ? Math.max(6, (total / peak) * 100) : 0
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between gap-2 font-mono text-[11px]">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="text-muted-foreground/70 w-3 shrink-0 text-right tabular-nums">
-            {rank}
-          </span>
-          <StatusPill status={conn === "online" ? "online" : "offline"} dotOnly />
-          <span className="text-foreground truncate font-medium">{name}</span>
+        <span className="text-foreground font-medium">
+          {OS_LABELS[os] ?? os}
         </span>
-        <span className="text-foreground tabular-nums">{formatRate(total)}</span>
+        <span className="text-muted-foreground tabular-nums">
+          <span className="text-status-online">{online}</span>
+          <span className="text-muted-foreground/60"> / </span>
+          <span className="text-foreground">{total}</span>
+          <span className="text-muted-foreground/70 ml-1">online</span>
+        </span>
       </div>
-      <div className="flex items-center gap-2">
-        <div className="border-border relative h-1 flex-1 border bg-card">
-          <div
-            className="bg-primary absolute inset-y-0 left-0"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        <span className="text-muted-foreground/70 w-[88px] shrink-0 text-right font-mono text-[10px] tabular-nums">
-          {ip}
-        </span>
+      <div className="border-border relative h-1 border bg-card">
+        <div
+          className="bg-primary absolute inset-y-0 left-0"
+          style={{ width: `${pct}%` }}
+        />
       </div>
     </div>
-  )
-}
-
-/** Multi-select dropdown filter. The trigger is a chip showing the
- *  dimension's label, the number of selected options (or "all"), and a
- *  caret. The popover content is a small checkbox list — clicking a row
- *  toggles selection without closing, matching how Linear / Notion / etc.
- *  handle multi-select filter chips. */
-function FilterDropdown<T extends string>({
-  label,
-  options,
-  selected,
-  onToggle,
-  onClear,
-  counts,
-}: {
-  label: string
-  options: { value: T; label: string; pill: PillStatus }[]
-  selected: Set<T>
-  onToggle: (v: T) => void
-  onClear: () => void
-  counts: Record<string, number>
-}) {
-  const selectedLabels = options
-    .filter((o) => selected.has(o.value))
-    .map((o) => o.label)
-  const summary =
-    selected.size === 0
-      ? "All"
-      : selectedLabels.length <= 2
-        ? selectedLabels.join(", ")
-        : `${selected.size} selected`
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-haspopup="listbox"
-          className={[
-            "zv-filter-dd",
-            selected.size > 0 && "zv-filter-dd--on",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-        >
-          <span className="zv-filter-dd__label">{label}</span>
-          <span className="zv-filter-dd__value">{summary}</span>
-          {selected.size > 0 && (
-            <span className="zv-filter-dd__badge">{selected.size}</span>
-          )}
-          <IconChevronDown
-            size={12}
-            className="text-muted-foreground"
-            aria-hidden
-          />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-56 p-0 font-mono text-xs">
-        <div className="text-muted-foreground flex items-center justify-between border-b px-3 py-2">
-          <span className="zv-eyebrow text-[10px]">{label}</span>
-          {selected.size > 0 && (
-            <button
-              type="button"
-              onClick={onClear}
-              className="hover:text-foreground"
-            >
-              clear
-            </button>
-          )}
-        </div>
-        <ul role="listbox" aria-multiselectable="true" className="py-1">
-          {options.map((opt) => {
-            const isOn = selected.has(opt.value)
-            return (
-              <li key={opt.value} role="option" aria-selected={isOn}>
-                <button
-                  type="button"
-                  onClick={() => onToggle(opt.value)}
-                  className="hover:bg-muted/60 flex w-full items-center gap-2 px-3 py-1.5 text-left"
-                >
-                  <span
-                    className={[
-                      "zv-filter-dd__check",
-                      isOn && "zv-filter-dd__check--on",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    aria-hidden
-                  >
-                    {isOn && <IconCheck size={10} strokeWidth={3} />}
-                  </span>
-                  <StatusPill status={opt.pill} dotOnly />
-                  <span className="flex-1">{opt.label}</span>
-                  <span className="text-muted-foreground tabular-nums">
-                    {counts[opt.value] ?? 0}
-                  </span>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      </PopoverContent>
-    </Popover>
   )
 }
 
@@ -899,7 +910,6 @@ function RowActions({
   onRevoke: () => void
   pending: boolean
 }) {
-  const downloadDisabled = device.status === "revoked"
   return (
     <span className="inline-flex items-center justify-end gap-1">
       {device.status === "active" && (
@@ -912,15 +922,6 @@ function RowActions({
           <IconPlayerPlay size={12} />
         </IconBtn>
       )}
-      <Link
-        to={`/app/devices/${device.id}`}
-        className="zv-icon-btn"
-        title="View config"
-        aria-disabled={downloadDisabled}
-        onClick={(e) => downloadDisabled && e.preventDefault()}
-      >
-        <IconDownload size={12} />
-      </Link>
       {device.status !== "revoked" && (
         <IconBtn
           onClick={onRevoke}
@@ -942,6 +943,7 @@ function AddDeviceDialog({
   onCreated: (d: CreatedDevice) => void
 }) {
   const qc = useQueryClient()
+  const user = useAuth((s) => s.user)
   // Fetch the user's WG server info (cidr, default DNS, endpoint) so we
   // can seed sensible defaults: split tunnel ON pointing at the WG
   // subnet, custom-DNS box pre-filled with the server's resolver, and a
@@ -955,6 +957,18 @@ function AddDeviceDialog({
   const serverCidr = serverInfoQ.data?.cidr
   const serverDns = serverInfoQ.data?.dns_servers ?? []
   const serverDnsDefault = serverDns.join(", ")
+
+  // Existing devices for the inline name-uniqueness check. Shares the
+  // same query key the parent table uses, so cache is reused — no extra
+  // network round-trip.
+  const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
+  const existingNames = useMemo(
+    () =>
+      new Set(
+        (devicesQ.data ?? []).map((d) => d.name.trim().toLowerCase()),
+      ),
+    [devicesQ.data],
+  )
 
   const [step, setStep] = useState<1 | 2>(1)
   const [name, setName] = useState("")
@@ -982,6 +996,17 @@ function AddDeviceDialog({
   }, [serverDnsDefault])
   const [ipMode, setIpMode] = useState<IpMode>("auto")
   const [ipInput, setIpInput] = useState("")
+  // DNS-name prefix the device will be reachable at (the suffix is the
+  // server-fixed `.vpn.local`). Auto-derived from the device name and
+  // the user's email-local part on every keystroke, UNTIL the user
+  // edits the field themselves — at which point `dnsTouched` flips and
+  // their custom value sticks.
+  const [dnsPrefix, setDnsPrefix] = useState("")
+  const [dnsTouched, setDnsTouched] = useState(false)
+  // Default OFF — preserves the historical zero-knowledge guarantee.
+  // Toggle ON to let the server store the WG private key (KEK-encrypted)
+  // so the user can re-download the .conf later without rotating keys.
+  const [storePrivateKey, setStorePrivateKey] = useState(false)
   const [result, setResult] = useState<CreatedDevice | null>(null)
 
   const dnsLooksValid = useMemo(() => {
@@ -990,27 +1015,125 @@ function AddDeviceDialog({
     return parts.every((p) => /^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$/.test(p))
   }, [dnsInput])
 
-  const ipLooksValid = useMemo(() => {
-    if (ipMode === "auto") return true
+  // Slugs feed the auto-derived DNS prefix. Per-label cap is 30 chars
+  // (mirrors the server regex). Hyphens are tolerated everywhere except
+  // the leading and trailing positions of each label.
+  const userSlug = useMemo(
+    () => dnsLabelSlug(user?.email?.split("@")[0] ?? ""),
+    [user?.email],
+  )
+  const nameSlug = useMemo(() => dnsLabelSlug(name), [name])
+
+  // The default prefix is `<device>.<user>` when both labels resolve to
+  // something non-empty, else whichever is present. Empty when nothing
+  // useful is available yet (e.g. before the user has typed a name).
+  const defaultDnsPrefix = useMemo(() => {
+    if (nameSlug && userSlug) return `${nameSlug}.${userSlug}`
+    return nameSlug || userSlug
+  }, [nameSlug, userSlug])
+
+  // Mirror the default into the input until the user edits it. Once
+  // `dnsTouched` flips, we leave their value alone — same idiom used for
+  // the seeded DNS resolver field above.
+  useEffect(() => {
+    if (!dnsTouched) setDnsPrefix(defaultDnsPrefix)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultDnsPrefix])
+
+  const dnsFqdn = dnsPrefix ? `${dnsPrefix}.vpn.local` : ""
+
+  // Debounced server-side availability probe. We hold the typed value
+  // for 350 ms before firing — long enough that fast typists don't
+  // pay one /dns-check per keystroke, short enough that the UX still
+  // feels live.
+  const [debouncedFqdn, setDebouncedFqdn] = useState("")
+  useEffect(() => {
+    if (!dnsFqdn) {
+      setDebouncedFqdn("")
+      return
+    }
+    const t = setTimeout(() => setDebouncedFqdn(dnsFqdn), 350)
+    return () => clearTimeout(t)
+  }, [dnsFqdn])
+
+  const dnsPrefixLocallyValid =
+    dnsPrefix.length > 0 && isValidDnsPrefix(dnsPrefix)
+
+  const dnsCheckQ = useQuery<DnsCheck>({
+    queryKey: ["dns-check", debouncedFqdn],
+    queryFn: () => checkDnsName(debouncedFqdn),
+    // Only hit the server once the prefix at least parses locally —
+    // otherwise we just waste a request that's certain to say "invalid".
+    enabled: debouncedFqdn.length > 0 && dnsPrefixLocallyValid,
+    staleTime: 30_000,
+    retry: false,
+  })
+
+  const dnsNameTaken =
+    dnsCheckQ.data?.valid === true && dnsCheckQ.data.available === false
+  const dnsNameAvailable =
+    dnsCheckQ.data?.valid === true && dnsCheckQ.data.available === true
+
+  const nameTaken =
+    name.trim().length > 0 && existingNames.has(name.trim().toLowerCase())
+
+  // Validate the custom IP as the user types. Distinguish three cases so
+  // the inline hint can be specific:
+  //   - empty (custom mode): not submittable, but no error shown yet
+  //   - malformed octets: "not a valid IPv4 address"
+  //   - well-formed but outside / on a reserved slot of the server CIDR:
+  //     "outside 10.42.0.0/24" / "gateway address (reserved)" / etc.
+  // For auto mode the validation is always ok.
+  const ipValidation = useMemo<{ ok: boolean; error: string | null }>(() => {
+    if (ipMode === "auto") return { ok: true, error: null }
     const v = ipInput.trim()
-    if (!v) return false
-    return /^(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})$/.test(v)
-  }, [ipMode, ipInput])
+    if (!v) return { ok: false, error: null }
+    if (
+      !/^(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})$/.test(
+        v,
+      )
+    ) {
+      return { ok: false, error: "that doesn't look like a valid IPv4 address" }
+    }
+    if (serverCidr) {
+      const reason = ipOutsideCidrReason(v, serverCidr)
+      if (reason) return { ok: false, error: reason }
+    }
+    return { ok: true, error: null }
+  }, [ipMode, ipInput, serverCidr])
+  const ipLooksValid = ipValidation.ok
 
   const addM = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const dns = dnsInput
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-      return createDevice({
+      const created = await createDevice({
         name: name.trim(),
         os: osChoice,
         split_tunnel: splitTunnel || undefined,
         dns_override: dns.length > 0 ? dns : undefined,
         allocated_ip:
           ipMode === "custom" && ipInput.trim() ? ipInput.trim() : undefined,
+        store_private_key: storePrivateKey || undefined,
       })
+      // Best-effort: attach the requested DNS name as a second step so
+      // the device row exists either way. A failure here surfaces as
+      // a warning, not a hard error — the user can retry from the
+      // device detail page.
+      if (dnsFqdn) {
+        try {
+          await setDeviceDns(created.device.id, [dnsFqdn])
+        } catch (e) {
+          const msg =
+            e instanceof ApiError
+              ? e.message
+              : "DNS name could not be saved"
+          toast.warning(`Device created — ${msg}`)
+        }
+      }
+      return created
     },
     onSuccess: (data) => {
       setResult(data)
@@ -1027,8 +1150,15 @@ function AddDeviceDialog({
   const canSubmit =
     name.trim().length > 0 &&
     name.trim().length <= 64 &&
+    !nameTaken &&
     dnsLooksValid &&
     ipLooksValid &&
+    // DNS prefix is required (auto-filled from name + user, but the
+    // user can clear it — at that point we don't have a hostname to
+    // register, which we don't allow on create). Must be locally
+    // valid AND have come back from /dns-check as available.
+    dnsPrefixLocallyValid &&
+    dnsNameAvailable &&
     !addM.isPending
 
   const resetAll = () => {
@@ -1039,7 +1169,10 @@ function AddDeviceDialog({
     setDnsInput("")
     setIpMode("auto")
     setIpInput("")
+    setStorePrivateKey(false)
     setResult(null)
+    setDnsPrefix("")
+    setDnsTouched(false)
   }
 
   return (
@@ -1068,9 +1201,15 @@ function AddDeviceDialog({
               className="font-mono"
               autoFocus
               maxLength={64}
+              aria-invalid={nameTaken}
             />
             <p className="text-muted-foreground font-mono text-[11px]">
               1–64 chars. Used as the WireGuard interface name on the device.
+              {nameTaken && (
+                <span className="text-destructive ml-2">
+                  you already have a device with this name
+                </span>
+              )}
             </p>
           </div>
 
@@ -1093,6 +1232,56 @@ function AddDeviceDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* DNS name. Default is `<device>.<user>.vpn.local`, but the
+              prefix is editable and the suffix is fixed (server regex).
+              The /dns-check probe runs as the user types, debounced. */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dev-dns-name" className="zv-eyebrow">
+              DNS name
+            </Label>
+            <div
+              data-invalid={
+                (dnsPrefix.length > 0 && !dnsPrefixLocallyValid) ||
+                dnsNameTaken
+                  ? "1"
+                  : undefined
+              }
+              className="border-input bg-transparent focus-within:border-ring focus-within:ring-ring/50 data-[invalid=1]:border-destructive data-[invalid=1]:ring-destructive/20 flex h-8 items-stretch overflow-hidden rounded-lg border transition-colors focus-within:ring-3 data-[invalid=1]:ring-3"
+            >
+              <input
+                id="dev-dns-name"
+                value={dnsPrefix}
+                onChange={(e) => {
+                  setDnsTouched(true)
+                  setDnsPrefix(e.target.value.toLowerCase())
+                }}
+                placeholder={defaultDnsPrefix || "macbook-pro.bhadri"}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm outline-none"
+              />
+              <span className="border-input bg-muted/40 text-muted-foreground inline-flex shrink-0 items-center border-l px-2.5 font-mono text-[12px]">
+                .vpn.local
+              </span>
+            </div>
+            <DnsNameStatus
+              prefix={dnsPrefix}
+              locallyValid={dnsPrefixLocallyValid}
+              checking={
+                dnsCheckQ.isFetching && debouncedFqdn === dnsFqdn
+              }
+              taken={dnsNameTaken}
+              available={dnsNameAvailable}
+              defaultPrefix={defaultDnsPrefix}
+              touched={dnsTouched}
+              onReset={() => {
+                setDnsTouched(false)
+                setDnsPrefix(defaultDnsPrefix)
+              }}
+            />
           </div>
 
           {/* IP allocation — two-mode picker with conditional input. */}
@@ -1175,9 +1364,9 @@ function AddDeviceDialog({
                   </span>{" "}
                   and not already taken. Network / broadcast / gateway are
                   reserved.
-                  {!ipLooksValid && ipInput && (
+                  {ipValidation.error && (
                     <span className="text-destructive ml-2">
-                      that doesn't look like a valid IPv4 address
+                      {ipValidation.error}
                     </span>
                   )}
                 </p>
@@ -1200,6 +1389,27 @@ function AddDeviceDialog({
                 {serverCidr
                   ? `Only ${serverCidr} routes through the tunnel — the rest of your traffic exits via your LAN. Default ON.`
                   : "Only the WG subnet routes through the tunnel — the rest of your traffic exits via your LAN. Default ON."}
+              </span>
+            </Label>
+          </div>
+
+          <div className="border-border flex items-center gap-3 border p-3">
+            <Switch
+              checked={storePrivateKey}
+              onCheckedChange={setStorePrivateKey}
+              id="store-key"
+            />
+            <Label
+              htmlFor="store-key"
+              className="flex flex-1 cursor-pointer flex-col gap-0.5"
+            >
+              <span className="text-sm font-medium">
+                Store private key on server
+              </span>
+              <span className="text-muted-foreground font-mono text-[11px]">
+                Encrypted with the server's KEK and saved on the device row
+                so you can re-download the .conf later from any device.
+                Trades the zero-knowledge default for convenience. Default OFF.
               </span>
             </Label>
           </div>
@@ -1318,6 +1528,96 @@ function AddDeviceDialog({
   )
 }
 
+/** Inline status line under the DNS-name input. Communicates four
+ *  states in a single row — empty, locally malformed, server probe in
+ *  flight, taken, and available — so the user always knows exactly why
+ *  the submit button is enabled or not. */
+function DnsNameStatus({
+  prefix,
+  locallyValid,
+  checking,
+  taken,
+  available,
+  defaultPrefix,
+  touched,
+  onReset,
+}: {
+  prefix: string
+  locallyValid: boolean
+  checking: boolean
+  taken: boolean
+  available: boolean
+  defaultPrefix: string
+  touched: boolean
+  onReset: () => void
+}) {
+  let body: React.ReactNode
+  if (!prefix) {
+    body = "Required. Defaults to <device>.<user>.vpn.local."
+  } else if (!locallyValid) {
+    body = (
+      <span className="text-destructive">
+        invalid hostname — labels are 1–30 lowercase chars (letters,
+        digits, hyphens), separated by dots, no leading/trailing hyphen
+      </span>
+    )
+  } else if (checking) {
+    body = "Checking availability…"
+  } else if (taken) {
+    body = (
+      <span className="text-destructive">
+        already taken — try another label
+      </span>
+    )
+  } else if (available) {
+    body = (
+      <span className="text-status-online">
+        available — peers can resolve this device by this name
+      </span>
+    )
+  } else {
+    body = "Other peers will be able to resolve this device by this name."
+  }
+  const canReset = touched && defaultPrefix && prefix !== defaultPrefix
+  return (
+    <p className="text-muted-foreground flex items-center justify-between gap-2 font-mono text-[11px]">
+      <span className="min-w-0 truncate">{body}</span>
+      {canReset && (
+        <button
+          type="button"
+          onClick={onReset}
+          className="hover:text-foreground shrink-0 underline-offset-2 hover:underline"
+        >
+          reset to default
+        </button>
+      )}
+    </p>
+  )
+}
+
+/** Lower-case slug suitable for a single DNS label. Strips anything
+ *  outside [a-z0-9-], collapses runs of hyphens, trims leading/trailing
+ *  hyphens, and caps at the 30-char per-label limit the server enforces. */
+function dnsLabelSlug(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 30)
+    .replace(/-$/, "")
+}
+
+/** Client-side mirror of the server hostname regex (without the fixed
+ *  `.vpn.local` suffix). Used for instant feedback before the debounced
+ *  /dns-check request fires. */
+function isValidDnsPrefix(prefix: string): boolean {
+  if (!prefix) return false
+  const labelRe = /^[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$/
+  return prefix.split(".").every((p) => labelRe.test(p))
+}
+
 /** Selectable card for the IP allocation mode. Two of these sit side-by-side
  *  — the selected one gets a primary-tinted border + filled radio dot so the
  *  active choice is obvious at a glance. */
@@ -1404,6 +1704,37 @@ function ipPlaceholderFor(cidr: string): string {
     return `${parts[0]}.${parts[1]}.${parts[2]}.42`
   }
   return range.first
+}
+
+/** Return a human-readable reason why `ip` cannot be allocated inside
+ *  `cidr`, or null if the address is fine. Caller is responsible for
+ *  already having validated that `ip` parses as IPv4. */
+function ipOutsideCidrReason(ip: string, cidr: string): string | null {
+  const slash = cidr.indexOf("/")
+  if (slash < 0) return null
+  const net = cidr.slice(0, slash)
+  const prefix = parseInt(cidr.slice(slash + 1), 10)
+  if (isNaN(prefix) || prefix < 0 || prefix > 32) return null
+  const netParts = net.split(".").map(Number)
+  const ipParts = ip.split(".").map(Number)
+  if (netParts.length !== 4 || ipParts.length !== 4) return null
+  const netU32 =
+    ((netParts[0] << 24) | (netParts[1] << 16) | (netParts[2] << 8) | netParts[3]) >>> 0
+  const ipU32 =
+    ((ipParts[0] << 24) | (ipParts[1] << 16) | (ipParts[2] << 8) | ipParts[3]) >>> 0
+  const total = 2 ** (32 - prefix)
+  const mask = prefix === 0 ? 0 : (~((1 << (32 - prefix)) - 1)) >>> 0
+  const baseU32 = (netU32 & mask) >>> 0
+  const broadcastU32 = (baseU32 + total - 1) >>> 0
+  if (ipU32 < baseU32 || ipU32 > broadcastU32) {
+    return `outside ${cidr}`
+  }
+  if (total >= 4) {
+    if (ipU32 === baseU32) return "network address (reserved)"
+    if (ipU32 === broadcastU32) return "broadcast address (reserved)"
+    if (ipU32 === ((baseU32 + 1) >>> 0)) return "gateway address (reserved)"
+  }
+  return null
 }
 
 /** Compute the usable IPv4 address range for a CIDR — i.e. excluding the

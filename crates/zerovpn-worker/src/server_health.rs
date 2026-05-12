@@ -74,6 +74,37 @@ fn read_diskstats() -> Option<(u64, u64)> {
     Some((total_read, total_write))
 }
 
+/// True if the interface looks like a real wire/physical NIC, not a
+/// loopback, Docker bridge, VPN tunnel, or other virtual device. Run as
+/// a block-list because new physical-NIC name prefixes ship every couple
+/// of years (enp*, wlp*, wlan*, en*, eth*, eno*, ens*, …) and the
+/// virtual-name space is more stable.
+fn is_physical_iface(name: &str) -> bool {
+    // Common patterns we never want to count:
+    //   lo, lo0           - loopback
+    //   docker0, br-*     - docker default bridge & user bridges
+    //   veth*             - container virtual ethernet
+    //   cni*              - kubernetes CNI plugins
+    //   vboxnet*, vmnet*  - VirtualBox / VMware host-only nets
+    //   tap*, tun*        - generic tunnel devices
+    //   utun*             - macOS tunnel (often VPN apps)
+    //   wg*, awg*         - WireGuard / AmneziaWG tunnels (avoid double-
+    //                      counting traffic that also flows through eth0)
+    //   bridge*, bond*    - aggregations, often duplicates of members
+    //   gif*, stf*        - macOS legacy 6-to-4 / tunnel pseudo-devices
+    let skip_prefixes = [
+        "lo", "docker", "br-", "veth", "cni", "vboxnet", "vmnet", "tap",
+        "tun", "utun", "wg", "awg", "bridge", "bond", "gif", "stf", "ipsec",
+        "anpi",
+    ];
+    for p in skip_prefixes {
+        if name == p || name.starts_with(p) {
+            return false;
+        }
+    }
+    true
+}
+
 /// True if the device name looks like a partition rather than a whole disk.
 /// `sda1`, `nvme0n1p1`, `mmcblk0p1` → partition. `sda`, `nvme0n1`, `mmcblk0`
 /// → whole. Heuristic, intentionally conservative — false positives just
@@ -137,14 +168,18 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
         let mem_used_bytes = sys.used_memory();
         let mem_total_bytes = sys.total_memory();
 
-        // Net I/O: sum byte deltas since the previous refresh across every
-        // interface. Convert to bits/sec so the value matches the
-        // `_bps` field name + `formatBps` interpretation used everywhere
-        // else (per-device rate_rx_bps, server_sample rate_rx_bps, etc).
+        // Net I/O: sum byte deltas since the previous refresh across
+        // *real* network interfaces only. We skip loopback, Docker /
+        // container virtual bridges, WireGuard tunnels (would double-count
+        // traffic that also exits via the physical NIC), and other VPN
+        // tunnels. What's left is the user-meaningful "wire" traffic.
         let secs = TICK.as_secs().max(1);
         let mut net_rx_total: u64 = 0;
         let mut net_tx_total: u64 = 0;
-        for (_iface, data) in nets.iter() {
+        for (iface, data) in nets.iter() {
+            if !is_physical_iface(iface) {
+                continue;
+            }
             net_rx_total = net_rx_total.saturating_add(data.received());
             net_tx_total = net_tx_total.saturating_add(data.transmitted());
         }

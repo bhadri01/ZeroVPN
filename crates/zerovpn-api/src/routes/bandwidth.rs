@@ -23,6 +23,7 @@ pub struct RangeQuery {
 
 #[derive(Debug, Serialize)]
 pub struct Bucket {
+    #[serde(with = "time::serde::rfc3339")]
     pub bucket_start: OffsetDateTime,
     pub rx_bytes: i64,
     pub tx_bytes: i64,
@@ -81,8 +82,10 @@ pub async fn for_device(
 #[derive(Debug, Deserialize)]
 pub struct HistoryQuery {
     /// RFC3339 lower bound (inclusive). Defaults to 1 hour ago.
+    #[serde(default, with = "time::serde::rfc3339::option")]
     pub from: Option<OffsetDateTime>,
     /// RFC3339 upper bound (exclusive). Defaults to now.
+    #[serde(default, with = "time::serde::rfc3339::option")]
     pub to: Option<OffsetDateTime>,
     /// Row limit. Capped at 10000 server-side.
     pub limit: Option<i64>,
@@ -90,6 +93,7 @@ pub struct HistoryQuery {
 
 #[derive(Debug, Serialize)]
 pub struct DeviceHistoryPoint {
+    #[serde(with = "time::serde::rfc3339")]
     pub sampled_at: OffsetDateTime,
     pub rx_bytes: i64,
     pub tx_bytes: i64,
@@ -98,7 +102,9 @@ pub struct DeviceHistoryPoint {
 #[derive(Debug, Serialize)]
 pub struct DeviceHistoryResponse {
     pub device_id: Uuid,
+    #[serde(with = "time::serde::rfc3339")]
     pub from: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub to: OffsetDateTime,
     pub samples: Vec<DeviceHistoryPoint>,
 }
@@ -138,6 +144,7 @@ pub async fn device_history(
 
 #[derive(Debug, Serialize)]
 pub struct ServerHistoryPoint {
+    #[serde(with = "time::serde::rfc3339")]
     pub sampled_at: OffsetDateTime,
     pub total_rx_bytes: i64,
     pub total_tx_bytes: i64,
@@ -149,7 +156,9 @@ pub struct ServerHistoryPoint {
 #[derive(Debug, Serialize)]
 pub struct ServerHistoryResponse {
     pub server_id: Uuid,
+    #[serde(with = "time::serde::rfc3339")]
     pub from: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
     pub to: OffsetDateTime,
     pub samples: Vec<ServerHistoryPoint>,
 }

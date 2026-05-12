@@ -43,7 +43,10 @@ export function LiveEventStream() {
   return (
     <div
       ref={scrollRef}
-      className="text-muted-foreground max-h-[420px] overflow-y-auto py-2 font-mono text-[11px] leading-[1.55]"
+      // Fixed height keeps the panel balanced with `<RecentActivity>` to
+      // its left in the dashboard grid — the scroll container ALWAYS has
+      // the same footprint whether there are 0 lines or 60.
+      className="text-muted-foreground h-[420px] overflow-y-auto py-2 font-mono text-[11px] leading-[1.55]"
     >
       {lines.length === 0 && (
         <div className="text-muted-foreground/70 px-4 py-2">

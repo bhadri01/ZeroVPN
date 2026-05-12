@@ -13,6 +13,7 @@ import {
   IconMinus,
   IconPlus,
   IconServer,
+  IconUser,
   type Icon,
   type IconProps,
 } from "@tabler/icons-react"
@@ -36,6 +37,11 @@ interface LiveTopologyProps {
   serverLabel?: string
   /** Optional hub meta line (e.g. CIDR). */
   serverMeta?: string
+  /** Optional `user_id -> { label }` map so the user-tier nodes render
+   *  with a human name. When a device's user_id isn't found in this
+   *  map, the node falls back to "user · <first 6 of uuid>". For the
+   *  current user, pass `{ [user.id]: { label: "me" } }` or similar. */
+  userMap?: Map<string, { label: string }>
 }
 
 // Fixed vertical SVG-unit budget. The horizontal one is computed
@@ -45,10 +51,14 @@ interface LiveTopologyProps {
 const H = 560
 const DEFAULT_VB_W = 1000
 const HUB_Y = H / 2
-const RING_INNER = 170
-const RING_OUTER = 245
-const SINGLE_RING = 200
+// 2-level tree geometry. Hub at the center; user-tier nodes orbit on
+// USER_RING; each user's devices orbit on a small ring of radius
+// PEER_FROM_USER around their user. The vertical squash factor stays
+// the same for both rings so labels fit.
+const USER_RING = 130
+const PEER_FROM_USER = 75
 const MAX_PEERS = 24
+const MAX_USERS = 12
 
 function iconFor(os: DeviceOs): Icon {
   switch (os) {
@@ -113,6 +123,20 @@ interface LaidOutPeer {
   y: number
   tone: "live" | "idle" | "paused" | "revoked"
   rateBps: number
+  /** Position of the user this device hangs off (where the edge starts). */
+  userX: number
+  userY: number
+}
+
+interface LaidOutUser {
+  userId: string
+  label: string
+  x: number
+  y: number
+  /** How many of this user's devices are currently online/transmitting —
+   *  drives the user-node tone the same way `connState` drives device tone. */
+  liveCount: number
+  peerCount: number
 }
 
 const MIN_SCALE = 0.4
@@ -131,6 +155,7 @@ export function LiveTopology({
   rates,
   serverLabel = "vpn-server",
   serverMeta,
+  userMap,
 }: LiveTopologyProps) {
   const [tick, setTick] = useState(0)
   const pageVisible = usePageVisible()
@@ -419,33 +444,105 @@ export function LiveTopology({
 
   const hidden = Math.max(0, devices.filter((d) => d.status !== "revoked").length - visible.length)
 
-  const placed: LaidOutPeer[] = useMemo(() => {
-    const n = visible.length
+  // Group devices by their owning user. Each unique user_id becomes a
+  // node on the inner ring; their devices cluster around them on a
+  // small sub-ring.
+  const userGroups = useMemo(() => {
+    const groups = new Map<string, PublicDevice[]>()
+    for (const d of visible) {
+      const list = groups.get("__self__") ?? []
+      list.push(d)
+      groups.set("__self__", list)
+    }
+    // Cap user count for sanity in admin-wide views; the rest drop off the
+    // graph but the HUD count still reflects them.
+    const entries = [...groups.entries()].slice(0, MAX_USERS)
+    return entries
+  }, [visible])
+
+  const placedUsers: LaidOutUser[] = useMemo(() => {
+    const n = userGroups.length
     if (n === 0) return []
-    // One ring for up to 8, two rings beyond.
-    const useTwoRings = n > 8
-    return visible.map((d, i) => {
-      const online = connState(d) === "online"
-      // Offline devices: zero out the rate so animation speed / labels
-      // can't be driven by a stale sample sitting in the store.
-      const rate = online ? rates.get(d.id) : undefined
-      const rateBps = (rate?.rxBps ?? 0) + (rate?.txBps ?? 0)
-      const hasTraffic = rateBps > 1024
-      const tone = toneFor(d.status, online, hasTraffic)
-      const onInner = useTwoRings && i % 2 === 0
-      const r = useTwoRings ? (onInner ? RING_INNER : RING_OUTER) : SINGLE_RING
-      const a = angleFor(d.id, n, i)
-      // Ring is centered on the *default* hub position (vbW/2, HUB_Y) so
-      // dragging the hub doesn't drag the whole peer ring with it.
-      const computedX = vbW / 2 + Math.cos(a) * r
-      const computedY = HUB_Y + Math.sin(a) * r * 0.62 // squash vertically so labels fit
-      // If the user has dragged this node, prefer the override.
-      const override = nodePositions.get(d.id)
+    return userGroups.map(([userId, userDevices], i) => {
+      // Single-user case: park the user directly above the hub so the
+      // 2-level tree reads top-down for the common dashboard view.
+      const a = n === 1 ? -Math.PI / 2 : angleFor(userId, n, i)
+      const computedX = vbW / 2 + Math.cos(a) * USER_RING
+      const computedY = HUB_Y + Math.sin(a) * USER_RING * 0.62
+      const override = nodePositions.get(`user-${userId}`)
       const x = override?.x ?? computedX
       const y = override?.y ?? computedY
-      return { device: d, x, y, tone, rateBps }
+      const label = userMap?.get(userId)?.label ?? `user · ${userId.slice(0, 6)}`
+      let liveCount = 0
+      for (const d of userDevices) {
+        if (
+          connState(d) === "online" &&
+          ((rates.get(d.id)?.rxBps ?? 0) + (rates.get(d.id)?.txBps ?? 0)) > 1024
+        ) {
+          liveCount += 1
+        }
+      }
+      return {
+        userId,
+        label,
+        x,
+        y,
+        liveCount,
+        peerCount: userDevices.length,
+      }
     })
-  }, [visible, rates, nodePositions, vbW])
+  }, [userGroups, nodePositions, vbW, userMap, rates])
+
+  const placed: LaidOutPeer[] = useMemo(() => {
+    if (placedUsers.length === 0) return []
+    const out: LaidOutPeer[] = []
+    for (const u of placedUsers) {
+      const userDevices = userGroups.find(([id]) => id === u.userId)?.[1] ?? []
+      const k = userDevices.length
+      userDevices.forEach((d, idx) => {
+        const online = connState(d) === "online"
+        const rate = online ? rates.get(d.id) : undefined
+        const rateBps = (rate?.rxBps ?? 0) + (rate?.txBps ?? 0)
+        const hasTraffic = rateBps > 1024
+        const tone = toneFor(d.status, online, hasTraffic)
+        // Distribute this user's devices on a small ring centered on the
+        // *default* user-node position (so dragging the user doesn't drag
+        // the whole sub-ring with it — same idiom as hub vs peer ring).
+        const a = k === 1 ? Math.PI / 2 : angleFor(d.id, k, idx)
+        const defaultUserX =
+          vbW / 2 +
+          Math.cos(
+            placedUsers.length === 1
+              ? -Math.PI / 2
+              : angleFor(u.userId, placedUsers.length, placedUsers.indexOf(u)),
+          ) * USER_RING
+        const defaultUserY =
+          HUB_Y +
+          Math.sin(
+            placedUsers.length === 1
+              ? -Math.PI / 2
+              : angleFor(u.userId, placedUsers.length, placedUsers.indexOf(u)),
+          ) *
+            USER_RING *
+            0.62
+        const computedX = defaultUserX + Math.cos(a) * PEER_FROM_USER
+        const computedY = defaultUserY + Math.sin(a) * PEER_FROM_USER * 0.62
+        const override = nodePositions.get(d.id)
+        const x = override?.x ?? computedX
+        const y = override?.y ?? computedY
+        out.push({
+          device: d,
+          x,
+          y,
+          tone,
+          rateBps,
+          userX: u.x,
+          userY: u.y,
+        })
+      })
+    }
+    return out
+  }, [placedUsers, userGroups, rates, nodePositions, vbW])
 
   // Hub position can also be overridden by drag. Default to canvas center.
   const hubOverride = nodePositions.get("__hub__")
@@ -516,15 +613,42 @@ export function LiveTopology({
           transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}
           style={{ vectorEffect: "non-scaling-stroke" }}
         >
-          {/* edges + flow — edges anchor on the live hub position so they
-              follow when the hub is dragged. */}
+          {/* server → user edges (thicker, always "live") */}
+          {placedUsers.map((u) => (
+            <g key={`hu-${u.userId}`}>
+              <line
+                x1={hubX}
+                y1={hubY}
+                x2={u.x}
+                y2={u.y}
+                className={
+                  u.liveCount > 0 ? "zv-topo-edge-live" : "zv-topo-edge"
+                }
+                strokeWidth={1.1 * strokeScale}
+              />
+              {u.liveCount > 0 && (
+                <line
+                  className="zv-topo-flow"
+                  x1={hubX}
+                  y1={hubY}
+                  x2={u.x}
+                  y2={u.y}
+                  strokeWidth={1.4 * strokeScale}
+                  strokeDasharray="2 6"
+                  style={{ animationDuration: "1.8s" }}
+                />
+              )}
+            </g>
+          ))}
+
+          {/* user → device edges + per-device flow particles */}
           {placed.map((p) => {
             const isLive = p.tone === "live"
             return (
               <g key={`e-${p.device.id}`}>
                 <line
-                  x1={hubX}
-                  y1={hubY}
+                  x1={p.userX}
+                  y1={p.userY}
                   x2={p.x}
                   y2={p.y}
                   className={isLive ? "zv-topo-edge-live" : "zv-topo-edge"}
@@ -533,8 +657,8 @@ export function LiveTopology({
                 {isLive && (
                   <line
                     className="zv-topo-flow"
-                    x1={hubX}
-                    y1={hubY}
+                    x1={p.userX}
+                    y1={p.userY}
                     x2={p.x}
                     y2={p.y}
                     strokeWidth={1.2 * strokeScale}
@@ -550,13 +674,25 @@ export function LiveTopology({
             )
           })}
 
-          {/* peers — draggable */}
+          {/* peers — draggable. PeerNode no longer needs hubX (label
+              anchor is now relative to the user, not the hub). */}
           {placed.map((p) => (
             <PeerNode
               key={p.device.id}
               peer={p}
-              hubX={hubX}
+              hubX={p.userX}
               onPointerDown={(e) => beginNodeDrag(e, p.device.id, p.x, p.y)}
+            />
+          ))}
+
+          {/* user-tier nodes — drawn on top of peer edges but under the hub */}
+          {placedUsers.map((u) => (
+            <UserNode
+              key={u.userId}
+              user={u}
+              onPointerDown={(e) =>
+                beginNodeDrag(e, `user-${u.userId}`, u.x, u.y)
+              }
             />
           ))}
 
@@ -581,9 +717,12 @@ export function LiveTopology({
             {devices.filter((d) => d.status !== "revoked").length}
           </text>
           <text fontSize="9" y={12}>
-            HUBS · 1
+            USERS · {placedUsers.length}
           </text>
           <text fontSize="9" y={24}>
+            HUBS · 1
+          </text>
+          <text fontSize="9" y={36}>
             ZOOM · {view.scale.toFixed(2)}×
           </text>
         </g>
@@ -746,6 +885,41 @@ function HubNode({
           {meta}
         </text>
       )}
+    </g>
+  )
+}
+
+/** Intermediate node between the server hub and a peer's devices. Sized
+ *  between hub (28) and peer (14) so the visual hierarchy reads
+ *  server > user > device at a glance. Tone follows whether any of the
+ *  user's devices are currently transmitting. */
+function UserNode({
+  user,
+  onPointerDown,
+}: {
+  user: LaidOutUser
+  onPointerDown: (e: React.PointerEvent<SVGGElement>) => void
+}) {
+  const tone = user.liveCount > 0 ? "live" : "idle"
+  const strokeClass =
+    tone === "live" ? "zv-topo-peer-live" : "zv-topo-peer-idle"
+  return (
+    <g
+      transform={`translate(${user.x}, ${user.y})`}
+      className="zv-topo-peer"
+      onPointerDown={onPointerDown}
+      style={{ cursor: "grab" }}
+    >
+      <circle r={18} className={strokeClass} strokeWidth="1.4" />
+      <g transform="translate(-9, -9)" className="zv-topo-peer-icon">
+        <IconUser size={18} strokeWidth={1.6} />
+      </g>
+      <text x={0} y={32} textAnchor="middle" className="zv-topo-hub-label">
+        {user.label}
+      </text>
+      <text x={0} y={44} textAnchor="middle" className="zv-topo-meta">
+        {user.peerCount} {user.peerCount === 1 ? "device" : "devices"}
+      </text>
     </g>
   )
 }

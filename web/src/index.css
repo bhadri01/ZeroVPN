@@ -544,6 +544,34 @@
 .zv-table .zv-actions .zv-icon-btn { opacity: 0; transition: opacity 120ms; }
 .zv-table tbody tr:hover .zv-actions .zv-icon-btn { opacity: 1; }
 
+/* Drag handle column for the draggable devices table. The icon is muted
+   until the row is hovered, picks up the cursor affordance to telegraph
+   "grab me". The row itself is double-clickable to open detail. */
+.zv-table-draggable tbody tr { cursor: default; }
+.zv-table-draggable .zv-drag-handle {
+  padding: 0 6px 0 10px;
+  color: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
+  cursor: grab;
+  user-select: none;
+  transition: color 120ms;
+}
+.zv-table-draggable tbody tr:hover .zv-drag-handle {
+  color: var(--muted-foreground);
+}
+.zv-table-draggable .zv-drag-handle:active { cursor: grabbing; }
+/* Row being dragged — dim it so the user can clearly see where it
+   originated while a copy floats with the pointer. */
+.zv-table-draggable tbody tr[data-dragging="1"] td {
+  opacity: 0.4;
+}
+/* Row currently under the pointer during a drag — primary-tinted top
+   border telegraphs "drop here lands above this row" without needing
+   an extra render slot between rows. */
+.zv-table-draggable tbody tr[data-drop-target="1"] td {
+  box-shadow: inset 0 2px 0 0 var(--primary);
+  background: color-mix(in oklch, var(--primary) 8%, var(--card));
+}
+
 /* Icon button — 28px hairline square */
 .zv-icon-btn {
   width: 28px;
@@ -654,6 +682,35 @@
   font-family: var(--font-mono);
   font-size: 11px;
   margin-top: 2px;
+}
+
+/* Recent activity rows — newer dot indicator + per-tone event accent.
+   Smaller and crisper than the old timeline-style rendering; pairs
+   with the dashboard's Live event stream panel size for visual rhyme. */
+.zv-act-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted-foreground);
+  box-shadow: 0 0 0 2px color-mix(in oklch, currentColor 12%, transparent);
+}
+.zv-act-dot[data-tone="ok"]    { background: var(--status-online); }
+.zv-act-dot[data-tone="warn"]  { background: var(--status-degraded); }
+.zv-act-dot[data-tone="err"]   { background: var(--destructive); }
+.zv-act-dot[data-tone="info"]  { background: #5a9cff; }
+.zv-act-dot[data-tone="muted"] { background: var(--muted-foreground); }
+
+/* Per-tone CSS vars consumed by inline style on the event verb. Keeps
+   the row legible while still being colour-coded. */
+:root {
+  --zv-act-ok: var(--status-online);
+  --zv-act-warn: var(--status-degraded);
+  --zv-act-err: var(--destructive);
+  --zv-act-info: #1e5fcc;
+  --zv-act-muted: var(--foreground);
+}
+.dark {
+  --zv-act-info: #5a9cff;
 }
 
 /* Bar — for quota usage / progress lines */

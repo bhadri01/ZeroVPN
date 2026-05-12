@@ -230,10 +230,6 @@ pub async fn soft_delete(pool: &PgPool, user_id: Uuid) -> sqlx::Result<()> {
         .bind(user_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE api_tokens SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL")
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await?;
     tx.commit().await?;
     Ok(())
 }

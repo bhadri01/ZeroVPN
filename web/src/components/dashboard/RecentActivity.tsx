@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { IconActivity, IconArrowUpRight } from "@tabler/icons-react"
 import { Link } from "react-router"
 
 import { adminListAudit, type AuditRow } from "@/lib/api"
@@ -15,12 +16,41 @@ interface ActivityItem {
   event: string
   target: string
   actor: string
-  meta?: string
 }
 
-function fmtTime(ms: number): string {
+/** Render HH:MM. Returns "—" when the timestamp is missing or garbage so
+ *  the cell never displays "Invalid Date". */
+function fmtTime(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return "—"
   const d = new Date(ms)
+  if (Number.isNaN(d.getTime())) return "—"
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+}
+
+/** Compact relative-time string. Guards against NaN / undefined so the
+ *  cell never displays "NaNd ago". */
+function fmtRelativeShort(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return "—"
+  const diff = Date.now() - ms
+  if (!Number.isFinite(diff)) return "—"
+  if (diff < 0) return "just now"
+  if (diff < 60_000) return "just now"
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
+  return `${Math.floor(diff / 86_400_000)}d ago`
+}
+
+/** Safely turn a backend timestamp (ISO string, number, or anything
+ *  else) into milliseconds. Returns 0 when unparseable so the UI's
+ *  numeric guards above kick in and render "—". */
+function tsToMs(value: unknown): number {
+  if (value == null) return 0
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const t = Date.parse(value)
+    return Number.isNaN(t) ? 0 : t
+  }
+  return 0
 }
 
 function toneForAuditAction(action: string): Tone {
@@ -32,13 +62,12 @@ function toneForAuditAction(action: string): Tone {
 }
 
 function auditToItem(row: AuditRow): ActivityItem {
-  const target =
-    row.target_id
-      ? `${row.target_type ?? ""}${row.target_type ? "·" : ""}${row.target_id.slice(0, 12)}`
-      : (row.target_type ?? "—")
+  const target = row.target_id
+    ? `${row.target_type ? row.target_type + " · " : ""}${row.target_id.slice(0, 12)}`
+    : (row.target_type ?? "—")
   return {
     id: `a${row.id}`,
-    tsMs: new Date(row.created_at).getTime(),
+    tsMs: tsToMs(row.created_at),
     tone: toneForAuditAction(row.action),
     event: row.action,
     target,
@@ -47,8 +76,8 @@ function auditToItem(row: AuditRow): ActivityItem {
 }
 
 function tailToItem(line: TailLine): ActivityItem {
-  // `text` already contains a "kind · subject · detail" pattern. Split it
-  // back out so the timeline layout matches the design.
+  // `text` is "kind · subject · detail" — split back into the three
+  // visible slots so the layout reads consistently with the audit path.
   const parts = line.text.split(" · ")
   return {
     id: `t${line.id}`,
@@ -65,11 +94,19 @@ interface RecentActivityProps {
   limit?: number
 }
 
+/** Fixed-height scrollable shell for the panel. Declared at module scope
+ *  (not inside RecentActivity) so React reconciles the same DOM node
+ *  across re-renders — otherwise every live-tail update would create a
+ *  new component identity, unmount the scrollable div, and reset the
+ *  user's scroll back to the top. */
+function Shell({ children }: { children: React.ReactNode }) {
+  return <div className="h-[420px] overflow-y-auto">{children}</div>
+}
+
 export function RecentActivity({ limit = 8 }: RecentActivityProps) {
   const user = useAuth((s) => s.user)
   const isAdmin = user?.role === "admin"
 
-  // Admins get real audit rows from the database.
   const auditQ = useQuery({
     queryKey: ["admin", "audit", "dashboard", limit],
     queryFn: () => adminListAudit(limit, 0),
@@ -77,68 +114,104 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
     refetchInterval: 15_000,
   })
 
-  // Non-admins build their own activity feed from the live tail. These are
-  // backend-emitted events for THIS user (the WS pipeline filters them at
-  // the API layer), not mocks.
   const tail = useEventTail((s) => s.lines)
-
   const items: ActivityItem[] = isAdmin
     ? (auditQ.data?.items ?? []).map(auditToItem)
     : tail.slice(-limit).reverse().map(tailToItem)
 
   if (isAdmin && auditQ.isLoading) {
     return (
-      <div className="flex flex-col gap-1.5 px-4 py-3">
-        <Skeleton className="h-5 rounded-none" />
-        <Skeleton className="h-5 rounded-none" />
-        <Skeleton className="h-5 rounded-none" />
-        <Skeleton className="h-5 rounded-none" />
-        <Skeleton className="h-5 rounded-none" />
-      </div>
+      <Shell>
+        <div className="flex flex-col gap-2 px-4 py-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-9 rounded-none" />
+          ))}
+        </div>
+      </Shell>
     )
   }
   if (isAdmin && auditQ.isError) {
     return (
-      <p className="text-destructive px-4 py-3 font-mono text-xs">
-        Failed to load activity.
-      </p>
+      <Shell>
+        <p className="text-destructive px-4 py-3 font-mono text-xs">
+          Failed to load activity.
+        </p>
+      </Shell>
     )
   }
   if (items.length === 0) {
     return (
-      <p className="text-muted-foreground px-4 py-3 font-mono text-xs">
-        No activity yet — events appear here as your devices connect.
-      </p>
+      <Shell>
+        <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+          <IconActivity
+            size={20}
+            className="text-muted-foreground/40"
+            aria-hidden
+          />
+          <p className="font-mono text-xs leading-relaxed">
+            No activity yet — events appear here as devices connect or
+            change state.
+          </p>
+        </div>
+      </Shell>
     )
   }
 
   return (
-    <div className="px-4 py-2">
-      {items.map((a, i) => (
-        <div className="zv-tl-item" key={a.id}>
-          <div className="zv-tl-time">{fmtTime(a.tsMs)}</div>
-          <div className="zv-tl-rail">
-            <div className="zv-tl-dot" data-tone={a.tone} />
-            {i < items.length - 1 && <div className="zv-tl-line" />}
-          </div>
-          <div className="zv-tl-body">
-            <div>
-              <strong className="font-mono">{a.event}</strong>
-              {a.target && (
-                <span className="text-muted-foreground"> · {a.target}</span>
-              )}
-            </div>
-            <div className="zv-tl-meta">{a.actor}</div>
-          </div>
-        </div>
-      ))}
+    <Shell>
+      <ul className="divide-border divide-y">
+        {items.map((a) => (
+          <ActivityRow key={a.id} item={a} />
+        ))}
+      </ul>
       {isAdmin && (
-        <div className="text-muted-foreground/70 mt-1 px-1 py-2 font-mono text-[10px]">
-          <Link to="/admin/audit" className="hover:text-foreground">
-            View full audit log ↗
+        <div className="border-border bg-card/70 sticky bottom-0 border-t px-4 py-2">
+          <Link
+            to="/admin/audit"
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 font-mono text-[11px]"
+          >
+            View full audit log
+            <IconArrowUpRight size={12} aria-hidden />
           </Link>
         </div>
       )}
-    </div>
+    </Shell>
+  )
+}
+
+function ActivityRow({ item }: { item: ActivityItem }) {
+  return (
+    <li className="hover:bg-muted/50 group flex items-start gap-3 px-4 py-2.5 transition-colors">
+      <span
+        className="zv-act-dot mt-1.5 shrink-0"
+        data-tone={item.tone}
+        aria-hidden
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span
+            className="font-mono text-[12px] font-medium tracking-tight"
+            data-tone={item.tone}
+            // Bold the event verb in its tone so the eye lands on what
+            // happened, not on the timestamp.
+            style={{ color: `var(--zv-act-${item.tone})` }}
+          >
+            {item.event}
+          </span>
+          {item.target && (
+            <span className="text-muted-foreground min-w-0 truncate font-mono text-[11px]">
+              {item.target}
+            </span>
+          )}
+        </div>
+        <div className="text-muted-foreground/80 mt-0.5 flex items-center gap-2 font-mono text-[10px]">
+          <span>{fmtTime(item.tsMs)}</span>
+          <span className="text-muted-foreground/40">·</span>
+          <span>{fmtRelativeShort(item.tsMs)}</span>
+          <span className="text-muted-foreground/40">·</span>
+          <span className="truncate">{item.actor}</span>
+        </div>
+      </div>
+    </li>
   )
 }

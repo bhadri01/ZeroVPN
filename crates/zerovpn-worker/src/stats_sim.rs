@@ -130,28 +130,6 @@ async fn emit_round(
                                     },
                                 ))
                                 .await;
-
-                            zerovpn_db::webhook_dispatch::dispatch(
-                                pool,
-                                zerovpn_db::repos::webhooks::WebhookEventKind::BandwidthThreshold,
-                                serde_json::json!({
-                                    "device_id": d.id,
-                                    "user_id": d.user_id,
-                                    "current_bytes": current,
-                                    "cap_bytes": cap,
-                                }),
-                            )
-                            .await;
-                            zerovpn_db::webhook_dispatch::dispatch(
-                                pool,
-                                zerovpn_db::repos::webhooks::WebhookEventKind::DevicePaused,
-                                serde_json::json!({
-                                    "device_id": d.id,
-                                    "user_id": d.user_id,
-                                    "reason": "quota_exceeded",
-                                }),
-                            )
-                            .await;
                         }
                     }
                 }

@@ -51,9 +51,12 @@ pub struct User {
     pub role: UserRole,
     pub status: UserStatus,
     pub must_change_password: bool,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub email_verified_at: Option<OffsetDateTime>,
     pub totp_enabled: bool,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub last_login_at: Option<OffsetDateTime>,
 }
 
@@ -90,8 +93,13 @@ pub struct Device {
     pub dns_names: Vec<String>,
     pub allowed_ips_override: Option<Vec<String>>,
     pub dns_override: Option<Vec<IpNetwork>>,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub last_handshake_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    /// KEK-encrypted WG private key, when the user opted in at create time.
+    /// None for devices created with the default zero-knowledge behaviour.
+    pub private_key_encrypted: Option<Vec<u8>>,
 }
 
 impl Device {

@@ -39,17 +39,17 @@ const DashboardPage = lazy(() =>
 const DevicesPage = lazy(() =>
   import("@/pages/app/Devices").then((m) => ({ default: m.DevicesPage })),
 )
-const BandwidthPage = lazy(() =>
-  import("@/pages/app/Bandwidth").then((m) => ({ default: m.BandwidthPage })),
+const FinderPage = lazy(() =>
+  import("@/pages/app/Finder").then((m) => ({ default: m.FinderPage })),
+)
+const TopologyPage = lazy(() =>
+  import("@/pages/app/Topology").then((m) => ({ default: m.TopologyPage })),
 )
 const SecurityPage = lazy(() =>
   import("@/pages/app/Security").then((m) => ({ default: m.SecurityPage })),
 )
 const AccountPage = lazy(() =>
   import("@/pages/app/Account").then((m) => ({ default: m.AccountPage })),
-)
-const ApiTokensPage = lazy(() =>
-  import("@/pages/app/ApiTokens").then((m) => ({ default: m.ApiTokensPage })),
 )
 const DeviceDetailPage = lazy(() =>
   import("@/pages/app/DeviceDetail").then((m) => ({
@@ -76,9 +76,6 @@ const FailedLoginsPage = lazy(() =>
   import("@/pages/admin/FailedLogins").then((m) => ({
     default: m.FailedLoginsPage,
   })),
-)
-const WebhooksPage = lazy(() =>
-  import("@/pages/admin/Webhooks").then((m) => ({ default: m.WebhooksPage })),
 )
 const ServersPage = lazy(() =>
   import("@/pages/admin/Servers").then((m) => ({ default: m.ServersPage })),
@@ -135,13 +132,21 @@ export const router = createBrowserRouter([
           },
           {
             path: "/app/devices/:id",
-            handle: { breadcrumb: "Device" },
+            handle: {
+              breadcrumb: "Device",
+              parents: [{ label: "Devices", to: "/app/devices" }],
+            },
             element: <DeviceDetailPage />,
           },
           {
-            path: "/app/bandwidth",
-            handle: { breadcrumb: "Bandwidth" },
-            element: <BandwidthPage />,
+            path: "/app/finder",
+            handle: { breadcrumb: "Finder" },
+            element: <FinderPage />,
+          },
+          {
+            path: "/app/topology",
+            handle: { breadcrumb: "Topology" },
+            element: <TopologyPage />,
           },
           {
             path: "/app/security",
@@ -153,12 +158,6 @@ export const router = createBrowserRouter([
             handle: { breadcrumb: "Account" },
             element: <AccountPage />,
           },
-          {
-            path: "/app/api-tokens",
-            handle: { breadcrumb: "API tokens" },
-            element: <ApiTokensPage />,
-          },
-
           // ── Admin ──────────────────────────────────────────────────────
           {
             element: (
@@ -187,11 +186,6 @@ export const router = createBrowserRouter([
                 path: "/admin/failed-logins",
                 handle: { breadcrumb: "Failed logins" },
                 element: <FailedLoginsPage />,
-              },
-              {
-                path: "/admin/webhooks",
-                handle: { breadcrumb: "Webhooks" },
-                element: <WebhooksPage />,
               },
               {
                 path: "/admin/servers",

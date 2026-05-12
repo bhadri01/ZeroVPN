@@ -3,7 +3,7 @@ use std::{net::IpAddr, sync::Arc};
 use askama::Template;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::IntoResponse,
 };
 use garde::Validate;
@@ -48,6 +48,13 @@ pub struct CreateBody {
     /// isn't inside the server's CIDR.
     #[garde(skip)]
     pub allocated_ip: Option<String>,
+    /// When true, the API encrypts the generated WG private key with
+    /// the server KEK and persists it on the device row, enabling later
+    /// re-download of the .conf via `GET /devices/{id}/conf`. Default
+    /// false (zero-knowledge — the key only appears in the create-time
+    /// response, then it's gone).
+    #[garde(skip)]
+    pub store_private_key: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,8 +76,15 @@ pub struct PublicDevice {
     pub dns_names: Vec<String>,
     pub allowed_ips_override: Option<Vec<String>>,
     pub dns_override: Option<Vec<String>>,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub last_handshake_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    /// Presence flag only — the device row holds a KEK-encrypted copy of
+    /// the WG private key, so the user can re-download the .conf later
+    /// via `GET /devices/{id}/conf`. The actual key bytes are never
+    /// exposed by this endpoint.
+    pub private_key_stored: bool,
 }
 
 impl From<Device> for PublicDevice {
@@ -79,6 +93,7 @@ impl From<Device> for PublicDevice {
             .dns_override
             .as_ref()
             .map(|v| v.iter().map(|n| n.ip().to_string()).collect());
+        let private_key_stored = d.private_key_encrypted.is_some();
         Self {
             id: d.id,
             name: d.name,
@@ -92,6 +107,7 @@ impl From<Device> for PublicDevice {
             dns_override,
             last_handshake_at: d.last_handshake_at,
             created_at: d.created_at,
+            private_key_stored,
         }
     }
 }
@@ -119,6 +135,52 @@ pub async fn get(
         .await?
         .ok_or(ApiError::NotFound)?;
     Ok(Json(PublicDevice::from(d)))
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceEvent {
+    pub id: i64,
+    pub action: String,
+    pub metadata: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: time::OffsetDateTime,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct EventsQuery {
+    /// Page size. Clamped to [1, 500] server-side. Defaults to 100 when
+    /// omitted — enough to render a full day of typical activity.
+    pub limit: Option<i64>,
+}
+
+/// Returns the audit-log entries targeting this device, newest first.
+/// Powers the device-detail "Activity" timeline: lifecycle events
+/// (created / paused / unpaused / revoked), config + DNS changes, key
+/// rotations, conf re-downloads, and the worker-emitted online/offline
+/// transitions. Ownership is enforced — the caller must own the device.
+pub async fn events(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    Query(q): Query<EventsQuery>,
+) -> ApiResult<impl IntoResponse> {
+    // 404 (not 403) for devices the caller doesn't own — keeps the
+    // existence of other users' device ids opaque, matching `get`.
+    devices::find_for_user(&state.pool, user.id, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let limit = q.limit.unwrap_or(100);
+    let rows = audit::list_for_target(&state.pool, "device", id, limit).await?;
+    let out: Vec<DeviceEvent> = rows
+        .into_iter()
+        .map(|r| DeviceEvent {
+            id: r.id,
+            action: r.action,
+            metadata: r.metadata,
+            created_at: r.created_at,
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 pub async fn create(
@@ -155,6 +217,20 @@ pub async fn create(
     let private_key = keys::generate_private_key();
     let public_key = keys::derive_public_key(&private_key)
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Opt-in: encrypt the private key with the server KEK so the user can
+    // re-download the .conf later. Default behaviour stays zero-knowledge.
+    let store_private = body.store_private_key.unwrap_or(false);
+    let private_key_encrypted: Option<Vec<u8>> = if store_private {
+        Some(
+            state
+                .kek
+                .encrypt(private_key.as_bytes())
+                .map_err(|e| ApiError::Internal(format!("encrypt private key: {e}")))?,
+        )
+    } else {
+        None
+    };
 
     let amnezia = AmneziaParams::random();
 
@@ -210,6 +286,7 @@ pub async fn create(
             public_key: &public_key,
             preshared_key_encrypted: None, // will encrypt with KEK in a follow-up
             allocated_ip: allocated_cidr,
+            private_key_encrypted: private_key_encrypted.as_deref(),
         },
     )
     .await
@@ -254,6 +331,7 @@ pub async fn create(
                 "server": server.name,
                 "split_tunnel": split_tunnel,
                 "dns_override": body.dns_override,
+                "private_key_stored": store_private,
             }),
             ip_prefix: None,
         },
@@ -336,6 +414,206 @@ pub async fn create(
     ))
 }
 
+/// Generates a fresh keypair for an existing (non-revoked) device, swaps
+#[derive(Debug, Deserialize)]
+pub struct ReorderBody {
+    pub ids: Vec<Uuid>,
+}
+
+/// Persist the user's preferred device order. Caller sends the full list
+/// of device ids in the new order; we bulk-assign `display_order` so all
+/// of the user's sessions see the same arrangement on next /devices
+/// fetch. Ignores ids that don't belong to the caller (the UPDATE's
+/// `user_id` clause filters them out) so a malicious body can't reorder
+/// another user's devices.
+pub async fn reorder(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(body): Json<ReorderBody>,
+) -> ApiResult<impl IntoResponse> {
+    if body.ids.is_empty() {
+        return Ok(Json(json!({ "status": "ok", "updated": 0 })));
+    }
+    if body.ids.len() > 500 {
+        return Err(ApiError::Validation(
+            "too many ids; reorder accepts at most 500".into(),
+        ));
+    }
+    let n = devices::set_display_order(&state.pool, user.id, &body.ids).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "device.reordered",
+            target_type: Some("device"),
+            target_id: None,
+            metadata: json!({ "count": body.ids.len() }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(user_id = %user.id, count = body.ids.len(), "devices reordered");
+    Ok(Json(json!({ "status": "ok", "updated": n })))
+}
+
+/// Optional body for rotate-keys. The single field flips the opt-in to
+/// server-side private-key storage for the rotated key. Omit / null →
+/// inherit the device's current setting; `true` → start storing (or
+/// keep storing); `false` → stop storing.
+#[derive(Debug, Deserialize, Default)]
+pub struct RotateBody {
+    #[serde(default)]
+    pub store_private_key: Option<bool>,
+}
+
+/// the public key on the row, updates the running WG interface, and
+/// returns the rendered config + QR so the user can scan the new
+/// credentials on their device. Mirrors the `create` response shape so
+/// the same dialog UI can render it.
+pub async fn rotate_keys(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    body: Option<Json<RotateBody>>,
+) -> ApiResult<impl IntoResponse> {
+    let store_override = body.and_then(|Json(b)| b.store_private_key);
+    let device = devices::find_for_user(&state.pool, user.id, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if device.status == DeviceStatus::Revoked {
+        return Err(ApiError::Conflict("revoked device cannot rotate keys".into()));
+    }
+
+    let server = zerovpn_db::repos::servers::find_by_id(&state.pool, device.server_id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("device's server missing".into()))?;
+
+    let old_public_key = device.public_key.clone();
+    let private_key = keys::generate_private_key();
+    let public_key = keys::derive_public_key(&private_key)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let n = devices::update_public_key(&state.pool, user.id, id, &public_key).await?;
+    if n == 0 {
+        return Err(ApiError::NotFound);
+    }
+
+    // Decide whether the new private key gets stored: explicit flag wins,
+    // else inherit the device's current opt-in. Storing means KEK-
+    // encrypting and writing; "not storing" means clearing the column so
+    // there's no stale ciphertext lying around.
+    let should_store = match store_override {
+        Some(v) => v,
+        None => device.private_key_encrypted.is_some(),
+    };
+    if should_store {
+        let encrypted = state
+            .kek
+            .encrypt(private_key.as_bytes())
+            .map_err(|e| ApiError::Internal(format!("encrypt rotated key: {e}")))?;
+        devices::set_private_key_encrypted(&state.pool, user.id, id, Some(&encrypted))
+            .await?;
+    } else if device.private_key_encrypted.is_some() {
+        devices::set_private_key_encrypted(&state.pool, user.id, id, None).await?;
+    }
+
+    // Swap the peer on the running WG interface. Best-effort — DB is the
+    // source of truth; if WG control is a no-op (dev) the new config will
+    // still match what's persisted.
+    if let Err(e) = state.wg.remove_peer(&old_public_key).await {
+        tracing::warn!(?e, "wg remove_peer (rotate) failed");
+    }
+    if let Err(e) = state
+        .wg
+        .add_peer(
+            &public_key,
+            device.allocated_ip.ip(),
+            None,
+            PERSISTENT_KEEPALIVE,
+        )
+        .await
+    {
+        tracing::warn!(?e, "wg add_peer (rotate) failed");
+    }
+
+    // Render the new wg-conf using whatever the device's stored overrides
+    // already say. No mock fields — the user gets exactly what their
+    // current settings dictate, just with a fresh private key.
+    let dns_str = match device.dns_override_ips() {
+        Some(ips) if !ips.is_empty() => ips
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => server
+            .dns_servers_ips()
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
+    let endpoint_str = format!("{}:{}", server.endpoint_host, server.endpoint_port);
+    let address_str = format!("{}/32", device.allocated_ip.ip());
+    let allowed_ips = match device.allowed_ips_override.as_ref() {
+        Some(list) if !list.is_empty() => list.join(", "),
+        _ => "0.0.0.0/0, ::/0".to_string(),
+    };
+    let amnezia = AmneziaParams::random();
+
+    let cfg = config::PeerConfig {
+        private_key: &private_key,
+        address: &address_str,
+        dns: &dns_str,
+        mtu: Some(server.mtu as u16),
+        amnezia: Some(config::AmneziaParams {
+            jc: amnezia.jc,
+            jmin: amnezia.jmin,
+            jmax: amnezia.jmax,
+            s1: amnezia.s1,
+            s2: amnezia.s2,
+            h1: amnezia.h1,
+            h2: amnezia.h2,
+            h3: amnezia.h3,
+            h4: amnezia.h4,
+        }),
+        server_public_key: &server.public_key,
+        preshared_key: None,
+        allowed_ips: &allowed_ips,
+        endpoint: &endpoint_str,
+        keepalive: PERSISTENT_KEEPALIVE,
+    };
+    let conf_text = cfg
+        .render()
+        .map_err(|e| ApiError::Internal(format!("render conf: {e}")))?;
+    let qr_svg = qr::render_svg(&conf_text)
+        .map_err(|e| ApiError::Internal(format!("render qr: {e}")))?;
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "device.keys_rotated",
+            target_type: Some("device"),
+            target_id: Some(id),
+            metadata: json!({ "name": device.name }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+
+    let stored = devices::find_for_user(&state.pool, user.id, id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("rotated device missing".into()))?;
+
+    info!(user_id = %user.id, device_id = %id, "device keys rotated");
+
+    Ok(Json(CreatedDevice {
+        device: stored.into(),
+        config: conf_text,
+        qr_svg,
+    }))
+}
+
 pub async fn delete(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -369,13 +647,6 @@ pub async fn delete(
         tracing::warn!(?e, "wg remove_peer failed (non-fatal)");
     }
 
-    zerovpn_db::webhook_dispatch::dispatch(
-        &state.pool,
-        zerovpn_db::repos::webhooks::WebhookEventKind::DeviceRevoked,
-        json!({ "device_id": id, "user_id": user.id, "device_name": device.name }),
-    )
-    .await;
-
     info!(user_id = %user.id, device_id = %id, "device revoked");
     Ok(Json(json!({ "status": "ok" })))
 }
@@ -385,6 +656,147 @@ pub struct PatchBody {
     pub name: Option<String>,
     pub allowed_ips_override: Option<Vec<String>>,
     pub dns_override: Option<Vec<String>>,
+}
+
+/// Stop storing the device's encrypted private key on the server. The
+/// device keeps working — only the recovery path (re-download .conf
+/// without rotating) is removed. To re-enable storage on a device that
+/// was previously cleared, rotate keys with `{"store_private_key":true}`.
+pub async fn clear_stored_key(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let device = devices::find_for_user(&state.pool, user.id, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if device.private_key_encrypted.is_none() {
+        // Already clear — return 200 so the client can be liberal in what
+        // it sends. The audit entry is the only visible side-effect.
+        return Ok(Json(json!({ "status": "ok", "private_key_stored": false })));
+    }
+    devices::set_private_key_encrypted(&state.pool, user.id, id, None).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "device.stored_key_cleared",
+            target_type: Some("device"),
+            target_id: Some(id),
+            metadata: json!({ "name": device.name }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(user_id = %user.id, device_id = %id, "stored key cleared");
+    Ok(Json(json!({ "status": "ok", "private_key_stored": false })))
+}
+
+/// Re-render the device's .conf from the server-stored private key.
+/// Returns 404 if the device doesn't exist, 409 if the device was
+/// created without `store_private_key` (no key to recover). Owner-only;
+/// audit-logged so a stolen session leaves a paper trail.
+pub async fn redownload_conf(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let device = devices::find_for_user(&state.pool, user.id, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if device.status == DeviceStatus::Revoked {
+        return Err(ApiError::Conflict("device is revoked".into()));
+    }
+    let encrypted = device
+        .private_key_encrypted
+        .as_ref()
+        .ok_or_else(|| {
+            ApiError::Conflict(
+                "device was not created with server-side key storage; rotate keys to re-issue"
+                    .into(),
+            )
+        })?;
+    let private_bytes = state
+        .kek
+        .decrypt(encrypted)
+        .map_err(|e| ApiError::Internal(format!("decrypt private key: {e}")))?;
+    let private_key = String::from_utf8(private_bytes)
+        .map_err(|_| ApiError::Internal("stored private key is not UTF-8".into()))?;
+
+    let server = zerovpn_db::repos::servers::find_by_id(&state.pool, device.server_id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("device's server missing".into()))?;
+
+    // Same conf-render path as `create` + `rotate_keys`. Pulls overrides
+    // from the device row so the re-download reflects the user's current
+    // configuration, not the one captured at create time.
+    let dns_str = match device.dns_override_ips() {
+        Some(ips) if !ips.is_empty() => ips
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => server
+            .dns_servers_ips()
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
+    let endpoint_str = format!("{}:{}", server.endpoint_host, server.endpoint_port);
+    let address_str = format!("{}/32", device.allocated_ip.ip());
+    let allowed_ips = match device.allowed_ips_override.as_ref() {
+        Some(list) if !list.is_empty() => list.join(", "),
+        _ => "0.0.0.0/0, ::/0".to_string(),
+    };
+    let amnezia = AmneziaParams::random();
+
+    let cfg = config::PeerConfig {
+        private_key: &private_key,
+        address: &address_str,
+        dns: &dns_str,
+        mtu: Some(server.mtu as u16),
+        amnezia: Some(config::AmneziaParams {
+            jc: amnezia.jc,
+            jmin: amnezia.jmin,
+            jmax: amnezia.jmax,
+            s1: amnezia.s1,
+            s2: amnezia.s2,
+            h1: amnezia.h1,
+            h2: amnezia.h2,
+            h3: amnezia.h3,
+            h4: amnezia.h4,
+        }),
+        server_public_key: &server.public_key,
+        preshared_key: None,
+        allowed_ips: &allowed_ips,
+        endpoint: &endpoint_str,
+        keepalive: PERSISTENT_KEEPALIVE,
+    };
+    let conf_text = cfg
+        .render()
+        .map_err(|e| ApiError::Internal(format!("render conf: {e}")))?;
+    let qr_svg = qr::render_svg(&conf_text)
+        .map_err(|e| ApiError::Internal(format!("render qr: {e}")))?;
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "device.conf_redownloaded",
+            target_type: Some("device"),
+            target_id: Some(id),
+            metadata: json!({ "name": device.name }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+
+    Ok(Json(CreatedDevice {
+        device: device.into(),
+        config: conf_text,
+        qr_svg,
+    }))
 }
 
 pub async fn patch(
@@ -535,14 +947,6 @@ async fn set_pause_state(
     )
     .await?;
 
-    if target == DeviceStatus::Paused {
-        zerovpn_db::webhook_dispatch::dispatch(
-            &state.pool,
-            zerovpn_db::repos::webhooks::WebhookEventKind::DevicePaused,
-            json!({ "device_id": device_id, "user_id": user_id }),
-        )
-        .await;
-    }
     Ok(())
 }
 

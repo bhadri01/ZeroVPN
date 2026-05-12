@@ -99,7 +99,7 @@ moka = { version = "0.12", features = ["future"] }
 
 # IDs / time / encoding
 uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
-time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+time = { version = "0.3", features = ["serde", "serde-well-known", "formatting", "parsing"] }
 # Pinned to 0.20 to match sqlx 0.8.6's internal ipnetwork dep — having two
 # versions in the graph means our IpNetwork type doesn't satisfy
 # sqlx::Type<Postgres>. Bump to 0.21 once sqlx upgrades.

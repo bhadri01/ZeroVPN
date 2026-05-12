@@ -7,17 +7,50 @@ use zerovpn_core::models::{Device, DeviceOs, DeviceStatus};
 use crate::PgPool;
 
 pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Device>> {
+    // `display_order` is set by the drag-reorder UI; older rows are NULL
+    // and fall back to created_at-desc so the list still reads sensibly
+    // before a user has touched the order.
     sqlx::query_as::<_, Device>(
         r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
                   dns_names, allowed_ips_override, dns_override,
-                  last_handshake_at, created_at
+                  last_handshake_at, created_at, private_key_encrypted
            FROM devices
            WHERE user_id = $1 AND status <> 'revoked'
-           ORDER BY created_at DESC"#,
+           ORDER BY display_order NULLS LAST, created_at DESC"#,
     )
     .bind(user_id)
     .fetch_all(pool)
     .await
+}
+
+/// Bulk-assign `display_order` for a list of device ids. Index in the
+/// input slice becomes the new position. Devices not in the list are
+/// untouched. Scoped to `user_id` so one user can't reorder another's.
+/// Runs in a single statement using `unnest` so it's atomic.
+pub async fn set_display_order(
+    pool: &PgPool,
+    user_id: Uuid,
+    ids: &[Uuid],
+) -> sqlx::Result<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let positions: Vec<i32> = (0..ids.len() as i32).collect();
+    let res = sqlx::query(
+        r#"UPDATE devices AS d
+              SET display_order = v.pos
+             FROM (
+                 SELECT UNNEST($2::uuid[]) AS id, UNNEST($3::int[]) AS pos
+             ) AS v
+            WHERE d.user_id = $1
+              AND d.id = v.id"#,
+    )
+    .bind(user_id)
+    .bind(ids)
+    .bind(&positions)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
 }
 
 pub async fn find_for_user(
@@ -28,7 +61,7 @@ pub async fn find_for_user(
     sqlx::query_as::<_, Device>(
         r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
                   dns_names, allowed_ips_override, dns_override,
-                  last_handshake_at, created_at
+                  last_handshake_at, created_at, private_key_encrypted
            FROM devices
            WHERE user_id = $1 AND id = $2"#,
     )
@@ -42,7 +75,7 @@ pub async fn list_by_server(pool: &PgPool, server_id: Uuid) -> sqlx::Result<Vec<
     sqlx::query_as::<_, Device>(
         r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
                   dns_names, allowed_ips_override, dns_override,
-                  last_handshake_at, created_at
+                  last_handshake_at, created_at, private_key_encrypted
            FROM devices
            WHERE server_id = $1"#,
     )
@@ -69,14 +102,18 @@ pub struct NewDevice<'a> {
     pub public_key: &'a str,
     pub preshared_key_encrypted: Option<&'a [u8]>,
     pub allocated_ip: IpNetwork,
+    /// KEK-encrypted WG private key. None for default zero-knowledge
+    /// devices; Some(...) when the user opted in at create time.
+    pub private_key_encrypted: Option<&'a [u8]>,
 }
 
 pub async fn create(pool: &PgPool, d: NewDevice<'_>) -> sqlx::Result<Uuid> {
     let id = Uuid::now_v7();
     sqlx::query(
         r#"INSERT INTO devices (id, user_id, server_id, name, os, public_key,
-                                preshared_key_encrypted, allocated_ip)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+                                preshared_key_encrypted, allocated_ip,
+                                private_key_encrypted)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
     )
     .bind(id)
     .bind(d.user_id)
@@ -86,9 +123,32 @@ pub async fn create(pool: &PgPool, d: NewDevice<'_>) -> sqlx::Result<Uuid> {
     .bind(d.public_key)
     .bind(d.preshared_key_encrypted)
     .bind(d.allocated_ip)
+    .bind(d.private_key_encrypted)
     .execute(pool)
     .await?;
     Ok(id)
+}
+
+/// Replace the stored encrypted private key on an existing device. Used by
+/// rotate-keys when the device was created with `store_private_key`. Pass
+/// `Some(&[])` to set NULL would be ambiguous, so we require an Option:
+/// `None` to clear (the device opts back out of storage), `Some(...)` to
+/// store fresh ciphertext.
+pub async fn set_private_key_encrypted(
+    pool: &PgPool,
+    user_id: Uuid,
+    device_id: Uuid,
+    encrypted: Option<&[u8]>,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        "UPDATE devices SET private_key_encrypted = $3 WHERE user_id = $1 AND id = $2",
+    )
+    .bind(user_id)
+    .bind(device_id)
+    .bind(encrypted)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
 }
 
 pub async fn set_status(
@@ -103,6 +163,28 @@ pub async fn set_status(
     .bind(user_id)
     .bind(device_id)
     .bind(status)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Swap the device's public key after a per-device key rotation. The
+/// caller is expected to have already generated a fresh private+public
+/// keypair (private key never touches this row — it ships once in the
+/// rendered config and is discarded). Scoped to (user_id, device_id) so
+/// one user can't rotate another's peer.
+pub async fn update_public_key(
+    pool: &PgPool,
+    user_id: Uuid,
+    device_id: Uuid,
+    public_key: &str,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        "UPDATE devices SET public_key = $3 WHERE user_id = $1 AND id = $2",
+    )
+    .bind(user_id)
+    .bind(device_id)
+    .bind(public_key)
     .execute(pool)
     .await?;
     Ok(res.rows_affected())

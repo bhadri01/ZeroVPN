@@ -174,6 +174,18 @@ async fn main() -> Result<()> {
                     "/devices",
                     get(routes::devices::list).post(routes::devices::create),
                 )
+                // Bulk-reorder must come BEFORE `/devices/{id}` so axum's
+                // matcher doesn't treat "order" as a uuid path segment.
+                .route(
+                    "/devices/order",
+                    axum::routing::put(routes::devices::reorder),
+                )
+                // Same reason — `dns-check` is a static path, must sit
+                // before the `/devices/{id}` catch-all.
+                .route(
+                    "/devices/dns-check",
+                    get(routes::dns::check_availability),
+                )
                 .route(
                     "/devices/{id}",
                     get(routes::devices::get)
@@ -182,7 +194,20 @@ async fn main() -> Result<()> {
                 )
                 .route("/devices/{id}/pause", post(routes::devices::pause))
                 .route("/devices/{id}/unpause", post(routes::devices::unpause))
+                .route(
+                    "/devices/{id}/rotate-keys",
+                    post(routes::devices::rotate_keys),
+                )
+                .route(
+                    "/devices/{id}/conf",
+                    get(routes::devices::redownload_conf),
+                )
+                .route(
+                    "/devices/{id}/stored-key",
+                    axum::routing::delete(routes::devices::clear_stored_key),
+                )
                 .route("/devices/{id}/dns", axum::routing::put(routes::dns::set))
+                .route("/devices/{id}/events", get(routes::devices::events))
                 .route("/devices/{id}/bandwidth", get(routes::bandwidth::for_device))
                 .route("/devices/{id}/history", get(routes::bandwidth::device_history))
                 .route("/servers/{id}/history", get(routes::bandwidth::server_history))
@@ -213,14 +238,6 @@ async fn main() -> Result<()> {
                     get(routes::admin::get_maintenance).put(routes::admin::set_maintenance),
                 )
                 .route(
-                    "/admin/webhooks",
-                    get(routes::webhooks::list).post(routes::webhooks::create),
-                )
-                .route(
-                    "/admin/webhooks/{id}",
-                    axum::routing::delete(routes::webhooks::delete),
-                )
-                .route(
                     "/admin/users/{id}/quota",
                     axum::routing::put(routes::admin::set_user_quota),
                 )
@@ -242,14 +259,6 @@ async fn main() -> Result<()> {
                 .route(
                     "/auth/reset-password",
                     post(routes::email_auth::reset_password),
-                )
-                .route(
-                    "/api-tokens",
-                    get(routes::api_tokens::list).post(routes::api_tokens::create),
-                )
-                .route(
-                    "/api-tokens/{id}",
-                    axum::routing::delete(routes::api_tokens::revoke),
                 )
                 .route("/ws", get(routes::ws::ws)),
         )

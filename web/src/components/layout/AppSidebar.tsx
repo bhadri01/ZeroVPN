@@ -1,18 +1,17 @@
 import {
-  IconChartLine,
   IconCircleDashedX,
   IconClipboardList,
   IconDevices,
-  IconKey,
+  IconHierarchy3,
   IconLayoutDashboard,
   IconLayoutSidebar,
   IconLayoutSidebarLeftCollapse,
   IconRouter,
+  IconSearch,
   IconShield,
   IconUser,
   IconUserShield,
   IconUsers,
-  IconWebhook,
 } from "@tabler/icons-react"
 import { Link, NavLink, useLocation } from "react-router"
 
@@ -49,12 +48,12 @@ type NavEntry = {
 const WORKSPACE: NavEntry[] = [
   { to: "/app", label: "Dashboard", icon: IconLayoutDashboard, k: "D", end: true },
   { to: "/app/devices", label: "Devices", icon: IconDevices, k: "V" },
-  { to: "/app/bandwidth", label: "Bandwidth", icon: IconChartLine, k: "B" },
+  { to: "/app/topology", label: "Topology", icon: IconHierarchy3, k: "T" },
+  { to: "/app/finder", label: "Finder", icon: IconSearch, k: "F" },
 ]
 
 const ACCOUNT: NavEntry[] = [
   { to: "/app/security", label: "Security", icon: IconShield, k: "S" },
-  { to: "/app/api-tokens", label: "API tokens", icon: IconKey, k: "T" },
   { to: "/app/account", label: "Account", icon: IconUser, k: "A" },
 ]
 
@@ -63,8 +62,7 @@ const ADMIN: NavEntry[] = [
   { to: "/admin/users", label: "Users", icon: IconUsers, k: "2" },
   { to: "/admin/audit", label: "Audit log", icon: IconClipboardList, k: "3" },
   { to: "/admin/failed-logins", label: "Failed logins", icon: IconCircleDashedX, k: "4" },
-  { to: "/admin/webhooks", label: "Webhooks", icon: IconWebhook, k: "5" },
-  { to: "/admin/servers", label: "Servers", icon: IconRouter, k: "6" },
+  { to: "/admin/servers", label: "Servers", icon: IconRouter, k: "5" },
 ]
 
 export function AppSidebar() {
@@ -240,22 +238,23 @@ function ServerStats() {
       />
 
       <div className="pt-1">
-        <div className="text-muted-foreground pb-0.5 font-mono text-[10px] uppercase tracking-[0.08em]">
-          Real I/O
+        {/* Title + R/W values share a row so the read/write numbers sit
+            in the corner — same layout idiom as the Net I/O row below. */}
+        <div className="flex items-center justify-between pb-0.5 font-mono text-[10px] tabular-nums">
+          <span className="text-muted-foreground uppercase tracking-[0.08em]">
+            Real I/O
+          </span>
+          <span className="text-foreground">
+            <span className="text-status-online">R</span> {formatBytes(diskRead)}
+            <span className="text-muted-foreground px-1">·</span>
+            <span className="text-primary">W</span> {formatBytes(diskWrite)}
+          </span>
         </div>
         <MiniAreaChart
           rxHistory={health.diskReadHistory}
           txHistory={health.diskWriteHistory}
           height={32}
         />
-        <div className="text-muted-foreground flex items-center justify-between pt-0.5 font-mono text-[10px] tabular-nums">
-          <span>
-            <span className="text-status-online">R</span> {formatBytes(diskRead)}/s
-          </span>
-          <span>
-            <span className="text-primary">W</span> {formatBytes(diskWrite)}/s
-          </span>
-        </div>
       </div>
 
       <div className="pt-1">
@@ -264,12 +263,14 @@ function ServerStats() {
           <span className="text-foreground">
             {/* Worker emits net rate in bits/sec to match the rest of the
                 wire format; the sidebar prefers byte units. Divide by 8 to
-                go bits → bytes, then format with formatBytes + "/s". */}
+                go bits → bytes, then format with formatBytes. No "/s"
+                suffix — keeps the row scannable and matches the Real I/O
+                row's compact "R 12 KB · W 4 KB" style. */}
             <span className="text-status-online">↓</span>{" "}
-            {formatBytes(netRx / 8)}/s
+            {formatBytes(netRx / 8)}
             <span className="text-muted-foreground px-1">·</span>
             <span className="text-primary">↑</span>{" "}
-            {formatBytes(netTx / 8)}/s
+            {formatBytes(netTx / 8)}
           </span>
         </div>
       </div>

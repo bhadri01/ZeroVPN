@@ -36,7 +36,9 @@ pub struct AdminUser {
     pub role: UserRole,
     pub status: UserStatus,
     pub totp_enabled: bool,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
     pub last_login_at: Option<OffsetDateTime>,
     pub device_count: i64,
 }
@@ -127,6 +129,7 @@ pub struct AuditRow {
     pub target_type: Option<String>,
     pub target_id: Option<Uuid>,
     pub metadata: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 }
 
@@ -164,6 +167,7 @@ pub struct FailedLoginRow {
     pub id: i64,
     pub email_attempted: Option<String>,
     pub reason: zerovpn_db::repos::failed_logins::FailedLoginReason,
+    #[serde(with = "time::serde::rfc3339")]
     pub attempted_at: OffsetDateTime,
 }
 

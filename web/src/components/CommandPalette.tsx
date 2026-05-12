@@ -1,15 +1,14 @@
 import {
-  IconChartLine,
   IconClipboardList,
   IconCircleDashedX,
   IconDevices,
-  IconKey,
+  IconHierarchy3,
   IconLayoutDashboard,
   IconRouter,
+  IconSearch,
   IconShield,
   IconUser,
   IconUserShield,
-  IconWebhook,
 } from "@tabler/icons-react"
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router"
@@ -44,18 +43,18 @@ const ITEMS: Item[] = [
   },
   { to: "/app/devices", label: "Devices", icon: IconDevices, group: "Workspace" },
   {
-    to: "/app/bandwidth",
-    label: "Bandwidth",
-    icon: IconChartLine,
-    group: "Workspace",
-    chord: "g b",
-  },
-  {
-    to: "/app/api-tokens",
-    label: "API tokens",
-    icon: IconKey,
+    to: "/app/topology",
+    label: "Topology",
+    icon: IconHierarchy3,
     group: "Workspace",
     chord: "g t",
+  },
+  {
+    to: "/app/finder",
+    label: "Finder",
+    icon: IconSearch,
+    group: "Workspace",
+    chord: "g f",
   },
   {
     to: "/app/security",
@@ -74,7 +73,6 @@ const ITEMS: Item[] = [
     chord: "g a",
   },
   { to: "/admin/servers", label: "Servers", icon: IconRouter, group: "Admin" },
-  { to: "/admin/webhooks", label: "Webhooks", icon: IconWebhook, group: "Admin" },
   {
     to: "/admin/audit",
     label: "Audit log",

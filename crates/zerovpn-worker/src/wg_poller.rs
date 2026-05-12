@@ -14,12 +14,13 @@
 
 use std::{collections::HashMap, time::Duration};
 
+use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 use zerovpn_db::{
     PgPool,
-    repos::{devices, server_samples, servers},
+    repos::{audit, devices, server_samples, servers},
 };
 use zerovpn_wire::Event;
 
@@ -52,10 +53,17 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
     let iface = interface();
     info!(?interval, %iface, "real WG poller started");
     let mut last: HashMap<String, Cumulative> = HashMap::new();
+    // Per-device online flag from the previous tick. Powers transition
+    // detection — when the value flips we write an audit_logs row so the
+    // device-detail "Activity" timeline can render online/offline
+    // events. `None` = "not yet observed this session" (no entry emitted
+    // on the very first tick after worker boot, otherwise the timeline
+    // would gain a phantom transition for every existing peer).
+    let mut prev_online: HashMap<Uuid, bool> = HashMap::new();
     let mut ticker = tokio::time::interval(interval);
     loop {
         ticker.tick().await;
-        match poll_once(&pool, &tx, &iface, &mut last, interval).await {
+        match poll_once(&pool, &tx, &iface, &mut last, &mut prev_online, interval).await {
             Ok(n) => debug!(peers = n, "wg poll"),
             Err(e) => warn!(?e, "wg poll failed"),
         }
@@ -67,6 +75,7 @@ async fn poll_once(
     tx: &mpsc::Sender<(String, Event)>,
     iface: &str,
     last: &mut HashMap<String, Cumulative>,
+    prev_online: &mut HashMap<Uuid, bool>,
     interval: Duration,
 ) -> anyhow::Result<usize> {
     // Run `wg show <iface> dump`. Output is tab-separated, one peer per line
@@ -147,6 +156,41 @@ async fn poll_once(
         if handshake_in_window {
             entry.4 += 1;
         }
+
+        // Online/offline transition → write an audit row. Skip the very
+        // first observation per peer this session so existing peers
+        // don't generate a phantom transition the moment the worker
+        // restarts. We don't suppress this on counter resets — those
+        // are real reconnects worth surfacing.
+        if let Some(&was_online) = prev_online.get(&device_id) {
+            if was_online != online {
+                let action = if online {
+                    "device.online"
+                } else {
+                    "device.offline"
+                };
+                let last_handshake_ms = latest_handshake.saturating_mul(1000);
+                if let Err(e) = audit::record(
+                    pool,
+                    audit::AuditEntry {
+                        actor_user_id: None,
+                        action,
+                        target_type: Some("device"),
+                        target_id: Some(device_id),
+                        metadata: json!({
+                            "last_handshake_ms": last_handshake_ms,
+                            "source": "wg_poller",
+                        }),
+                        ip_prefix: None,
+                    },
+                )
+                .await
+                {
+                    warn!(?e, %device_id, online, "audit record (transition) failed");
+                }
+            }
+        }
+        prev_online.insert(device_id, online);
 
         let event = Event::StatsDelta {
             device_id,

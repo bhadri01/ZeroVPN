@@ -111,12 +111,12 @@ export function LandingPage() {
         {[
           { n: "02", h: "WireGuard, properly", b: "Wire-fast VPN protocol with the boring parts handled — keypair lifecycle, IP allocation, recycle on revoke, AmneziaWG params." },
           { n: "03", h: "Real-time telemetry", b: "Worker → ZeroMQ → API → WebSocket. Sub-second device state, live rates, topology you can actually trust." },
-          { n: "04", h: "First-class admin", b: "Suspend, quota, audit, force key-rotation. Webhooks for delivery into your existing ops loop. CSV exports." },
+          { n: "04", h: "First-class admin", b: "Suspend, quota, audit, force key-rotation. CSV exports for compliance reviews." },
           { n: "05", h: "Privacy by default", b: "No traffic-content logging. Argon2 + KEK-encrypted secrets. Container-hardened. Backup with optional age." },
           { n: "06", h: "Self-hosted, period", b: "Single docker compose stack. Postgres + Redis + Caddy. Optional observability profile (Prom/Grafana/Loki)." },
           { n: "07", h: "TOTP & recovery", b: "2FA enroll/disable, recovery codes, brute-force mitigation, must-change-password flow, email-verification." },
           { n: "08", h: "Per-device policy", b: "Split-tunnel with allowed-IP override. Custom DNS. Friendly DNS names. QR onboarding for mobile." },
-          { n: "09", h: "OpenAPI + tokens", b: "Hand-curated OpenAPI spec. Scoped API tokens with one-time plaintext reveal. Webhooks signed with shared secret." },
+          { n: "09", h: "OpenAPI + tokens", b: "Hand-curated OpenAPI spec. Scoped API tokens with one-time plaintext reveal." },
         ].map((f, i, all) => (
           <div
             key={f.n}
@@ -162,7 +162,7 @@ export function LandingPage() {
               ["00:02", "docker compose --profile wg up -d"],
               ["00:08", "First user → admin · TOTP setup"],
               ["00:11", "Add device · scan QR · connected"],
-              ["00:15", "Webhook into Slack / PagerDuty"],
+              ["00:15", "Live topology · timeline · audit"],
             ].map(([t, b]) => (
               <div key={t} className="flex items-center gap-3">
                 <span className="text-muted-foreground/60 w-12">{t}</span>

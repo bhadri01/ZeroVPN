@@ -15,7 +15,6 @@ import { LiveEventStream } from "@/components/dashboard/LiveEventStream"
 import { RecentActivity } from "@/components/dashboard/RecentActivity"
 import { EmptyState } from "@/components/EmptyState"
 import { Kpi, KpiStrip, PageHead, Panel, Seg } from "@/components/swiss"
-import { LiveTopology } from "@/components/topology/LiveTopology"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -176,11 +175,7 @@ export function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHead
-        eyebrow="Workspace · 01"
-        title="Dashboard"
-        sub="Live network and devices for your account."
-      />
+      <PageHead eyebrow="Workspace · 01" title="Dashboard" />
 
       {/* Add-device dialog. The header trigger button is intentionally gone;
           the empty-state CTA below calls `setAddOpen(true)` when the user
@@ -302,29 +297,7 @@ export function DashboardPage() {
         )}
       </AnimatePresence>
 
-      {/* Row 2: live topology — full-width hero. Tall fixed height so the
-          graph has room to breathe and dragged nodes don't bump the canvas
-          edge. The inner LiveTopology has its own toolbar (zoom, pan,
-          fullscreen, reset) and supports per-node drag. */}
-      <Panel
-        title="Live topology"
-        sub="Worker → ZeroMQ → API → WS · sub-second · drag nodes to rearrange"
-        right={<LiveIndicator />}
-        bodyClassName="!p-0 !h-[400px] !flex-none relative overflow-hidden"
-      >
-        <LiveTopology
-          devices={devices}
-          rates={rates}
-          serverLabel={user?.email?.split("@")[1] ?? "vpn-server"}
-          serverMeta={
-            devices.length > 0 && devices[0].allocated_ip
-              ? deriveCidr(devices[0].allocated_ip)
-              : undefined
-          }
-        />
-      </Panel>
-
-      {/* Row 3: bandwidth — full width with range selector */}
+      {/* Row 2: bandwidth — full width with range selector */}
       <Panel
         title="Bandwidth"
         sub={
@@ -523,11 +496,3 @@ function formatRate(bps: number): string {
   return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
 }
 
-/** Best-effort CIDR derived from a device's allocated IP. Used purely as
- *  cosmetic meta on the topology hub — falls back to the bare IP if we
- *  can't parse it as IPv4. */
-function deriveCidr(ip: string): string | undefined {
-  const parts = ip.split(".")
-  if (parts.length !== 4) return undefined
-  return `${parts[0]}.${parts[1]}.0.0/16`
-}

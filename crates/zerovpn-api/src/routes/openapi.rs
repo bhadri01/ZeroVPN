@@ -154,23 +154,6 @@ fn build_spec() -> Value {
             "responses": {"200": {"description": "ok"}} } }),
     );
 
-    // API tokens
-    add_path(
-        &mut paths,
-        "/api-tokens",
-        json!({
-            "get": { "summary": "List API tokens", "responses": {"200": {"description": "ok"}} },
-            "post": { "summary": "Issue API token",
-                "requestBody": body(&["name", "scope", "expires_in_days"]),
-                "responses": {"201": {"description": "created"}} }
-        }),
-    );
-    add_path(
-        &mut paths,
-        "/api-tokens/{id}",
-        json!({ "delete": { "summary": "Revoke API token", "parameters": [path_id()], "responses": {"200": {"description": "ok"}} } }),
-    );
-
     // Admin
     add_path(
         &mut paths,
@@ -220,22 +203,6 @@ fn build_spec() -> Value {
                 "responses": {"200": {"description": "ok"}} }
         }),
     );
-    add_path(
-        &mut paths,
-        "/admin/webhooks",
-        json!({
-            "get": { "summary": "List webhooks (admin)", "responses": {"200": {"description": "ok"}} },
-            "post": { "summary": "Create webhook (admin)",
-                "requestBody": body(&["name", "url", "events", "secret"]),
-                "responses": {"201": {"description": "created"}} }
-        }),
-    );
-    add_path(
-        &mut paths,
-        "/admin/webhooks/{id}",
-        json!({ "delete": { "summary": "Delete webhook (admin)", "parameters": [path_id()], "responses": {"200": {"description": "ok"}} } }),
-    );
-
     // WS
     add_path(
         &mut paths,
