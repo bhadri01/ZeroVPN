@@ -9,7 +9,7 @@ use zerovpn_core::models::UserRole;
 use zerovpn_wire::Event;
 
 use crate::{
-    error::{ApiError, ApiResult},
+    error::ApiResult,
     extractors::auth::CurrentUser,
     state::AppState,
 };

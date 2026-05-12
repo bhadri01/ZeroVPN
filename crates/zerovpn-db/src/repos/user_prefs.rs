@@ -79,55 +79,74 @@ pub async fn get(pool: &PgPool, user_id: Uuid) -> sqlx::Result<UserPreferences> 
     Ok(row.unwrap_or_default())
 }
 
-/// Upsert the user's preferences with a partial patch. Anything not
-/// present in `patch` falls through to the current row value (or to the
-/// table default for a brand-new row).
+/// Upsert the user's preferences with a partial patch. Fields not set in
+/// `patch` keep the current row's value, or fall through to the Rust-side
+/// `Default` (which mirrors the table defaults) for a brand-new row.
+///
+/// The previous version of this fn used `COALESCE($n, DEFAULT)` directly
+/// in the SQL VALUES list. Postgres rejects that — `DEFAULT` is a magic
+/// keyword that's only valid as the *whole* value of a column inside a
+/// VALUES tuple, not as an argument to `COALESCE`. The fix is to merge
+/// patch + current state in Rust and write only concrete values: no
+/// `DEFAULT` keyword anywhere in the statement.
 pub async fn upsert(
     pool: &PgPool,
     user_id: Uuid,
     patch: &UserPreferencesPatch,
 ) -> sqlx::Result<UserPreferences> {
-    // Single statement: INSERT a row using each provided field (else
-    // DEFAULT), and ON CONFLICT update only the columns the patch
-    // specifies via COALESCE-style "use the new value when not null".
+    let mut merged = get(pool, user_id).await?;
+    if let Some(v) = &patch.units {
+        merged.units = v.clone();
+    }
+    if let Some(v) = &patch.date_format {
+        merged.date_format = v.clone();
+    }
+    if let Some(v) = &patch.time_format {
+        merged.time_format = v.clone();
+    }
+    if let Some(v) = patch.reduced_motion {
+        merged.reduced_motion = v;
+    }
+    if let Some(v) = &patch.default_landing {
+        merged.default_landing = v.clone();
+    }
+    if let Some(v) = &patch.toast_position {
+        merged.toast_position = v.clone();
+    }
+    if let Some(v) = patch.toast_sound {
+        merged.toast_sound = v;
+    }
+    if let Some(v) = patch.browser_notifications {
+        merged.browser_notifications = v;
+    }
+
     sqlx::query(
         r#"INSERT INTO user_preferences (
                 user_id, units, date_format, time_format,
                 reduced_motion, default_landing, toast_position,
                 toast_sound, browser_notifications, updated_at
-           ) VALUES (
-                $1,
-                COALESCE($2, DEFAULT),
-                COALESCE($3, DEFAULT),
-                COALESCE($4, DEFAULT),
-                COALESCE($5, DEFAULT),
-                COALESCE($6, DEFAULT),
-                COALESCE($7, DEFAULT),
-                COALESCE($8, DEFAULT),
-                COALESCE($9, DEFAULT),
-                NOW()
-           )
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
            ON CONFLICT (user_id) DO UPDATE SET
-                units = COALESCE(EXCLUDED.units, user_preferences.units),
-                date_format = COALESCE(EXCLUDED.date_format, user_preferences.date_format),
-                time_format = COALESCE(EXCLUDED.time_format, user_preferences.time_format),
-                reduced_motion = COALESCE(EXCLUDED.reduced_motion, user_preferences.reduced_motion),
-                default_landing = COALESCE(EXCLUDED.default_landing, user_preferences.default_landing),
-                toast_position = COALESCE(EXCLUDED.toast_position, user_preferences.toast_position),
-                toast_sound = COALESCE(EXCLUDED.toast_sound, user_preferences.toast_sound),
-                browser_notifications = COALESCE(EXCLUDED.browser_notifications, user_preferences.browser_notifications),
+                units = EXCLUDED.units,
+                date_format = EXCLUDED.date_format,
+                time_format = EXCLUDED.time_format,
+                reduced_motion = EXCLUDED.reduced_motion,
+                default_landing = EXCLUDED.default_landing,
+                toast_position = EXCLUDED.toast_position,
+                toast_sound = EXCLUDED.toast_sound,
+                browser_notifications = EXCLUDED.browser_notifications,
                 updated_at = NOW()"#,
     )
     .bind(user_id)
-    .bind(&patch.units)
-    .bind(&patch.date_format)
-    .bind(&patch.time_format)
-    .bind(patch.reduced_motion)
-    .bind(&patch.default_landing)
-    .bind(&patch.toast_position)
-    .bind(patch.toast_sound)
-    .bind(patch.browser_notifications)
+    .bind(&merged.units)
+    .bind(&merged.date_format)
+    .bind(&merged.time_format)
+    .bind(merged.reduced_motion)
+    .bind(&merged.default_landing)
+    .bind(&merged.toast_position)
+    .bind(merged.toast_sound)
+    .bind(merged.browser_notifications)
     .execute(pool)
     .await?;
-    get(pool, user_id).await
+    Ok(merged)
 }

@@ -30,7 +30,7 @@ import { fmtRel, IconBtn, PageHead, Panel } from "@/components/swiss"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
 import { WithTooltip } from "@/components/ui/with-tooltip"
-import { Dialog, DialogTrigger } from "@/components/ui/dialog"
+import { Sheet, SheetTrigger } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import {
   type DeviceOs,
@@ -308,23 +308,23 @@ export function DevicesPage() {
         eyebrow="Workspace · 02"
         title="Devices"
         right={
-          <Dialog open={addOpen} onOpenChange={setAddOpen}>
-            <DialogTrigger asChild>
+          <Sheet open={addOpen} onOpenChange={setAddOpen}>
+            <SheetTrigger asChild>
               <Button>
                 <IconPlus />
                 Add device
               </Button>
-            </DialogTrigger>
+            </SheetTrigger>
             <AddDeviceDialog
               onCreated={(d) => {
-                // Dialog showed QR + config on step 2; on Done we close it
+                // Sheet showed QR + config on step 2; on Done we close it
                 // and land the user on the new device's detail page so they
                 // can verify the row is live without hunting for it.
                 setAddOpen(false)
                 navigate(`/app/devices/${d.device.id}`)
               }}
             />
-          </Dialog>
+          </Sheet>
         }
       />
       </StaggerItem>

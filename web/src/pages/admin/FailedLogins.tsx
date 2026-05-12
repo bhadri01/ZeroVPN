@@ -1,19 +1,30 @@
 import { useQuery } from "@tanstack/react-query"
+import { useEffect, useState } from "react"
 
 import { PageStagger, StaggerItem } from "@/components/motion"
+import { Pagination } from "@/components/Pagination"
 import { RelativeTime } from "@/components/RelativeTime"
 import { Kpi, KpiStrip, PageHead, Panel, Pill } from "@/components/swiss"
 import { Skeleton } from "@/components/ui/skeleton"
 import { adminListFailedLogins } from "@/lib/api"
 
 export function FailedLoginsPage() {
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(50)
+  useEffect(() => {
+    setPage(0)
+  }, [pageSize])
   const q = useQuery({
-    queryKey: ["admin", "failed-logins"],
-    queryFn: () => adminListFailedLogins(200, 0),
+    queryKey: ["admin", "failed-logins", page, pageSize],
+    queryFn: () => adminListFailedLogins(pageSize, page * pageSize),
+    placeholderData: (prev) => prev,
   })
 
   const items = q.data?.items ?? []
-  const total = items.length
+  const total = q.data?.total ?? 0
+  // KPI counts are computed from the current page only, since we don't
+  // have a server-side breakdown by reason. Labels reflect that scope so
+  // the numbers don't pretend to be deployment-wide aggregates.
   const rateLimited = items.filter((i) => i.reason === "rate_limited").length
   const totpBad = items.filter((i) => i.reason === "totp_incorrect").length
   const noUser = items.filter((i) => i.reason === "no_such_user").length
@@ -31,23 +42,35 @@ export function FailedLoginsPage() {
       <StaggerItem>
       <KpiStrip>
         <Kpi
-          label="Failed · 30d"
+          label="Failed · total"
           value={total}
-          footL="across all addresses"
+          footL="all retained attempts"
           deltaTone={total > 0 ? "dn" : undefined}
         />
         <Kpi
-          label="Rate-limited"
+          label="Rate-limited · page"
           value={rateLimited}
           footL="auto-expire 1h"
         />
-        <Kpi label="TOTP wrong" value={totpBad} footL="invalid 2FA code" />
-        <Kpi label="No-such-user" value={noUser} footL="email not in DB" />
+        <Kpi
+          label="TOTP wrong · page"
+          value={totpBad}
+          footL="invalid 2FA code"
+        />
+        <Kpi
+          label="No-such-user · page"
+          value={noUser}
+          footL="email not in DB"
+        />
       </KpiStrip>
       </StaggerItem>
 
       <StaggerItem>
-      <Panel title="Recent failures" sub="last 200 attempts" flush>
+      <Panel
+        title="Recent failures"
+        sub={`${total.toLocaleString()} retained · newest first`}
+        flush
+      >
         {q.isLoading && (
           <div className="flex flex-col gap-2 p-4">
             <Skeleton className="h-8 rounded-none" />
@@ -55,6 +78,7 @@ export function FailedLoginsPage() {
           </div>
         )}
         {q.data && (
+          <div className="zv-table-scroll">
           <table className="zv-table">
             <thead>
               <tr>
@@ -91,7 +115,17 @@ export function FailedLoginsPage() {
               )}
             </tbody>
           </table>
+          </div>
         )}
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          itemCount={items.length}
+          fetching={q.isFetching}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
       </Panel>
       </StaggerItem>
     </PageStagger>

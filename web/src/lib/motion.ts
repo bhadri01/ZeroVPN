@@ -12,9 +12,14 @@ import type { Transition, Variants } from "motion/react"
 export { useReducedMotion } from "motion/react"
 
 export const TIMING = {
-  enter: 0.18,
-  exit: 0.14,
+  enter: 0.28,
+  exit: 0.22,
   micro: 0.1,
+  /** Initial delay before route-level transitions start. Gives the
+   *  outgoing page a beat to clear before the incoming one slides in,
+   *  so the navigation reads as a deliberate transition rather than a
+   *  flicker. Kept short enough that snappy users still feel it's fast. */
+  routeDelay: 0.08,
   /** Use for numeric tickers via motion useSpring. Slight underdamping. */
   stat: { type: "spring" as const, stiffness: 150, damping: 25 },
 } as const

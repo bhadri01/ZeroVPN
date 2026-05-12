@@ -5,7 +5,7 @@ import { Outlet, useLocation } from "react-router"
 import { AuthSkeleton } from "@/components/layout/AuthShell"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { useReducedMotion } from "@/lib/motion"
+import { EASING, TIMING, useReducedMotion } from "@/lib/motion"
 
 /** Swiss public shell. Flat paper background — auth & landing pages
  * supply their own grid texture via the .zv-grid-bg utility where they
@@ -54,11 +54,18 @@ function PublicFallback({ pathname }: { pathname: string }) {
 function PageMount({ children }: { children: React.ReactNode }) {
   const reduce = useReducedMotion()
   if (reduce) return <div className="relative">{children}</div>
+  // Matches the dashboard's PageMount feel — same timing, easing, and
+  // entry-delay so /login → /register → /app reads as a single coherent
+  // transition style across both shells.
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: TIMING.enter,
+        ease: EASING.out,
+        delay: TIMING.routeDelay,
+      }}
       className="relative"
     >
       {children}

@@ -7,13 +7,13 @@ import { CopyableCode } from "@/components/CopyableCode"
 import { Eyebrow } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import {
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -236,19 +236,23 @@ export function AddDeviceDialog({
   }
 
   return (
-    <DialogContent className="sm:max-w-[640px]">
-      <DialogHeader>
-        <DialogTitle>
+    <SheetContent
+      side="right"
+      className="flex w-full flex-col gap-0 p-0 sm:max-w-[560px]"
+    >
+      <SheetHeader className="border-border border-b">
+        <SheetTitle>
           <Eyebrow num={`0${step}/02`}>Add device</Eyebrow>
-        </DialogTitle>
-        <DialogDescription>
+        </SheetTitle>
+        <SheetDescription>
           We generate a fresh keypair, allocate an IP, and hand you a WireGuard
           config. The private key never leaves the page.
-        </DialogDescription>
-      </DialogHeader>
+        </SheetDescription>
+      </SheetHeader>
 
       {step === 1 && (
-        <div className="space-y-4">
+        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="dev-name" className="zv-eyebrow">
               Device name
@@ -496,21 +500,23 @@ export function AddDeviceDialog({
             </p>
           </div>
 
-          <DialogFooter>
-            <DialogClose asChild>
+        </div>
+          <SheetFooter className="border-border flex-row justify-end gap-2 border-t">
+            <SheetClose asChild>
               <Button variant="ghost" disabled={addM.isPending}>
                 Cancel
               </Button>
-            </DialogClose>
+            </SheetClose>
             <Button onClick={() => addM.mutate()} disabled={!canSubmit}>
               {addM.isPending ? "Generating…" : "Generate config →"}
             </Button>
-          </DialogFooter>
+          </SheetFooter>
         </div>
       )}
 
       {step === 2 && result && (
-        <div className="space-y-4">
+        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
           <p className="text-muted-foreground text-[13px] leading-relaxed">
             The keypair was generated server-side for this peer; the private
             key is in the config below and{" "}
@@ -565,7 +571,8 @@ export function AddDeviceDialog({
             <CopyableCode value={result.config} multiline />
           </div>
 
-          <DialogFooter>
+        </div>
+          <SheetFooter className="border-border flex-row justify-end gap-2 border-t">
             <Button variant="ghost" onClick={() => setStep(1)}>
               ← Back
             </Button>
@@ -577,10 +584,10 @@ export function AddDeviceDialog({
             >
               Done
             </Button>
-          </DialogFooter>
+          </SheetFooter>
         </div>
       )}
-    </DialogContent>
+    </SheetContent>
   )
 }
 

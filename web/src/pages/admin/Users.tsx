@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { IconSearch } from "@tabler/icons-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { PageStagger, StaggerItem } from "@/components/motion"
+import { Pagination } from "@/components/Pagination"
 import { RelativeTime } from "@/components/RelativeTime"
 import { PageHead, Panel, Pill } from "@/components/swiss"
 import { StatusPill, type Status } from "@/components/StatusPill"
@@ -33,10 +34,20 @@ export function UsersPage() {
 
   const [search, setSearch] = useState("")
   const [suspendTarget, setSuspendTarget] = useState<AdminUser | null>(null)
+  const [pageSize, setPageSize] = useState(50)
+  const [page, setPage] = useState(0)
+  // Reset to page 0 whenever the search term or page size changes —
+  // a narrower filter (or wider page) can leave us pointing past the
+  // end of the result set.
+  useEffect(() => {
+    setPage(0)
+  }, [search, pageSize])
 
   const usersQ = useQuery({
-    queryKey: ["admin", "users", search],
-    queryFn: () => adminListUsers(search || undefined, 200, 0),
+    queryKey: ["admin", "users", search, page, pageSize],
+    queryFn: () =>
+      adminListUsers(search || undefined, pageSize, page * pageSize),
+    placeholderData: (prev) => prev,
   })
 
   const setStatusM = useMutation({
@@ -85,6 +96,7 @@ export function UsersPage() {
           </div>
         )}
         {usersQ.data && (
+          <div className="zv-table-scroll">
           <table className="zv-table">
             <thead>
               <tr>
@@ -181,7 +193,17 @@ export function UsersPage() {
               )}
             </tbody>
           </table>
+          </div>
         )}
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={usersQ.data?.total ?? 0}
+          itemCount={items.length}
+          fetching={usersQ.isFetching}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
       </Panel>
       </StaggerItem>
 

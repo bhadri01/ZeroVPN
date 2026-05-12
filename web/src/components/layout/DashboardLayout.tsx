@@ -17,7 +17,7 @@ import {
   SidebarProvider,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { useReducedMotion } from "@/lib/motion"
+import { EASING, TIMING, useReducedMotion } from "@/lib/motion"
 
 /**
  * Reads the persisted sidebar collapse state from cookie. The shadcn
@@ -78,11 +78,21 @@ function PageMount({ children }: { children: React.ReactNode }) {
   if (reduce) {
     return <div className="flex flex-col gap-6 px-6 py-6">{children}</div>
   }
+  // Route-level entry. Slightly longer than a typical micro-interaction
+  // so navigation reads as a deliberate transition; the leading delay
+  // (TIMING.routeDelay) gives the outgoing page a beat to clear before
+  // the incoming one slides in. A small `y` offset keeps it visible
+  // without the chart inside ever appearing to "drop" — that
+  // translation is invisibly absorbed by the surrounding chrome.
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: TIMING.enter,
+        ease: EASING.out,
+        delay: TIMING.routeDelay,
+      }}
       className="flex flex-col gap-6 px-6 py-6"
     >
       {children}

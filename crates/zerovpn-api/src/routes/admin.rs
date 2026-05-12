@@ -165,6 +165,9 @@ pub struct AuditRow {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AuditList {
+    /// Filtered total — count for the active `action` filter, ignoring
+    /// `limit` / `offset`. Powers pagination controls on the admin page.
+    pub total: i64,
     pub items: Vec<AuditRow>,
 }
 
@@ -186,6 +189,13 @@ pub async fn list_audit(
 ) -> ApiResult<impl IntoResponse> {
     let limit = q.limit.clamp(1, 500);
     let offset = q.offset.max(0);
+    let (total,): (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*)::BIGINT FROM audit_logs
+            WHERE ($1::TEXT IS NULL OR action = $1)"#,
+    )
+    .bind(q.action.as_deref())
+    .fetch_one(&state.pool)
+    .await?;
     let items: Vec<AuditRow> = sqlx::query_as(
         r#"SELECT id, actor_user_id, action, target_type, target_id, metadata, created_at
              FROM audit_logs
@@ -198,7 +208,7 @@ pub async fn list_audit(
     .bind(q.action.as_deref())
     .fetch_all(&state.pool)
     .await?;
-    Ok(Json(AuditList { items }))
+    Ok(Json(AuditList { total, items }))
 }
 
 // ---- Failed logins --------------------------------------------------------
@@ -214,6 +224,9 @@ pub struct FailedLoginRow {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct FailedLoginList {
+    /// Total failed-login rows in the DB (ignoring `limit` / `offset`).
+    /// Drives pagination controls on the admin page.
+    pub total: i64,
     pub items: Vec<FailedLoginRow>,
 }
 
@@ -350,6 +363,10 @@ pub async fn list_failed_logins(
 ) -> ApiResult<impl IntoResponse> {
     let limit = q.limit.clamp(1, 500);
     let offset = q.offset.max(0);
+    let (total,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*)::BIGINT FROM failed_logins")
+            .fetch_one(&state.pool)
+            .await?;
     let items: Vec<FailedLoginRow> = sqlx::query_as(
         r#"SELECT id, email_attempted::TEXT AS email_attempted, reason, attempted_at
              FROM failed_logins
@@ -360,7 +377,7 @@ pub async fn list_failed_logins(
     .bind(offset)
     .fetch_all(&state.pool)
     .await?;
-    Ok(Json(FailedLoginList { items }))
+    Ok(Json(FailedLoginList { total, items }))
 }
 
 // ---- Maintenance mode -----------------------------------------------------
@@ -713,16 +730,13 @@ pub async fn stats(
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AdminFleetBandwidthResponse {
-    /// Total bytes received by every user's devices in the window.
+    /// All-time bytes received by every user's devices.
     pub rx_bytes: i64,
-    /// Total bytes transmitted by every user's devices in the window.
+    /// All-time bytes transmitted by every user's devices.
     pub tx_bytes: i64,
-    /// Length of the window in days. Always 30 for now; exposed so the
-    /// frontend can label the card honestly if the value ever changes.
-    pub window_days: i64,
 }
 
-/// Fleet-wide bandwidth over the last 30 days. Pulled from the hourly
+/// Fleet-wide all-time bandwidth. Pulled from the hourly
 /// `bandwidth_aggregates` rollups so the value survives reloads and
 /// doesn't depend on a live WS connection.
 #[utoipa::path(
@@ -739,12 +753,6 @@ pub async fn fleet_bandwidth(
     State(state): State<AppState>,
     RequireAdmin(_admin): RequireAdmin,
 ) -> ApiResult<impl IntoResponse> {
-    let window_days = 30i64;
-    let since = OffsetDateTime::now_utc() - time::Duration::days(window_days);
-    let (rx_bytes, tx_bytes) = bandwidth::fleet_totals(&state.pool, since).await?;
-    Ok(Json(AdminFleetBandwidthResponse {
-        rx_bytes,
-        tx_bytes,
-        window_days,
-    }))
+    let (rx_bytes, tx_bytes) = bandwidth::fleet_totals(&state.pool).await?;
+    Ok(Json(AdminFleetBandwidthResponse { rx_bytes, tx_bytes }))
 }

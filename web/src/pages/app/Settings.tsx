@@ -9,11 +9,13 @@ import {
   IconUser,
   type Icon,
 } from "@tabler/icons-react"
+import { AnimatePresence, motion } from "motion/react"
 import { useEffect, useState } from "react"
 import { useLocation, useNavigate } from "react-router"
 import { toast } from "sonner"
 
-import { FadeIn, PageStagger, StaggerItem } from "@/components/motion"
+import { PageStagger, StaggerItem } from "@/components/motion"
+import { EASING, TIMING, useReducedMotion } from "@/lib/motion"
 import { useTheme, type Accent } from "@/components/theme-provider"
 import { Eyebrow, PageHead, Panel, Seg } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
@@ -52,6 +54,20 @@ interface SectionDef {
 
 const SECTIONS: SectionDef[] = [
   {
+    key: "account",
+    label: "Account",
+    hash: "account",
+    icon: IconUser,
+    hint: "Profile, data, lifecycle",
+  },
+  {
+    key: "security",
+    label: "Security",
+    hash: "security",
+    icon: IconShield,
+    hint: "2FA, password, codes",
+  },
+  {
     key: "appearance",
     label: "Appearance",
     hash: "appearance",
@@ -72,20 +88,6 @@ const SECTIONS: SectionDef[] = [
     icon: IconBell,
     hint: "Toasts, browser alerts",
   },
-  {
-    key: "account",
-    label: "Account",
-    hash: "account",
-    icon: IconUser,
-    hint: "Profile, data, lifecycle",
-  },
-  {
-    key: "security",
-    label: "Security",
-    hash: "security",
-    icon: IconShield,
-    hint: "2FA, password, codes",
-  },
 ]
 
 const HASH_TO_KEY: Record<string, SectionKey> = Object.fromEntries(
@@ -103,10 +105,11 @@ const ACCENT_SWATCHES: { value: Accent; label: string; preview: string }[] = [
 export function SettingsPage() {
   const location = useLocation()
   const navigate = useNavigate()
+  const reduce = useReducedMotion()
   // Tracks the active section. Synced to URL hash so deep links (e.g.
   // /app/settings#appearance) and back/forward navigation work.
   const initialFromHash = HASH_TO_KEY[location.hash.replace(/^#/, "")]
-  const [active, setActive] = useState<SectionKey>(initialFromHash ?? "appearance")
+  const [active, setActive] = useState<SectionKey>(initialFromHash ?? "account")
 
   useEffect(() => {
     const next = HASH_TO_KEY[location.hash.replace(/^#/, "")]
@@ -141,17 +144,33 @@ export function SettingsPage() {
               const isActive = s.key === active
               const I = s.icon
               return (
-                <li key={s.key}>
+                <li key={s.key} className="relative">
+                  {/* Active-row indicator. Sharing `layoutId` across the
+                      five list items means Framer Motion animates this
+                      element from the previously-active item's box to
+                      the newly-active one — a single highlight that
+                      slides, not five highlights that fade in and out.
+                      Held to the same easing curve the route shells use
+                      so it feels like one transition system. */}
+                  {isActive && (
+                    <motion.div
+                      layoutId="settings-nav-active"
+                      className="bg-primary/8 absolute inset-0 z-0"
+                      transition={
+                        reduce
+                          ? { duration: 0 }
+                          : { duration: TIMING.enter, ease: EASING.out }
+                      }
+                      aria-hidden
+                    >
+                      <span className="bg-primary absolute inset-y-0 left-0 w-[2px]" />
+                    </motion.div>
+                  )}
                   <button
                     type="button"
                     onClick={() => selectSection(s.key)}
                     data-active={isActive ? "1" : undefined}
-                    className={[
-                      "zv-settings-nav-item w-full",
-                      isActive && "zv-settings-nav-item--on",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
+                    className="zv-settings-nav-item relative z-10 w-full"
                   >
                     <I size={14} className="text-muted-foreground shrink-0" />
                     <span className="min-w-0 flex-1 text-left">
@@ -170,20 +189,60 @@ export function SettingsPage() {
         </aside>
 
         <section className="flex flex-col gap-6">
-          <div>
-            <Eyebrow>{activeDef.label}</Eyebrow>
-            <h2 className="font-heading text-foreground mt-1 text-xl font-medium tracking-[-0.01em]">
-              {activeDef.hint}
-            </h2>
-          </div>
-
-          <FadeIn key={active}>
-            {active === "appearance" && <AppearanceSection />}
-            {active === "preferences" && <PreferencesSection />}
-            {active === "notifications" && <NotificationsSection />}
-            {active === "account" && <AccountSections />}
-            {active === "security" && <SecuritySections />}
-          </FadeIn>
+          {/* Title + body live inside the same motion.div so they
+              transition as one unit when the active section changes.
+              Splitting them — title outside, body inside AnimatePresence
+              — made the title swap instantly while the old body was
+              still exiting, which read as a "shutter" / mismatch when
+              clicking tabs in quick succession.
+              `mode="wait"` is safe here because every section is
+              statically imported (no Suspense boundary inside this
+              view). `initial={false}` keeps the first paint quiet so
+              the parent StaggerItem owns the page's entry animation. */}
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={active}
+              className="flex flex-col gap-6"
+              initial={reduce ? false : { opacity: 0, y: 8 }}
+              animate={
+                reduce
+                  ? undefined
+                  : {
+                      opacity: 1,
+                      y: 0,
+                      transition: {
+                        duration: TIMING.enter,
+                        ease: EASING.out,
+                        delay: TIMING.routeDelay,
+                      },
+                    }
+              }
+              exit={
+                reduce
+                  ? undefined
+                  : {
+                      opacity: 0,
+                      y: -6,
+                      transition: {
+                        duration: TIMING.exit,
+                        ease: EASING.in,
+                      },
+                    }
+              }
+            >
+              <div>
+                <Eyebrow>{activeDef.label}</Eyebrow>
+                <h2 className="font-heading text-foreground mt-1 text-xl font-medium tracking-[-0.01em]">
+                  {activeDef.hint}
+                </h2>
+              </div>
+              {active === "appearance" && <AppearanceSection />}
+              {active === "preferences" && <PreferencesSection />}
+              {active === "notifications" && <NotificationsSection />}
+              {active === "account" && <AccountSections />}
+              {active === "security" && <SecuritySections />}
+            </motion.div>
+          </AnimatePresence>
         </section>
       </StaggerItem>
     </PageStagger>

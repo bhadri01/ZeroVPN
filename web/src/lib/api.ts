@@ -71,6 +71,10 @@ export interface PublicUser {
   id: string
   email: string
   role: UserRole
+  /** True when the user has finished TOTP enrollment. Surfaced by
+   *  `/me` and the login / verify-email responses so the Security
+   *  page can auto-detect 2FA state without an extra round-trip. */
+  totp_enabled: boolean
 }
 
 export interface LoginResponse {
@@ -527,7 +531,6 @@ export const adminStats = () => apiFetch<AdminStats>("/admin/stats")
 export interface AdminFleetBandwidth {
   rx_bytes: number
   tx_bytes: number
-  window_days: number
 }
 export const adminFleetBandwidth = () =>
   apiFetch<AdminFleetBandwidth>("/admin/bandwidth")
@@ -559,7 +562,9 @@ export const adminListAudit = (limit = 100, offset = 0, action?: string) => {
   params.set("limit", String(limit))
   params.set("offset", String(offset))
   if (action) params.set("action", action)
-  return apiFetch<{ items: AuditRow[] }>(`/admin/audit?${params.toString()}`)
+  return apiFetch<{ total: number; items: AuditRow[] }>(
+    `/admin/audit?${params.toString()}`,
+  )
 }
 
 export const adminAuditCsvUrl = (limit = 5000) =>
@@ -573,7 +578,7 @@ export interface FailedLoginRow {
 }
 
 export const adminListFailedLogins = (limit = 100, offset = 0) =>
-  apiFetch<{ items: FailedLoginRow[] }>(
+  apiFetch<{ total: number; items: FailedLoginRow[] }>(
     `/admin/failed-logins?limit=${limit}&offset=${offset}`,
   )
 

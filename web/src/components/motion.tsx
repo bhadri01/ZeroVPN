@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react"
 
-import { cardVariants, useReducedMotion } from "@/lib/motion"
+import { cardVariants, EASING, TIMING, useReducedMotion } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 /**
@@ -93,17 +93,23 @@ export function StaggerItem({
   // Self-driven entry: no reliance on parent variant inheritance, so the
   // page always renders even if the AnimatePresence + Suspense ordering
   // skips the parent's `animate` transition.
+  //
+  // Stagger is anchored to TIMING.routeDelay so the first card lands
+  // *after* the PageMount transition has had time to start, and stops
+  // climbing past 0.48s so a 12-item page doesn't have items waiting
+  // visibly. ~60 ms between cards feels deliberate without dragging.
   return (
     <motion.div
-      initial={{ opacity: 0, y: 4 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -2 }}
       transition={{
-        duration: 0.18,
-        ease: [0.16, 1, 0.3, 1],
-        // Cap the delay so a 12-item page doesn't have items still
-        // waiting half a second in — feels sluggish past ~6 items.
-        delay: Math.min(0.32, 0.02 + _staggerIndex * 0.045),
+        duration: TIMING.enter,
+        ease: EASING.out,
+        delay: Math.min(
+          0.48,
+          TIMING.routeDelay + _staggerIndex * 0.06,
+        ),
       }}
       className={className}
     >
@@ -128,9 +134,9 @@ export function FadeIn({
   }
   return (
     <motion.div
-      initial={{ opacity: 0, y: 4 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1], delay }}
+      transition={{ duration: TIMING.enter, ease: EASING.out, delay }}
       className={className}
     >
       {children}

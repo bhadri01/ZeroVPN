@@ -165,21 +165,19 @@ pub async fn device_raw(
     .await
 }
 
-/// Fleet-wide RX/TX totals since `since`, summed across every device
-/// every user owns. Powers the admin overview "Fleet bandwidth" card.
-/// Returns a single (rx_bytes, tx_bytes) tuple — no bucketing, since
-/// the admin strip only needs the headline number.
-pub async fn fleet_totals(
-    pool: &PgPool,
-    since: OffsetDateTime,
-) -> sqlx::Result<(i64, i64)> {
+/// Fleet-wide all-time RX/TX totals, summed across every device every
+/// user owns. Powers the admin overview "Fleet bandwidth" card.
+///
+/// We sum the `'hour'` rollups specifically — the table also holds `'day'`
+/// rows derived from the same hours, so a bucket-agnostic SUM would
+/// double-count. Returns a single (rx_bytes, tx_bytes) tuple.
+pub async fn fleet_totals(pool: &PgPool) -> sqlx::Result<(i64, i64)> {
     let row: (i64, i64) = sqlx::query_as(
         r#"SELECT COALESCE(SUM(rx_bytes), 0)::BIGINT,
                   COALESCE(SUM(tx_bytes), 0)::BIGINT
              FROM bandwidth_aggregates
-            WHERE bucket = 'hour'::bucket_kind AND bucket_start >= $1"#,
+            WHERE bucket = 'hour'::bucket_kind"#,
     )
-    .bind(since)
     .fetch_one(pool)
     .await?;
     Ok(row)

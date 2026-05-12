@@ -8,6 +8,7 @@ import { useState } from "react"
 import { Link } from "react-router"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { Identicon } from "@/components/Identicon"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -48,8 +49,6 @@ export function UserMenu() {
 
   if (!user) return null
 
-  const initial = user.email[0]?.toUpperCase() ?? "?"
-
   return (
     <>
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
@@ -62,8 +61,8 @@ export function UserMenu() {
               className="rounded-none"
               aria-label={`Open user menu for ${user.email}`}
             >
-              <span className="bg-muted text-muted-foreground border-border flex size-7 items-center justify-center border font-mono text-[11px] font-medium uppercase">
-                {initial}
+              <span className="border-border bg-card flex size-7 items-center justify-center border p-0.5">
+                <Identicon seed={user.email} size={24} cells={5} />
               </span>
             </Button>
           </DropdownMenuTrigger>

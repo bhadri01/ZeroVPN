@@ -117,6 +117,11 @@ pub struct VerifiedUser {
     pub id: uuid::Uuid,
     pub email: String,
     pub role: UserRole,
+    /// True when the user has finished TOTP enrollment. Always false
+    /// for the verify-email flow in practice (a freshly-verified
+    /// account hasn't enrolled yet), but kept in the shape so the
+    /// frontend's `PublicUser` type stays uniform across endpoints.
+    pub totp_enabled: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -204,6 +209,7 @@ pub async fn verify_email(
             id: user.id,
             email: user.email,
             role: user.role,
+            totp_enabled: user.totp_enabled,
         },
     }))
 }

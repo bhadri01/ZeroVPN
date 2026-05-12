@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { IconCopy, IconDownload } from "@tabler/icons-react"
 import { motion } from "motion/react"
 import { useState } from "react"
 import { toast } from "sonner"
@@ -51,7 +52,9 @@ export function SecuritySections() {
       setRecoveryCodes(d.recovery_codes)
       setSetupData(null)
       setCode("")
-      if (user) setUser({ ...user })
+      // Flip the auth-store flag so the status pill + form swap to
+      // the "enabled" state instantly — no round-trip to /me needed.
+      if (user) setUser({ ...user, totp_enabled: true })
       void qc.invalidateQueries()
       toast.success("2FA enabled")
     },
@@ -63,13 +66,16 @@ export function SecuritySections() {
   const disableM = useMutation({
     mutationFn: (c: string) => totpDisable(c.trim()),
     onSuccess: () => {
-      toast.success("2FA disabled")
+      if (user) setUser({ ...user, totp_enabled: false })
       void qc.invalidateQueries()
+      toast.success("2FA disabled")
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)
     },
   })
+
+  const totpEnabled = user?.totp_enabled ?? false
 
   return (
     <div className="flex flex-col gap-6">
@@ -79,23 +85,37 @@ export function SecuritySections() {
       >
         {!setupData && !recoveryCodes && (
           <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <Pill tone="warn">Status unknown</Pill>
+            <div className="flex flex-wrap items-center gap-3">
+              {totpEnabled ? (
+                <Pill tone="ok">Enabled</Pill>
+              ) : (
+                <Pill tone="warn">Disabled</Pill>
+              )}
               <span className="text-muted-foreground text-xs">
-                Required for admins. Recommended for everyone.
+                {totpEnabled
+                  ? "An authenticator app is configured for this account. Sign-ins require a 6-digit code."
+                  : "Required for admins. Recommended for everyone."}
               </span>
             </div>
-            <div className="flex gap-2">
-              <Button onClick={() => setupM.mutate()} disabled={setupM.isPending}>
-                {setupM.isPending ? "Setting up…" : "Enable 2FA"}
-              </Button>
-            </div>
-            <details className="text-sm">
-              <summary className="text-muted-foreground hover:text-foreground cursor-pointer font-mono text-[12px]">
-                Already enabled? Disable 2FA ↗
-              </summary>
-              <DisableForm onSubmit={(c) => disableM.mutate(c)} />
-            </details>
+
+            {totpEnabled ? (
+              // 2FA already on — give the user direct access to the
+              // disable form (no need to hide it behind a <details>
+              // disclosure when this is the only available action).
+              <DisableForm
+                onSubmit={(c) => disableM.mutate(c)}
+                pending={disableM.isPending}
+              />
+            ) : (
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => setupM.mutate()}
+                  disabled={setupM.isPending}
+                >
+                  {setupM.isPending ? "Setting up…" : "Enable 2FA"}
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -110,35 +130,47 @@ export function SecuritySections() {
               Scan this QR with your authenticator app, then enter the 6-digit
               code below.
             </p>
-            <div className="zv-qr-box bg-card inline-flex">
-              <span
-                className="block size-40"
+
+            {/* Two-column layout: QR locked to a square on the left,
+                manual-entry + OTP input stretch to fill the rest on the
+                right. Collapses to stacked on narrow viewports so the
+                160px QR doesn't crowd the form. The SVG is painted
+                directly into the box; the `.zv-qr-box svg` rule scales
+                it to fit, overriding the qrcode crate's 256px intrinsic
+                size. */}
+            <div className="grid items-start gap-5 sm:grid-cols-[auto_1fr]">
+              <div
+                className="zv-qr-box bg-card size-40 shrink-0"
                 dangerouslySetInnerHTML={{ __html: setupData.qr_svg }}
               />
+
+              <div className="flex min-w-0 flex-col gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="zv-eyebrow">Or enter manually</Label>
+                  <CopyableCode value={setupData.secret} truncate />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="zv-eyebrow">Verification code</Label>
+                  <InputOTP maxLength={6} value={code} onChange={setCode}>
+                    <InputOTPGroup>
+                      <InputOTPSlot index={0} />
+                      <InputOTPSlot index={1} />
+                      <InputOTPSlot index={2} />
+                      <InputOTPSlot index={3} />
+                      <InputOTPSlot index={4} />
+                      <InputOTPSlot index={5} />
+                    </InputOTPGroup>
+                  </InputOTP>
+                </div>
+              </div>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <Label className="zv-eyebrow">Or enter manually</Label>
-              <CopyableCode value={setupData.secret} truncate />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label className="zv-eyebrow">Verification code</Label>
-              <InputOTP maxLength={6} value={code} onChange={setCode}>
-                <InputOTPGroup>
-                  <InputOTPSlot index={0} />
-                  <InputOTPSlot index={1} />
-                  <InputOTPSlot index={2} />
-                  <InputOTPSlot index={3} />
-                  <InputOTPSlot index={4} />
-                  <InputOTPSlot index={5} />
-                </InputOTPGroup>
-              </InputOTP>
-            </div>
+
             <div className="flex gap-2">
               <Button
                 onClick={() => enableM.mutate()}
                 disabled={enableM.isPending || code.length < 6}
               >
-                Verify & enable
+                {enableM.isPending ? "Verifying…" : "Verify & enable"}
               </Button>
               <Button variant="ghost" onClick={() => setSetupData(null)}>
                 Cancel
@@ -169,7 +201,7 @@ export function SecuritySections() {
                 </Kbd>
               ))}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
                 variant="outline"
@@ -178,7 +210,18 @@ export function SecuritySections() {
                   toast.success("Recovery codes copied")
                 }}
               >
+                <IconCopy className="size-3.5" />
                 Copy all
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  downloadRecoveryCodes(recoveryCodes, user?.email)
+                }
+              >
+                <IconDownload className="size-3.5" />
+                Download .txt
               </Button>
               <Button size="sm" onClick={() => setRecoveryCodes(null)}>
                 I've saved them
@@ -314,24 +357,75 @@ function Field({
   )
 }
 
-function DisableForm({ onSubmit }: { onSubmit: (code: string) => void }) {
+/** Trigger a browser download of the recovery codes as a plain .txt
+ *  file. We render the codes as a Blob, build an `<a download>`,
+ *  click it programmatically, then revoke the object URL. No copy is
+ *  retained server-side past this single response; the user *must*
+ *  save them now. Filename includes a date stamp + the user's email
+ *  local-part so multiple downloads (e.g. testing) don't collide in
+ *  the Downloads folder. */
+function downloadRecoveryCodes(codes: string[], email: string | undefined) {
+  const today = new Date().toISOString().slice(0, 10)
+  const localPart = email?.split("@")[0]?.replace(/[^a-z0-9_-]/gi, "") || "user"
+  const filename = `zerovpn-recovery-codes-${localPart}-${today}.txt`
+  const body = [
+    "ZeroVPN — Two-Factor Authentication Recovery Codes",
+    `Account: ${email ?? "(unknown)"}`,
+    `Generated: ${new Date().toISOString()}`,
+    "",
+    "Each code below can be used ONCE to sign in if you lose access to",
+    "your authenticator app. Treat them like passwords — store them",
+    "somewhere safe (password manager, encrypted note, printed copy in",
+    "a desk drawer). Anyone with one of these codes can sign in as you.",
+    "",
+    ...codes,
+    "",
+  ].join("\n")
+  const blob = new Blob([body], { type: "text/plain;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = filename
+  a.rel = "noopener"
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+  toast.success("Recovery codes downloaded")
+}
+
+function DisableForm({
+  onSubmit,
+  pending,
+}: {
+  onSubmit: (code: string) => void
+  pending?: boolean
+}) {
   const [c, setC] = useState("")
   return (
-    <div className="border-border mt-3 flex flex-wrap gap-2 border-l pl-3">
-      <Input
-        value={c}
-        onChange={(e) => setC(e.target.value)}
-        placeholder="Current 6-digit code"
-        className="w-44 font-mono"
-      />
-      <Button
-        size="sm"
-        variant="destructive"
-        onClick={() => onSubmit(c)}
-        disabled={c.length < 6}
-      >
-        Disable 2FA
-      </Button>
+    <div className="border-border mt-1 flex flex-col gap-2 border-l pl-3">
+      <p className="text-muted-foreground font-mono text-[11px]">
+        Enter a current authenticator code to confirm. Recovery codes also
+        work here.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Input
+          value={c}
+          onChange={(e) => setC(e.target.value)}
+          placeholder="6-digit code"
+          autoComplete="one-time-code"
+          inputMode="numeric"
+          className="w-44 font-mono"
+        />
+        <Button
+          size="sm"
+          variant="destructive"
+          onClick={() => onSubmit(c)}
+          disabled={pending || c.length < 6}
+        >
+          {pending ? "Disabling…" : "Disable 2FA"}
+        </Button>
+      </div>
     </div>
   )
 }

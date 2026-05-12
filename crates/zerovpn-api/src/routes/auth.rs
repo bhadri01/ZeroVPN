@@ -162,6 +162,10 @@ pub struct PublicUser {
     pub id: uuid::Uuid,
     pub email: String,
     pub role: UserRole,
+    /// True when the user has finished TOTP enrollment. Surfaced here
+    /// so the frontend can auto-detect 2FA status on the Security page
+    /// instead of guessing.
+    pub totp_enabled: bool,
 }
 
 #[utoipa::path(
@@ -268,6 +272,7 @@ pub async fn login(
                         id: user_with_secrets.id,
                         email: user_with_secrets.email.clone(),
                         role: user_with_secrets.role,
+                        totp_enabled: user_with_secrets.totp_enabled,
                     },
                     must_change_password: user_with_secrets.must_change_password,
                     totp_required: true,
@@ -372,7 +377,12 @@ pub async fn login(
     info!(user_id = %user.id, role = ?user.role, totp = totp_enabled, "login");
 
     Ok(Json(LoginResponse {
-        user: PublicUser { id: user.id, email: user.email, role: user.role },
+        user: PublicUser {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            totp_enabled: user.totp_enabled,
+        },
         must_change_password: must_change,
         totp_required: false,
     }))
@@ -436,7 +446,12 @@ pub async fn logout(session: Session) -> ApiResult<impl IntoResponse> {
     security(("session_cookie" = [])),
 )]
 pub async fn me(CurrentUser(user): CurrentUser) -> impl IntoResponse {
-    Json(PublicUser { id: user.id, email: user.email, role: user.role })
+    Json(PublicUser {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        totp_enabled: user.totp_enabled,
+    })
 }
 
 #[allow(dead_code)]
