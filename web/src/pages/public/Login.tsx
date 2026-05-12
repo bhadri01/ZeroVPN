@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import { Label } from "@/components/ui/label"
-import { ApiError, login } from "@/lib/api"
+import { ApiError, login, resendVerify } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
 const schema = z.object({
@@ -34,6 +34,8 @@ export function LoginPage() {
     password: string
   } | null>(null)
   const [totpCode, setTotpCode] = useState("")
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null)
+  const [resending, setResending] = useState(false)
   const {
     register,
     handleSubmit,
@@ -45,6 +47,7 @@ export function LoginPage() {
     password: string
     totp_code?: string
   }) => {
+    setUnverifiedEmail(null)
     try {
       const res = await login(creds)
       if (res.totp_required) {
@@ -61,12 +64,29 @@ export function LoginPage() {
           toast.error("Too many attempts. Try again in a few minutes.")
         else if (e.status === 401)
           toast.error(needsTotp ? "Invalid 2FA code" : "Invalid email or password")
-        else if (e.status === 403)
-          toast.error("Account suspended or pending verification")
+        else if (e.status === 403 && e.code === "email_not_verified") {
+          setUnverifiedEmail(creds.email)
+          toast.error("Verify your email to continue")
+        } else if (e.status === 403)
+          toast.error("Account suspended")
         else toast.error(e.message)
       } else {
         toast.error("Login failed")
       }
+    }
+  }
+
+  const onResend = async () => {
+    if (!unverifiedEmail) return
+    setResending(true)
+    try {
+      await resendVerify(unverifiedEmail)
+      toast.success("Verification email re-sent")
+    } catch (e) {
+      if (e instanceof ApiError) toast.error(e.message)
+      else toast.error("Couldn't resend the email")
+    } finally {
+      setResending(false)
     }
   }
 
@@ -119,6 +139,24 @@ export function LoginPage() {
               </p>
             )}
           </div>
+
+          {unverifiedEmail && (
+            <div className="border-destructive/40 bg-destructive/5 flex flex-col gap-2 border p-3">
+              <p className="text-destructive font-mono text-xs">
+                Your email isn't verified yet. Click the link we sent to{" "}
+                <span className="font-semibold">{unverifiedEmail}</span> to
+                activate your account.
+              </p>
+              <button
+                type="button"
+                onClick={onResend}
+                disabled={resending}
+                className="text-foreground self-start font-mono text-[11px] underline disabled:opacity-50"
+              >
+                {resending ? "Resending…" : "Resend verification email →"}
+              </button>
+            </div>
+          )}
 
           <Button type="submit" disabled={isSubmitting} size="lg">
             {isSubmitting ? "Verifying…" : "Continue"}

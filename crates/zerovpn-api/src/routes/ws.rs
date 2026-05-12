@@ -85,11 +85,11 @@ fn visible_to(event: &Event, user_id: Uuid, role: UserRole) -> bool {
         return true;
     }
     match event {
-        // Server-wide telemetry is admin-only (the admin branch above
-        // already covered admins, so non-admins see nothing here).
-        Event::Heartbeat { .. }
-        | Event::ServerHealth { .. }
-        | Event::ServerSample { .. } => false,
+        // Host health (CPU / mem / I/O) feeds the sidebar status panel for
+        // every user, so it's not admin-gated. Heartbeat and per-WG-server
+        // samples remain admin-only.
+        Event::ServerHealth { .. } => true,
+        Event::Heartbeat { .. } | Event::ServerSample { .. } => false,
         Event::StatsDelta { user_id: u, .. }
         | Event::HandshakeChange { user_id: u, .. }
         | Event::PeerStatusChanged { user_id: u, .. }

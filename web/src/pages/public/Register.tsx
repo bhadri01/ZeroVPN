@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod"
+import { useState } from "react"
 import { useForm } from "react-hook-form"
-import { Link, useNavigate } from "react-router"
+import { Link } from "react-router"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -10,12 +11,11 @@ import {
   AuthHeading,
   AuthShell,
 } from "@/components/layout/AuthShell"
-import { Kbd } from "@/components/swiss"
+import { Kbd, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ApiError, login, register as registerApi } from "@/lib/api"
-import { useAuth } from "@/stores/auth"
+import { ApiError, register as registerApi, resendVerify } from "@/lib/api"
 
 const schema = z
   .object({
@@ -31,8 +31,8 @@ const schema = z
 type FormValues = z.infer<typeof schema>
 
 export function RegisterPage() {
-  const navigate = useNavigate()
-  const setUser = useAuth((s) => s.setUser)
+  const [sentTo, setSentTo] = useState<string | null>(null)
+  const [resending, setResending] = useState(false)
   const {
     register,
     handleSubmit,
@@ -42,17 +42,79 @@ export function RegisterPage() {
   const onSubmit = async (values: FormValues) => {
     try {
       await registerApi({ email: values.email, password: values.password })
-      const res = await login({
-        email: values.email,
-        password: values.password,
-      })
-      setUser(res.user)
-      toast.success("Account created")
-      navigate("/app")
+      setSentTo(values.email)
+      toast.success("Check your inbox to verify your email")
     } catch (e) {
       if (e instanceof ApiError) toast.error(e.message)
       else toast.error("Registration failed")
     }
+  }
+
+  const onResend = async () => {
+    if (!sentTo) return
+    setResending(true)
+    try {
+      await resendVerify(sentTo)
+      toast.success("Verification email re-sent")
+    } catch (e) {
+      if (e instanceof ApiError) toast.error(e.message)
+      else toast.error("Couldn't resend the email")
+    } finally {
+      setResending(false)
+    }
+  }
+
+  if (sentTo) {
+    return (
+      <AuthShell>
+        <AuthForm>
+          <AuthHeading eyebrow="02 · Verify email">
+            Check your inbox.
+          </AuthHeading>
+
+          <div className="flex items-center gap-3">
+            <Pill tone="warn">pending</Pill>
+            <span className="text-muted-foreground font-mono text-xs">
+              link expires in 24h
+            </span>
+          </div>
+
+          <p className="text-sm leading-relaxed">
+            We sent a verification link to{" "}
+            <span className="font-mono">{sentTo}</span>. Click the link to
+            activate your account — you can sign in after that.
+          </p>
+
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            Didn't get the email? Check your spam folder, or resend it below.
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            <Button asChild>
+              <Link to="/login">Go to sign in</Link>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={onResend}
+              disabled={resending}
+            >
+              {resending ? "Resending…" : "Resend email"}
+            </Button>
+          </div>
+
+          <AuthFooterRule>
+            <button
+              type="button"
+              onClick={() => setSentTo(null)}
+              className="hover:text-foreground"
+            >
+              ← Use a different email
+            </button>
+          </AuthFooterRule>
+        </AuthForm>
+      </AuthShell>
+    )
   }
 
   return (

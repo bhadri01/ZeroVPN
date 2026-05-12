@@ -48,7 +48,6 @@ const WORKSPACE: NavEntry[] = [
   { to: "/app", label: "Dashboard", icon: IconLayoutDashboard, k: "D", end: true },
   { to: "/app/devices", label: "Devices", icon: IconDevices, k: "V" },
   { to: "/app/topology", label: "Topology", icon: IconHierarchy3, k: "T" },
-  { to: "/app/finder", label: "Finder", icon: IconSearch, k: "F" },
   { to: "/app/settings", label: "Settings", icon: IconSettings, k: "," },
 ]
 
@@ -58,11 +57,11 @@ const ADMIN: NavEntry[] = [
   { to: "/admin/audit", label: "Audit log", icon: IconClipboardList, k: "3" },
   { to: "/admin/failed-logins", label: "Failed logins", icon: IconCircleDashedX, k: "4" },
   { to: "/admin/servers", label: "Servers", icon: IconRouter, k: "5" },
+  { to: "/admin/finder", label: "Finder", icon: IconSearch, k: "F" },
 ]
 
 export function AppSidebar() {
   const user = useAuth((s) => s.user)
-  const isAdmin = user?.role === "admin"
   const { state } = useSidebar()
   const collapsed = state === "collapsed"
 
@@ -109,7 +108,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="gap-0">
-        {!collapsed && isAdmin && <ServerStats />}
+        {!collapsed && <ServerStats />}
         <CollapseToggle collapsed={collapsed} />
       </SidebarFooter>
 
@@ -157,15 +156,14 @@ function NavList({ entries }: { entries: NavEntry[] }) {
 }
 
 /**
- * Admin-only server-stats panel. Renders host-level metrics from the
- * worker's server_health emitter: CPU%, memory used/total, net I/O
- * sparkline + current rate, and uptime in dd hh mm ss format. Only
- * mounted when the current user is an admin (the worker's WS filter
- * drops `server_health` for non-admins anyway).
+ * Server-stats panel for the sidebar footer. Renders host-level metrics
+ * from the worker's server_health emitter: CPU%, memory used/total,
+ * disk I/O sparkline, net I/O, and uptime. Visible to all signed-in
+ * users so they can see the server's current load.
  *
  * If there's no server_health event yet (worker not started, or just
- * after first boot), shows zero values — the chart fills in within
- * 5 seconds of the worker coming up.
+ * after first boot), shows a "Waiting" placeholder — the chart fills
+ * in within 5 seconds of the worker coming up.
  */
 function ServerStats() {
   const health = useLiveStats((s) => {

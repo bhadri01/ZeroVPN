@@ -142,11 +142,6 @@ export const router = createBrowserRouter([
             element: <DeviceDetailPage />,
           },
           {
-            path: "/app/finder",
-            handle: { breadcrumb: "Finder" },
-            element: <FinderPage />,
-          },
-          {
             path: "/app/topology",
             handle: { breadcrumb: "Topology" },
             element: <TopologyPage />,
@@ -199,6 +194,11 @@ export const router = createBrowserRouter([
                 path: "/admin/servers",
                 handle: { breadcrumb: "Servers" },
                 element: <ServersPage />,
+              },
+              {
+                path: "/admin/finder",
+                handle: { breadcrumb: "Finder" },
+                element: <FinderPage />,
               },
             ],
           },

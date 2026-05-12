@@ -49,13 +49,6 @@ const ITEMS: Item[] = [
     chord: "g t",
   },
   {
-    to: "/app/finder",
-    label: "Finder",
-    icon: IconSearch,
-    group: "Workspace",
-    chord: "g f",
-  },
-  {
     to: "/app/settings",
     label: "Settings",
     icon: IconSettings,
@@ -82,6 +75,13 @@ const ITEMS: Item[] = [
     label: "Failed logins",
     icon: IconCircleDashedX,
     group: "Admin",
+  },
+  {
+    to: "/admin/finder",
+    label: "Finder",
+    icon: IconSearch,
+    group: "Admin",
+    chord: "g f",
   },
 ]
 

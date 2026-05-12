@@ -14,7 +14,6 @@ zerovpn-core = { workspace = true }
 zerovpn-db = { workspace = true }
 zerovpn-events = { workspace = true }
 zerovpn-wire = { workspace = true }
-zerovpn-stats = { workspace = true }
 zerovpn-mail = { workspace = true }
 
 tokio = { workspace = true }

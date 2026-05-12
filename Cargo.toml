@@ -6,7 +6,6 @@ members = [
     "crates/zerovpn-wg",
     "crates/zerovpn-obfs",
     "crates/zerovpn-auth",
-    "crates/zerovpn-stats",
     "crates/zerovpn-events",
     "crates/zerovpn-wire",
     "crates/zerovpn-dns",
@@ -34,7 +33,6 @@ zerovpn-db = { path = "crates/zerovpn-db" }
 zerovpn-wg = { path = "crates/zerovpn-wg" }
 zerovpn-obfs = { path = "crates/zerovpn-obfs" }
 zerovpn-auth = { path = "crates/zerovpn-auth" }
-zerovpn-stats = { path = "crates/zerovpn-stats" }
 zerovpn-events = { path = "crates/zerovpn-events" }
 zerovpn-wire = { path = "crates/zerovpn-wire" }
 zerovpn-dns = { path = "crates/zerovpn-dns" }

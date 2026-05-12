@@ -119,11 +119,11 @@ function Hero({
 }) {
   const reduce = useReducedMotion()
   return (
-    <section className="zv-grid-bg relative grid grid-cols-1 gap-12 overflow-hidden border-b px-6 pt-16 lg:grid-cols-[1.05fr_1fr] lg:pt-20">
+    <section className="zv-grid-bg relative grid grid-cols-1 gap-8 overflow-hidden border-b px-5 pt-12 sm:gap-12 sm:px-6 sm:pt-16 lg:grid-cols-[1.05fr_1fr] lg:pt-20">
       <AmbientDots disabled={!!reduce} />
 
       <motion.div
-        className="relative z-[1] flex flex-col gap-5 pb-20"
+        className="relative z-[1] flex flex-col gap-4 pb-12 sm:gap-5 sm:pb-20"
         initial="initial"
         animate="animate"
         variants={{ initial: {}, animate: { transition: stagger(0.06) } }}
@@ -133,19 +133,19 @@ function Hero({
         </motion.div>
         <motion.h1
           variants={cardVariants}
-          className="font-heading text-[3.4rem] font-medium leading-[0.9] tracking-[-0.04em] sm:text-7xl lg:text-[5.6rem]"
+          className="font-heading text-[2.5rem] font-medium leading-[0.92] tracking-[-0.04em] sm:text-7xl sm:leading-[0.9] lg:text-[5.6rem]"
         >
           Run your own
           <br />
           VPN.
           <br />
-          <span className="text-muted-foreground block font-mono text-[0.36em] font-normal tracking-[-0.01em] sm:text-[0.32em]">
+          <span className="text-muted-foreground block font-mono text-[0.42em] font-normal tracking-[-0.01em] sm:text-[0.32em]">
             — without running a fleet.
           </span>
         </motion.h1>
         <motion.p
           variants={cardVariants}
-          className="text-muted-foreground mt-3 max-w-[46ch] text-base leading-relaxed"
+          className="text-muted-foreground mt-2 max-w-[46ch] text-[15px] leading-relaxed sm:mt-3 sm:text-base"
         >
           A privacy-first WireGuard control plane you deploy in fifteen minutes.
           Manage devices, peers, and admin policy from one quiet, fast console.
@@ -153,7 +153,7 @@ function Hero({
         </motion.p>
         <motion.div
           variants={cardVariants}
-          className="mt-3 flex flex-wrap items-center gap-3"
+          className="mt-2 flex flex-wrap items-center gap-2 sm:mt-3 sm:gap-3"
         >
           <Button asChild size="lg">
             <Link to="/register">Deploy ZeroVPN ↗</Link>
@@ -161,7 +161,7 @@ function Hero({
           <Button asChild size="lg" variant="ghost">
             <Link to="/login">Live demo</Link>
           </Button>
-          <Kbd className="ml-2">
+          <Kbd className="hidden sm:ml-2 sm:inline-flex">
             docker compose up -d
             <BlinkCaret disabled={!!reduce} />
           </Kbd>
@@ -169,7 +169,7 @@ function Hero({
 
         <motion.div
           variants={cardVariants}
-          className="text-muted-foreground mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono text-[11px]"
+          className="text-muted-foreground mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 font-mono text-[11px] sm:mt-8 sm:gap-x-6"
         >
           <ApiPill state={pingState} ts={pingTs} />
           <span className="text-muted-foreground/40">·</span>
@@ -300,19 +300,19 @@ function NumbersStrip() {
             viewport={{ once: true, amount: 0.4 }}
             transition={{ duration: 0.3, delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
             className={cn(
-              "border-border flex flex-col items-start gap-1 p-8",
+              "border-border flex flex-col items-start gap-1 p-5 sm:p-8",
               (i + 1) % 2 !== 0 && "border-r sm:border-r",
               (i + 1) % 4 !== 0 && "lg:border-r",
               i < all.length - 2 && "border-b lg:border-b-0",
             )}
           >
-            <div className="font-heading text-foreground flex items-baseline gap-1 text-5xl font-medium tracking-[-0.03em] sm:text-6xl">
+            <div className="font-heading text-foreground flex items-baseline gap-1 text-4xl font-medium tracking-[-0.03em] sm:text-5xl lg:text-6xl">
               <AnimatedCounter to={c.to} format={c.format} />
-              <span className="text-muted-foreground/70 font-mono text-base tracking-normal">
+              <span className="text-muted-foreground/70 font-mono text-sm tracking-normal sm:text-base">
                 {c.unit}
               </span>
             </div>
-            <span className="text-muted-foreground font-mono text-[11px] uppercase tracking-wide">
+            <span className="text-muted-foreground font-mono text-[10px] uppercase tracking-wide sm:text-[11px]">
               {c.label}
             </span>
           </motion.div>
@@ -387,9 +387,9 @@ function Personas() {
   ]
   return (
     <section className="border-b">
-      <div className="border-border border-b px-6 py-12">
+      <div className="border-border border-b px-5 py-10 sm:px-6 sm:py-12">
         <Eyebrow num="02">Built for</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[14ch] text-4xl font-medium tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[14ch] text-3xl font-medium tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           Three operators, one stack.
         </h2>
       </div>
@@ -402,7 +402,7 @@ function Personas() {
             viewport={{ once: true, amount: 0.3 }}
             transition={{ duration: 0.26, delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
             className={cn(
-              "border-border flex flex-col gap-3 p-8",
+              "border-border flex flex-col gap-3 p-6 sm:p-8",
               i < all.length - 1 && "border-b md:border-b-0 md:border-r",
             )}
           >
@@ -436,24 +436,24 @@ function PreviewDashboard() {
   return (
     <section className="grid grid-cols-1 border-b lg:grid-cols-[1fr_1.4fr]">
       <motion.div
-        className="border-border border-b p-10 lg:border-b-0 lg:border-r lg:p-14"
+        className="border-border border-b p-6 sm:p-10 lg:border-b-0 lg:border-r lg:p-14"
         initial={{ opacity: 0, y: 12 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.3 }}
         transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
       >
         <Eyebrow num="03">Console · Dashboard</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[16ch] text-4xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[16ch] text-3xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           One pane.
           <br />
           Every device.
         </h2>
-        <p className="text-muted-foreground mt-5 max-w-[42ch] text-sm leading-relaxed">
+        <p className="text-muted-foreground mt-4 max-w-[42ch] text-sm leading-relaxed sm:mt-5">
           KPIs that answer the boring questions immediately — how many peers
           are live, how fast they're moving, when they last handshook. Live
           rates flow over WebSocket from the worker at 1 Hz.
         </p>
-        <div className="mt-6 flex flex-wrap gap-1.5 font-mono text-[10px]">
+        <div className="mt-5 flex flex-wrap gap-1.5 font-mono text-[10px] sm:mt-6">
           {["WebSocket · 1 Hz", "Hydrate from history", "EMA-smoothed rates", "TanStack Query"].map(
             (t) => (
               <span
@@ -467,7 +467,7 @@ function PreviewDashboard() {
         </div>
       </motion.div>
       <motion.div
-        className="bg-card/40 p-6 lg:p-10"
+        className="bg-card/40 p-4 sm:p-6 lg:p-10"
         initial={{ opacity: 0, y: 12 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.3 }}
@@ -490,7 +490,7 @@ function MockDashboard() {
           <LiveDot /> live
         </span>
       </div>
-      <div className="grid grid-cols-4 gap-0 border">
+      <div className="grid grid-cols-2 gap-0 border sm:grid-cols-4">
         {[
           { l: "Devices · live", v: "4", f: "all active" },
           { l: "TX · live", v: "182", u: "Mb/s", spark: txHistory, c: "var(--primary)" },
@@ -501,7 +501,11 @@ function MockDashboard() {
             key={k.l}
             className={cn(
               "flex flex-col gap-1 p-3",
-              i < 3 && "border-r",
+              // 2×2 on mobile (right-border on the left column),
+              // 1×4 on sm+ (right-border on cols 1-3).
+              i % 2 === 0 && "border-r sm:border-r",
+              i < 2 && "border-b sm:border-b-0",
+              i === 2 && "sm:border-r",
             )}
           >
             <span className="text-muted-foreground font-mono text-[9px] uppercase">
@@ -592,9 +596,9 @@ function FauxDualChart({ rx, tx }: { rx: number[]; tx: number[] }) {
 function FeaturesBento() {
   return (
     <section id="features" className="border-b">
-      <div className="border-border border-b px-6 py-12">
+      <div className="border-border border-b px-5 py-10 sm:px-6 sm:py-12">
         <Eyebrow num="04">Features</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[18ch] text-4xl font-medium tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[18ch] text-3xl font-medium tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           The boring parts. Handled.
         </h2>
       </div>
@@ -693,8 +697,10 @@ function BentoCard({
       viewport={{ once: true, amount: 0.3 }}
       transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
       className={cn(
-        "border-border flex flex-col gap-2 border-b border-r p-6",
-        "last:border-r-0 last:border-b-0",
+        // On mobile (single column) we only want bottom rules — vertical
+        // rules dangling at the right look broken. lg+ uses the grid edges.
+        "border-border flex flex-col gap-2 border-b p-6 lg:border-r",
+        "last:border-b-0 lg:last:border-r-0",
         accent && "bg-primary/[0.04]",
         className,
       )}
@@ -743,7 +749,7 @@ function PreviewTopology() {
   return (
     <section className="grid grid-cols-1 border-b lg:grid-cols-[1.4fr_1fr]">
       <motion.div
-        className="bg-card/40 p-6 lg:p-10"
+        className="bg-card/40 p-4 sm:p-6 lg:p-10"
         initial={{ opacity: 0, y: 12 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.3 }}
@@ -752,24 +758,24 @@ function PreviewTopology() {
         <MockTopology />
       </motion.div>
       <motion.div
-        className="border-border border-t p-10 lg:border-l lg:border-t-0 lg:p-14"
+        className="border-border border-t p-6 sm:p-10 lg:border-l lg:border-t-0 lg:p-14"
         initial={{ opacity: 0, y: 12 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.3 }}
         transition={{ duration: 0.3, delay: 0.06, ease: [0.16, 1, 0.3, 1] }}
       >
         <Eyebrow num="05">Console · Topology</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[16ch] text-4xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[16ch] text-3xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           Server. You.
           <br />
           Your devices.
         </h2>
-        <p className="text-muted-foreground mt-5 max-w-[42ch] text-sm leading-relaxed">
+        <p className="text-muted-foreground mt-4 max-w-[42ch] text-sm leading-relaxed sm:mt-5">
           A two-level tree that mirrors how WireGuard actually thinks. Drag
           nodes to rearrange — your layout is persisted per user, so the map
           looks the same on every device, every login.
         </p>
-        <div className="mt-6 flex flex-wrap gap-1.5 font-mono text-[10px]">
+        <div className="mt-5 flex flex-wrap gap-1.5 font-mono text-[10px] sm:mt-6">
           {["SVG · viewBox", "ResizeObserver", "Position-persist · debounced", "ZMQ live rates"].map(
             (t) => (
               <span
@@ -788,7 +794,7 @@ function PreviewTopology() {
 
 function MockTopology() {
   return (
-    <div className="border-border bg-background relative h-[360px] border">
+    <div className="border-border bg-background relative h-[260px] border sm:h-[320px] lg:h-[360px]">
       <div className="text-muted-foreground/70 absolute left-3 top-3 z-[1] font-mono text-[10px] uppercase">
         Live topology · 4 devices
       </div>
@@ -938,18 +944,18 @@ function Architecture() {
       id="architecture"
       className="grid grid-cols-1 border-b lg:grid-cols-[1fr_1.2fr]"
     >
-      <div className="border-border border-b p-10 lg:border-b-0 lg:border-r lg:p-14">
+      <div className="border-border border-b p-6 sm:p-10 lg:border-b-0 lg:border-r lg:p-14">
         <Eyebrow num="06">Architecture</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[14ch] text-4xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[14ch] text-3xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           One stack.
           <br />
           Zero leaks.
         </h2>
-        <p className="text-muted-foreground mt-5 max-w-[42ch] text-sm leading-relaxed">
+        <p className="text-muted-foreground mt-4 max-w-[42ch] text-sm leading-relaxed sm:mt-5">
           Browser to backbone in five well-defined layers. Every hop is yours —
           no third-party SaaS in the data path, no telemetry phoning home.
         </p>
-        <div className="mt-8 flex flex-wrap gap-1.5 font-mono text-[10px]">
+        <div className="mt-6 flex flex-wrap gap-1.5 font-mono text-[10px] sm:mt-8">
           {stack.map((s) => (
             <span
               key={s}
@@ -961,7 +967,7 @@ function Architecture() {
         </div>
       </div>
       <motion.div
-        className="flex flex-col p-10 lg:p-14"
+        className="flex flex-col p-6 sm:p-10 lg:p-14"
         initial="initial"
         whileInView="animate"
         viewport={{ once: true, amount: 0.3 }}
@@ -971,7 +977,7 @@ function Architecture() {
           <motion.div
             key={l.tag}
             variants={cardVariants}
-            className="border-border grid grid-cols-[80px_1fr] items-baseline gap-4 border-l py-4 pl-4 first:pt-0 last:pb-0"
+            className="border-border grid grid-cols-[64px_1fr] items-baseline gap-3 border-l py-4 pl-4 first:pt-0 last:pb-0 sm:grid-cols-[80px_1fr] sm:gap-4"
           >
             <span className="text-muted-foreground/70 font-mono text-[10px] uppercase tracking-wide">
               {String(i + 1).padStart(2, "0")} · {l.tag}
@@ -997,27 +1003,27 @@ function PreviewDeviceDetail() {
   return (
     <section className="grid grid-cols-1 border-b lg:grid-cols-[1fr_1.4fr]">
       <motion.div
-        className="border-border border-b p-10 lg:border-b-0 lg:border-r lg:p-14"
+        className="border-border border-b p-6 sm:p-10 lg:border-b-0 lg:border-r lg:p-14"
         initial={{ opacity: 0, y: 12 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.3 }}
         transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
       >
         <Eyebrow num="07">Console · Device detail</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[16ch] text-4xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[16ch] text-3xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           Configure.
           <br />
           Audit.
           <br />
           Rotate.
         </h2>
-        <p className="text-muted-foreground mt-5 max-w-[42ch] text-sm leading-relaxed">
+        <p className="text-muted-foreground mt-4 max-w-[42ch] text-sm leading-relaxed sm:mt-5">
           Per-device split-tunnel, custom DNS, friendly hostnames, and a
           timeline of every lifecycle event — from creation to revoke. Re-issue
           keys with one click; the old .conf stops working the instant you
           confirm.
         </p>
-        <div className="mt-6 flex flex-wrap gap-1.5 font-mono text-[10px]">
+        <div className="mt-5 flex flex-wrap gap-1.5 font-mono text-[10px] sm:mt-6">
           {["wg-conf · live render", "Audit · per-device", "Re-issue · destructive", "QR scan"].map(
             (t) => (
               <span
@@ -1031,7 +1037,7 @@ function PreviewDeviceDetail() {
         </div>
       </motion.div>
       <motion.div
-        className="bg-card/40 p-6 lg:p-10"
+        className="bg-card/40 p-4 sm:p-6 lg:p-10"
         initial={{ opacity: 0, y: 12 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.3 }}
@@ -1057,7 +1063,7 @@ function MockDeviceDetail() {
         </div>
         <Pill tone="ok">online</Pill>
       </div>
-      <div className="grid grid-cols-4 gap-0 border">
+      <div className="grid grid-cols-2 gap-0 border sm:grid-cols-4">
         {[
           { l: "TX · live", v: "182 Mb/s" },
           { l: "RX · live", v: "240 Mb/s" },
@@ -1068,7 +1074,10 @@ function MockDeviceDetail() {
             key={k.l}
             className={cn(
               "flex flex-col gap-0.5 p-2.5",
-              i < 3 && "border-r",
+              // 2×2 on mobile, 1×4 on sm+.
+              i % 2 === 0 && "border-r sm:border-r",
+              i < 2 && "border-b sm:border-b-0",
+              i === 2 && "sm:border-r",
             )}
           >
             <span className="text-muted-foreground/70 font-mono text-[9px] uppercase">
@@ -1080,7 +1089,7 @@ function MockDeviceDetail() {
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5 border p-3 font-mono text-[11px]">
           <span className="text-muted-foreground/70 font-mono text-[9px] uppercase">
             Configuration
@@ -1130,26 +1139,26 @@ function Deploy() {
   return (
     <section id="deploy" className="grid grid-cols-1 border-b lg:grid-cols-2">
       <motion.div
-        className="border-border border-b p-10 lg:border-b-0 lg:border-r lg:p-14"
+        className="border-border border-b p-6 sm:p-10 lg:border-b-0 lg:border-r lg:p-14"
         initial={{ opacity: 0, y: 12 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.3 }}
         transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
       >
         <Eyebrow num="08">Deploy</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[14ch] text-4xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[14ch] text-3xl font-medium leading-[1.02] tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           Boring.
           <br />
           Repeatable.
           <br />
           Fast.
         </h2>
-        <p className="text-muted-foreground mt-5 max-w-[44ch] text-sm leading-relaxed">
+        <p className="text-muted-foreground mt-4 max-w-[44ch] text-sm leading-relaxed sm:mt-5">
           One compose file with optional profiles. Bring your own Linux box,
           or scale across regions. The runbook walks you through setup,
           restore drills, and the security checklist.
         </p>
-        <div className="mt-8 flex flex-col gap-3 font-mono text-xs">
+        <div className="mt-6 flex flex-col gap-3 font-mono text-xs sm:mt-8">
           {[
             ["00:00", "git clone & cp .env.example"],
             ["00:02", "docker compose --profile wg up -d"],
@@ -1158,28 +1167,28 @@ function Deploy() {
             ["00:15", "Live topology · timeline · audit"],
           ].map(([t, b]) => (
             <div key={t} className="flex items-center gap-3">
-              <span className="text-muted-foreground/60 w-12">{t}</span>
+              <span className="text-muted-foreground/60 w-12 shrink-0">{t}</span>
               <span>{b}</span>
             </div>
           ))}
         </div>
       </motion.div>
       <motion.div
-        className="p-10 lg:p-14"
+        className="overflow-x-auto p-6 sm:p-10 lg:p-14"
         initial={{ opacity: 0, y: 12 }}
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, amount: 0.3 }}
         transition={{ duration: 0.3, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
       >
-        <CodeBlock>{`# docker-compose.yml — minimal
+        <CodeBlock>{`# docker-compose.yml — build from source
 services:
-  api:     { image: zerovpn/api:1.0,     ports: ["443"] }
-  worker:  { image: zerovpn/worker:1.0,  network_mode: host }
-  db:      { image: postgres:18-alpine                     }
-  redis:   { image: redis:7-alpine                         }
-  caddy:   { image: caddy:2                                }
+  api:     { build: ./crates/zerovpn-api,    ports: ["443"] }
+  worker:  { build: ./crates/zerovpn-worker, network_mode: host }
+  db:      { image: postgres:18-alpine                          }
+  redis:   { image: redis:8-alpine                              }
+  caddy:   { image: caddy:2.11-alpine                           }
+  wg:      { image: linuxserver/wireguard, profiles: ["wg"]     }
 
-# optional profile: wireguard kernel + dnsmasq
 # optional profile: prometheus + grafana + loki + promtail
 # optional profile: backup container w/ age encryption`}</CodeBlock>
       </motion.div>
@@ -1224,9 +1233,9 @@ function Security() {
   ]
   return (
     <section id="security" className="border-b">
-      <div className="border-border border-b px-6 py-12">
+      <div className="border-border border-b px-5 py-10 sm:px-6 sm:py-12">
         <Eyebrow num="09">Security posture</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[20ch] text-4xl font-medium tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[20ch] text-3xl font-medium tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           Quiet by default. Loud when it matters.
         </h2>
       </div>
@@ -1306,9 +1315,9 @@ function Compare() {
   ]
   return (
     <section className="border-b">
-      <div className="border-border border-b px-6 py-12">
+      <div className="border-border border-b px-5 py-10 sm:px-6 sm:py-12">
         <Eyebrow num="10">Why ZeroVPN</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[14ch] text-4xl font-medium tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[14ch] text-3xl font-medium tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           Pick your trade-off.
         </h2>
       </div>
@@ -1321,7 +1330,7 @@ function Compare() {
             viewport={{ once: true, amount: 0.3 }}
             transition={{ duration: 0.26, delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
             className={cn(
-              "border-border flex flex-col gap-3 p-8",
+              "border-border flex flex-col gap-3 p-6 sm:p-8",
               i < cols.length - 1 && "border-b md:border-b-0 md:border-r",
               c.accent && "bg-primary/[0.06]",
             )}
@@ -1385,15 +1394,15 @@ function Roadmap() {
   ]
   return (
     <section className="border-b">
-      <div className="border-border border-b px-6 py-12">
+      <div className="border-border border-b px-5 py-10 sm:px-6 sm:py-12">
         <Eyebrow num="11">Roadmap</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[18ch] text-4xl font-medium tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[18ch] text-3xl font-medium tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           Shipped. Shipping. Sketched.
         </h2>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2">
         <motion.div
-          className="border-border border-b p-8 md:border-b-0 md:border-r lg:p-12"
+          className="border-border border-b p-6 sm:p-8 md:border-b-0 md:border-r lg:p-12"
           initial={{ opacity: 0, x: -6 }}
           whileInView={{ opacity: 1, x: 0 }}
           viewport={{ once: true, amount: 0.3 }}
@@ -1412,7 +1421,7 @@ function Roadmap() {
           </ul>
         </motion.div>
         <motion.div
-          className="p-8 lg:p-12"
+          className="p-6 sm:p-8 lg:p-12"
           initial={{ opacity: 0, x: 6 }}
           whileInView={{ opacity: 1, x: 0 }}
           viewport={{ once: true, amount: 0.3 }}
@@ -1469,9 +1478,9 @@ function FAQ() {
   ]
   return (
     <section id="faq" className="border-b">
-      <div className="border-border border-b px-6 py-12">
+      <div className="border-border border-b px-5 py-10 sm:px-6 sm:py-12">
         <Eyebrow num="12">FAQ</Eyebrow>
-        <h2 className="font-heading mt-3 max-w-[16ch] text-4xl font-medium tracking-[-0.025em] sm:text-5xl">
+        <h2 className="font-heading mt-3 max-w-[16ch] text-3xl font-medium tracking-[-0.025em] sm:text-4xl lg:text-5xl">
           Honest answers.
         </h2>
       </div>
@@ -1484,7 +1493,7 @@ function FAQ() {
             viewport={{ once: true, amount: 0.3 }}
             transition={{ duration: 0.22, delay: (i % 2) * 0.05, ease: [0.16, 1, 0.3, 1] }}
             className={cn(
-              "border-border flex flex-col gap-3 p-8",
+              "border-border flex flex-col gap-3 p-6 sm:p-8",
               i % 2 === 0 && "md:border-r",
               i < all.length - 2 && "border-b",
               i === all.length - 2 && "border-b md:border-b-0",
@@ -1508,7 +1517,7 @@ function FAQ() {
 function CTA() {
   return (
     <motion.section
-      className="border-b px-6 py-24 text-center"
+      className="border-b px-5 py-16 text-center sm:px-6 sm:py-24"
       initial={{ opacity: 0, y: 12 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.3 }}
@@ -1517,16 +1526,16 @@ function CTA() {
       <Eyebrow num="13" className="justify-center">
         Ready
       </Eyebrow>
-      <h2 className="font-heading mt-4 text-5xl font-medium leading-[0.95] tracking-[-0.03em] sm:text-7xl">
+      <h2 className="font-heading mt-4 text-4xl font-medium leading-[0.95] tracking-[-0.03em] sm:text-5xl lg:text-7xl">
         Stop renting
         <br />
         your privacy.
       </h2>
-      <p className="text-muted-foreground mx-auto mt-6 max-w-[56ch] text-base">
+      <p className="text-muted-foreground mx-auto mt-5 max-w-[56ch] text-sm leading-relaxed sm:mt-6 sm:text-base">
         Self-host in fifteen minutes. Open source, MIT-licensed. No accounts
         upstream, no telemetry phoning home, no ceremony.
       </p>
-      <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+      <div className="mt-6 flex flex-wrap items-center justify-center gap-3 sm:mt-8">
         <Button asChild size="lg">
           <Link to="/register">Get started</Link>
         </Button>
@@ -1534,9 +1543,11 @@ function CTA() {
           <Link to="/login">See live demo</Link>
         </Button>
       </div>
-      <div className="text-muted-foreground mx-auto mt-10 inline-flex max-w-full items-center gap-2 font-mono text-[11px]">
-        <span className="opacity-60">$</span>
-        <span className="text-foreground truncate">
+      {/* Installer one-liner. Scrolls horizontally on narrow screens
+          instead of forcing a layout shift / wrap. */}
+      <div className="text-muted-foreground mx-auto mt-8 flex max-w-full items-center gap-2 overflow-x-auto px-1 font-mono text-[11px] sm:mt-10 sm:justify-center">
+        <span className="shrink-0 opacity-60">$</span>
+        <span className="text-foreground whitespace-nowrap">
           git clone https://github.com/zerovpn/zerovpn &amp;&amp; cd zerovpn &amp;&amp; docker compose --profile wg up -d
         </span>
       </div>
@@ -1548,13 +1559,21 @@ function CTA() {
 
 function LandingFooter() {
   return (
-    <footer className="text-muted-foreground grid grid-cols-2 gap-8 p-8 font-mono text-xs sm:grid-cols-4">
+    <footer className="text-muted-foreground grid grid-cols-2 gap-6 p-6 font-mono text-xs sm:grid-cols-4 sm:gap-8 sm:p-8">
       <div className="flex flex-col gap-2">
         <Wordmark size={11} />
         <span>MIT · {new Date().getFullYear()}</span>
         <span className="text-muted-foreground/60">
           Built with Rust + React.
         </span>
+        <a
+          href="https://github.com/zerovpn/zerovpn"
+          target="_blank"
+          rel="noreferrer"
+          className="hover:text-foreground mt-1 transition-colors"
+        >
+          GitHub ↗
+        </a>
       </div>
       <div className="flex flex-col gap-1">
         <b className="text-foreground font-medium">PRODUCT</b>
@@ -1576,8 +1595,30 @@ function LandingFooter() {
         <a href="#deploy" className="hover:text-foreground transition-colors">
           Install
         </a>
-        <span className="opacity-60">Runbook</span>
-        <span className="opacity-60">OpenAPI</span>
+        <a
+          href="https://github.com/zerovpn/zerovpn/blob/main/docs/runbook.md"
+          target="_blank"
+          rel="noreferrer"
+          className="hover:text-foreground transition-colors"
+        >
+          Runbook ↗
+        </a>
+        <a
+          href="https://github.com/zerovpn/zerovpn/blob/main/docs/architecture.md"
+          target="_blank"
+          rel="noreferrer"
+          className="hover:text-foreground transition-colors"
+        >
+          Architecture ↗
+        </a>
+        <a
+          href="/openapi.json"
+          target="_blank"
+          rel="noreferrer"
+          className="hover:text-foreground transition-colors"
+        >
+          OpenAPI ↗
+        </a>
       </div>
       <div className="flex flex-col gap-1">
         <b className="text-foreground font-medium">ACCOUNT</b>

@@ -15,6 +15,8 @@ pub enum ApiError {
     Unauthorized,
     #[error("forbidden")]
     Forbidden,
+    #[error("email not verified")]
+    EmailNotVerified,
     #[error("conflict: {0}")]
     Conflict(String),
     #[error("validation: {0}")]
@@ -31,6 +33,7 @@ impl ApiError {
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             ApiError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            ApiError::EmailNotVerified => (StatusCode::FORBIDDEN, "email_not_verified"),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             ApiError::Validation(_) => (StatusCode::UNPROCESSABLE_ENTITY, "validation"),
             ApiError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),

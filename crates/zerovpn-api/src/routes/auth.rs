@@ -71,17 +71,23 @@ pub async fn register(
     let email = body.email.trim().to_lowercase();
     let existing = users::find_by_email(&state.pool, &email).await?;
 
-    // Always respond 202, even if the user exists. We're stubbing email
-    // verification for Phase 1A — accounts come up as pending_verification
-    // and Phase 1B will wire the actual email send.
+    // Always respond 200 with the same shape regardless of whether the
+    // email is already taken (enumeration prevention). New accounts are
+    // created as `pending_verification` and a verify-email link is sent;
+    // the user can only sign in after clicking it.
     if existing.is_none() {
         let pw_hash = zerovpn_auth::password::hash(&body.password)?;
         // Decide role: first user becomes admin, everyone else becomes user.
         let admins = users::count_active_admins(&state.pool).await?;
         let role = if admins == 0 { UserRole::Admin } else { UserRole::User };
-        // Phase 1A: auto-activate (no email verification round-trip yet).
-        let user_id =
-            users::create(&state.pool, &email, &pw_hash, role, UserStatus::Active).await?;
+        let user_id = users::create(
+            &state.pool,
+            &email,
+            &pw_hash,
+            role,
+            UserStatus::PendingVerification,
+        )
+        .await?;
 
         audit::record(
             &state.pool,
@@ -96,6 +102,23 @@ pub async fn register(
         )
         .await?;
         info!(%user_id, ?role, "user registered");
+
+        if let Err(e) =
+            crate::routes::email_auth::issue_verify_email(&state, user_id, &email).await
+        {
+            warn!(?e, %user_id, "failed to issue verify-email on register");
+        }
+    } else if let Some(u) = existing {
+        // Re-trigger the verification email when an unverified account
+        // signs up again with the same address. Active/suspended accounts
+        // get no email — same response shape keeps enumeration closed.
+        if u.status == UserStatus::PendingVerification {
+            if let Err(e) =
+                crate::routes::email_auth::issue_verify_email(&state, u.id, &u.email).await
+            {
+                warn!(?e, user_id = %u.id, "failed to re-issue verify-email on register");
+            }
+        }
     }
 
     Ok(Json(RegisterAck { status: "ok" }))
@@ -205,7 +228,7 @@ pub async fn login(
             failed_logins::FailedLoginReason::AccountPendingVerification,
         )
         .await?;
-        return Err(ApiError::Forbidden);
+        return Err(ApiError::EmailNotVerified);
     }
 
     // 2FA challenge if enabled.
