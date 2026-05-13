@@ -109,7 +109,7 @@ export function AuditLogPage() {
         <PageHead
           eyebrow="Admin · 03"
           title="Audit log"
-          sub={`${total.toLocaleString()} entries${filtersActive ? " (filtered)" : ""} · 180-day retention · CSV export honors filters`}
+          sub={`${total.toLocaleString()} entries${filtersActive ? " (filtered)" : ""} · retained indefinitely · IP + UA captured · CSV export honors filters`}
           right={
             <Button asChild variant="outline" size="sm">
               <a href={adminAuditCsvUrl(filters, 5000)} download="audit.csv">
@@ -213,10 +213,12 @@ export function AuditLogPage() {
               <table className="zv-table">
                 <thead>
                   <tr>
-                    <th className="w-[200px]">When</th>
+                    <th className="w-[180px]">When</th>
                     <th>Actor</th>
                     <th>Action</th>
                     <th>Target</th>
+                    <th className="w-[140px]">IP</th>
+                    <th>User-Agent</th>
                     <th>Metadata</th>
                   </tr>
                 </thead>
@@ -262,6 +264,21 @@ export function AuditLogPage() {
                           </button>
                         )}
                       </td>
+                      <td className="font-mono text-xs tabular-nums">
+                        {row.ip_prefix ? (
+                          row.ip_prefix.replace(/\/(32|128)$/, "")
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td
+                        className="text-muted-foreground max-w-[260px] truncate font-mono text-[11px]"
+                        title={row.user_agent ?? undefined}
+                      >
+                        {row.user_agent ?? (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
                       <td className="max-w-[280px]">
                         <CopyableCode
                           value={JSON.stringify(row.metadata)}
@@ -273,7 +290,7 @@ export function AuditLogPage() {
                   {items.length === 0 && (
                     <tr>
                       <td
-                        colSpan={5}
+                        colSpan={7}
                         className="text-muted-foreground py-8 text-center font-mono text-sm"
                       >
                         {filtersActive

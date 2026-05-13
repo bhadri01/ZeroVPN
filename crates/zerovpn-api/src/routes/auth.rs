@@ -15,30 +15,42 @@ use utoipa::ToSchema;
 use zerovpn_core::models::{User, UserRole, UserStatus};
 use zerovpn_db::repos::{audit, failed_logins, users};
 
-/// Best-effort client IP from the `X-Forwarded-For` header (Caddy populates
-/// this) or the `X-Real-IP` header. Returns `None` if neither is present.
-/// Reduces the IP to a /24 (IPv4) or /48 (IPv6) prefix to honor our no-logs
-/// stance — we only want to detect *change*, not pinpoint location.
-fn client_ip_prefix(headers: &HeaderMap) -> Option<ipnetwork::IpNetwork> {
+/// Best-effort full client IP from the `X-Forwarded-For` header (Caddy
+/// populates this) or the `X-Real-IP` header. Returns `None` if neither
+/// is present. Wrapped in `IpNetwork` as a `/32` (v4) or `/128` (v6)
+/// host prefix so it lands directly into the `INET`-typed columns
+/// (`audit_logs.ip_prefix`, `failed_logins.ip_prefix`, etc).
+///
+/// **Phase 2 / Stage A** — the previous implementation truncated to
+/// `/24` (v4) or `/48` (v6) to keep the recorded address coarse-grained.
+/// That truncation is gone: admins want to see the actual address. The
+/// column name still says `ip_prefix`; renaming is queued for a later
+/// schema-cleanup migration so this commit isn't a 50-file rename sweep.
+fn client_ip(headers: &HeaderMap) -> Option<ipnetwork::IpNetwork> {
     let raw = headers
         .get("x-forwarded-for")
         .or_else(|| headers.get("x-real-ip"))
         .and_then(|v| v.to_str().ok())?;
     // X-Forwarded-For can be a comma-separated list; the leftmost is the
-    // client, the rest are proxies. We only trust the leftmost as a coarse
-    // identifier — anything beyond that is hop-by-hop.
+    // client, the rest are proxies. We only trust the leftmost — anything
+    // beyond that is hop-by-hop and can be spoofed by intermediate hops.
     let first = raw.split(',').next()?.trim();
     let ip: IpAddr = first.parse().ok()?;
-    Some(match ip {
-        IpAddr::V4(v4) => {
-            let net = ipnetwork::Ipv4Network::new(v4, 24).ok()?.network();
-            ipnetwork::IpNetwork::V4(ipnetwork::Ipv4Network::new(net, 24).ok()?)
-        }
-        IpAddr::V6(v6) => {
-            let net = ipnetwork::Ipv6Network::new(v6, 48).ok()?.network();
-            ipnetwork::IpNetwork::V6(ipnetwork::Ipv6Network::new(net, 48).ok()?)
-        }
-    })
+    Some(ipnetwork::IpNetwork::from(ip))
+}
+
+/// Raw `User-Agent` header, lowercased and trimmed. Returned for storage
+/// in `failed_logins.user_agent` / `sessions.user_agent` — admins use it
+/// to spot brute-force tooling (`curl/...`, `python-requests/...`) and
+/// to correlate suspicious-login emails with the browser the user was
+/// actually on. Stored in plaintext, no longer hashed.
+fn client_user_agent(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get(axum::http::header::USER_AGENT)?.to_str().ok()?.trim();
+    if raw.is_empty() {
+        None
+    } else {
+        Some(raw.to_string())
+    }
 }
 
 use crate::{
@@ -77,6 +89,7 @@ pub struct RegisterAck {
 )]
 pub async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<RegisterBody>,
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
@@ -102,7 +115,8 @@ pub async fn register(
         )
         .await?;
 
-        audit::record(
+        let ua = client_user_agent(&headers);
+        audit::record_with_ua(
             &state.pool,
             audit::AuditEntry {
                 actor_user_id: Some(user_id),
@@ -110,8 +124,9 @@ pub async fn register(
                 target_type: Some("user"),
                 target_id: Some(user_id),
                 metadata: json!({ "role": role }),
-                ip_prefix: None,
+                ip_prefix: client_ip(&headers),
             },
+            ua.as_deref(),
         )
         .await?;
         info!(%user_id, ?role, "user registered");
@@ -195,6 +210,10 @@ pub async fn login(
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
     let email = body.email.trim().to_lowercase();
+    // Capture once; pass into every failed_logins::record call below so
+    // admins can correlate brute-force patterns by IP and user-agent.
+    let req_ip = client_ip(&headers);
+    let req_ua = client_user_agent(&headers);
 
     // Rate limit: more than 5 failed attempts in 15 minutes for this email
     // gets short-circuited.
@@ -203,8 +222,8 @@ pub async fn login(
         failed_logins::record(
             &state.pool,
             Some(&email),
-            None,
-            None,
+            req_ip,
+            req_ua.as_deref(),
             failed_logins::FailedLoginReason::RateLimited,
         )
         .await?;
@@ -221,8 +240,8 @@ pub async fn login(
             failed_logins::record(
                 &state.pool,
                 Some(&email),
-                None,
-                None,
+                req_ip,
+                req_ua.as_deref(),
                 failed_logins::FailedLoginReason::UnknownEmail,
             )
             .await?;
@@ -235,8 +254,8 @@ pub async fn login(
         failed_logins::record(
             &state.pool,
             Some(&email),
-            None,
-            None,
+            req_ip,
+            req_ua.as_deref(),
             failed_logins::FailedLoginReason::WrongPassword,
         )
         .await?;
@@ -247,8 +266,8 @@ pub async fn login(
         failed_logins::record(
             &state.pool,
             Some(&email),
-            None,
-            None,
+            req_ip,
+            req_ua.as_deref(),
             failed_logins::FailedLoginReason::AccountSuspended,
         )
         .await?;
@@ -259,8 +278,8 @@ pub async fn login(
         failed_logins::record(
             &state.pool,
             Some(&email),
-            None,
-            None,
+            req_ip,
+            req_ua.as_deref(),
             failed_logins::FailedLoginReason::AccountPendingVerification,
         )
         .await?;
@@ -293,8 +312,8 @@ pub async fn login(
             failed_logins::record(
                 &state.pool,
                 Some(&email),
-                None,
-                None,
+                req_ip,
+                req_ua.as_deref(),
                 failed_logins::FailedLoginReason::TotpFailed,
             )
             .await?;
@@ -319,19 +338,26 @@ pub async fn login(
 
     users::touch_last_login(&state.pool, user_with_secrets.id).await?;
 
-    // Suspicious-login detection: compare the /24 (or /48) prefix of the
-    // current request to the prefix of the last successful login. If the
-    // prefix differs and a previous one existed, fire an info email so the
-    // user can flag it. First-ever login establishes the baseline silently.
-    if let Some(new_prefix) = client_ip_prefix(&headers) {
+    // Suspicious-login detection: compare the current request's IP to the
+    // last successful login. If they differ and a previous one existed,
+    // fire an info email so the user can flag it. First-ever login
+    // establishes the baseline silently.
+    //
+    // Stage A — we now compare *full* IPs, not /24 prefixes. That makes
+    // the alert more sensitive (mobile / VPN reconnects with a new
+    // public IP will trip it) but matches the new full-logging policy.
+    // The repo helper is still named `swap_last_login_ip_prefix` and the
+    // column `users.last_login_ip_prefix` for now; rename queued for the
+    // Stage B schema-cleanup migration.
+    if let Some(new_ip) = req_ip {
         match users::swap_last_login_ip_prefix(
             &state.pool,
             user_with_secrets.id,
-            new_prefix,
+            new_ip,
         )
         .await
         {
-            Ok(Some(prev)) if prev != new_prefix => {
+            Ok(Some(prev)) if prev != new_ip => {
                 if let Some(mailer) = &state.mailer {
                     use askama::Template;
                     let when = OffsetDateTime::now_utc()
@@ -359,19 +385,20 @@ pub async fn login(
                         });
                     }
                 }
-                let _ = audit::record(
+                let _ = audit::record_with_ua(
                     &state.pool,
                     audit::AuditEntry {
                         actor_user_id: Some(user_with_secrets.id),
-                        action: "auth.new_ip_prefix",
+                        action: "auth.new_ip",
                         target_type: Some("user"),
                         target_id: Some(user_with_secrets.id),
                         metadata: json!({
                             "prev": prev.to_string(),
-                            "new": new_prefix.to_string(),
+                            "new": new_ip.to_string(),
                         }),
-                        ip_prefix: Some(new_prefix),
+                        ip_prefix: Some(new_ip),
                     },
+                    req_ua.as_deref(),
                 )
                 .await;
             }

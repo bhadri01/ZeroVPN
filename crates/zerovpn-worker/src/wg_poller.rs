@@ -20,14 +20,20 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 use zerovpn_db::{
     PgPool,
-    repos::{audit, bandwidth, devices, server_samples, servers},
+    repos::{audit, bandwidth, devices, peer_endpoint_history, server_samples, servers},
 };
 use zerovpn_wire::Event;
 
-#[derive(Default, Clone, Copy)]
+/// Per-pubkey in-memory state between poll ticks. Holds the cumulative
+/// rx/tx counters (so we can emit deltas) and the last-observed
+/// endpoint (so we only hit `devices` / `peer_endpoint_history` when it
+/// actually changes — per-tick polling at 1 s with hundreds of peers
+/// would otherwise hammer the DB pointlessly).
+#[derive(Default, Clone)]
 struct Cumulative {
     rx: u64,
     tx: u64,
+    endpoint: Option<String>,
 }
 
 pub fn enabled() -> bool {
@@ -114,21 +120,60 @@ async fn poll_once(
             continue;
         }
         let public_key = cols[0];
+        // cols[1] is the peer's pre-shared key (we don't capture it —
+        // it's a secret, not a log target). cols[2] is the public
+        // "ip:port" the peer last connected from; "(none)" when the
+        // peer hasn't completed a handshake yet.
+        let endpoint_raw = cols[2];
+        let endpoint_now: Option<String> = if endpoint_raw == "(none)" || endpoint_raw.is_empty() {
+            None
+        } else {
+            Some(endpoint_raw.to_string())
+        };
         let latest_handshake: i64 = cols[4].parse().unwrap_or(0);
         let rx_total: u64 = cols[5].parse().unwrap_or(0);
         let tx_total: u64 = cols[6].parse().unwrap_or(0);
 
-        let prev = last.get(public_key).copied().unwrap_or_default();
+        let prev = last.get(public_key).cloned().unwrap_or_default();
         // Counter reset (peer reconnect) → take the new value as the delta.
         let drx = if rx_total >= prev.rx { rx_total - prev.rx } else { rx_total };
         let dtx = if tx_total >= prev.tx { tx_total - prev.tx } else { tx_total };
-        last.insert(public_key.to_string(), Cumulative { rx: rx_total, tx: tx_total });
+        let endpoint_changed = endpoint_now.is_some() && endpoint_now != prev.endpoint;
+        last.insert(
+            public_key.to_string(),
+            Cumulative {
+                rx: rx_total,
+                tx: tx_total,
+                endpoint: endpoint_now.clone(),
+            },
+        );
 
         let Some((device_id, user_id, server_id)) = pk_index.get(public_key).copied() else {
             // Peer present in WG but not in our DB — possibly removed
             // mid-cycle. Skip.
             continue;
         };
+
+        // Persist the endpoint when it changed against our in-memory
+        // baseline. Two writes: the latest-only column on `devices`
+        // (single-row UPDATE) and an append to `peer_endpoint_history`
+        // (so admins can review every distinct endpoint the device has
+        // ever connected from). Both are best-effort — a transient DB
+        // error here must not stop the live stats broadcast below.
+        if endpoint_changed {
+            if let Some(ref ep) = endpoint_now {
+                if let Err(e) =
+                    devices::set_last_peer_endpoint(pool, device_id, ep, now).await
+                {
+                    warn!(?e, %device_id, "set_last_peer_endpoint failed");
+                }
+                if let Err(e) =
+                    peer_endpoint_history::record(pool, device_id, ep, now).await
+                {
+                    warn!(?e, %device_id, "peer_endpoint_history insert failed");
+                }
+            }
+        }
 
         // Update last_handshake_at if it changed. Also counts toward the
         // server's per-tick handshake delta (entries that handshook

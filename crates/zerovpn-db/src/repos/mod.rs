@@ -2,6 +2,7 @@ pub mod audit;
 pub mod bandwidth;
 pub mod devices;
 pub mod failed_logins;
+pub mod peer_endpoint_history;
 pub mod server_samples;
 pub mod servers;
 pub mod topology_positions;

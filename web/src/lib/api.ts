@@ -746,6 +746,13 @@ export interface AuditRow {
   target_type: string | null
   target_id: string | null
   metadata: unknown
+  /** Full client IP serialised as an `IpNetwork` ("203.0.113.42/32").
+   *  Phase 2 / Stage A — captured for audit rows written from a route
+   *  handler. `null` for worker/CLI-emitted rows. */
+  ip_prefix: string | null
+  /** Raw `User-Agent` header from the request that produced this audit
+   *  row. `null` for non-route-handler emitters. */
+  user_agent: string | null
   created_at: string
 }
 
@@ -795,6 +802,10 @@ export interface FailedLoginRow {
   id: number
   email_attempted: string | null
   reason: string
+  /** Full client IP serialised as an `IpNetwork` ("203.0.113.42/32"). */
+  ip_prefix: string | null
+  /** Raw User-Agent header from the failing request. */
+  user_agent: string | null
   attempted_at: string
 }
 

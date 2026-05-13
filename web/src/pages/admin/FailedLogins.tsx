@@ -35,7 +35,7 @@ export function FailedLoginsPage() {
         <PageHead
           eyebrow="Admin · 04"
           title="Failed logins"
-          sub="brute-force mitigation · rate-limit at 10/min/IP · /24 prefixes only"
+          sub="brute-force mitigation · rate-limit at 5/15min/email · full IP + UA retained"
         />
       </StaggerItem>
 
@@ -85,6 +85,8 @@ export function FailedLoginsPage() {
                 <th className="w-[180px]">When</th>
                 <th>Email</th>
                 <th>Reason</th>
+                <th className="w-[150px]">IP</th>
+                <th>User-Agent</th>
               </tr>
             </thead>
             <tbody>
@@ -101,12 +103,30 @@ export function FailedLoginsPage() {
                   <td>
                     {reasonPill(row.reason)}
                   </td>
+                  <td className="font-mono text-xs tabular-nums">
+                    {row.ip_prefix ? (
+                      // Strip the `/32` or `/128` suffix for the table cell
+                      // — the column type is INET so the API returns
+                      // "203.0.113.42/32" but the suffix is noise here.
+                      row.ip_prefix.replace(/\/(32|128)$/, "")
+                    ) : (
+                      <span className="text-muted-foreground">(unknown)</span>
+                    )}
+                  </td>
+                  <td
+                    className="text-muted-foreground max-w-[420px] truncate font-mono text-[11px]"
+                    title={row.user_agent ?? undefined}
+                  >
+                    {row.user_agent ?? (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
                 </tr>
               ))}
               {items.length === 0 && (
                 <tr>
                   <td
-                    colSpan={3}
+                    colSpan={5}
                     className="text-muted-foreground py-8 text-center font-mono text-sm"
                   >
                     No failed-login attempts yet.

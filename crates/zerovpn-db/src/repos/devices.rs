@@ -242,6 +242,30 @@ pub async fn pubkey_index(
         .collect())
 }
 
+/// Persist the most recently observed WG peer endpoint for a device.
+/// The caller (`wg_poller`) only calls this when the endpoint changed
+/// against the in-memory baseline, so the row touch is rare. Endpoint
+/// is stored as TEXT (carries `host:port`); see migration 15.
+pub async fn set_last_peer_endpoint(
+    pool: &PgPool,
+    device_id: Uuid,
+    endpoint: &str,
+    observed_at: time::OffsetDateTime,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        "UPDATE devices
+            SET last_peer_endpoint    = $2,
+                last_peer_endpoint_at = $3
+          WHERE id = $1",
+    )
+    .bind(device_id)
+    .bind(endpoint)
+    .bind(observed_at)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 /// Update last_handshake_at without churning rows when the value didn't change.
 pub async fn touch_handshake(
     pool: &PgPool,

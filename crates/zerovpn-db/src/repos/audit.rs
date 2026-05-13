@@ -14,10 +14,29 @@ pub struct AuditEntry<'a> {
     pub ip_prefix: Option<IpNetwork>,
 }
 
+/// Insert an audit row with no `user_agent` captured. Most call sites
+/// don't have a `HeaderMap` in scope (worker tasks, CLI commands,
+/// internal state transitions) and write `NULL` into the column. Route
+/// handlers that *do* have the request headers should call
+/// [`record_with_ua`] instead.
 pub async fn record(pool: &PgPool, e: AuditEntry<'_>) -> sqlx::Result<()> {
+    record_with_ua(pool, e, None).await
+}
+
+/// Insert an audit row with the request's `User-Agent` captured.
+/// Phase 2 / Stage A — populates the new `audit_logs.user_agent`
+/// column. Existing call sites continue to use [`record`] which passes
+/// `None` here; flows that already have the header in scope (auth,
+/// password-reset, totp, account-management) migrate over piecemeal.
+pub async fn record_with_ua(
+    pool: &PgPool,
+    e: AuditEntry<'_>,
+    user_agent: Option<&str>,
+) -> sqlx::Result<()> {
     sqlx::query(
-        r#"INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, metadata, ip_prefix)
-           VALUES ($1, $2, $3, $4, $5, $6)"#,
+        r#"INSERT INTO audit_logs
+              (actor_user_id, action, target_type, target_id, metadata, ip_prefix, user_agent)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
     )
     .bind(e.actor_user_id)
     .bind(e.action)
@@ -25,6 +44,7 @@ pub async fn record(pool: &PgPool, e: AuditEntry<'_>) -> sqlx::Result<()> {
     .bind(e.target_id)
     .bind(e.metadata)
     .bind(e.ip_prefix)
+    .bind(user_agent)
     .execute(pool)
     .await?;
     Ok(())

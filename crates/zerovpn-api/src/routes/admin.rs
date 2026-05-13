@@ -1056,6 +1056,15 @@ pub struct AuditRow {
     pub target_type: Option<String>,
     pub target_id: Option<Uuid>,
     pub metadata: serde_json::Value,
+    /// Full client IP serialised as `IpNetwork` ("203.0.113.42/32").
+    /// Stage A — full address, no longer /24-truncated. Column name
+    /// is still `ip_prefix` for back-compat; rename queued for Stage B.
+    #[schema(value_type = Option<String>, example = "203.0.113.42/32")]
+    pub ip_prefix: Option<IpNetwork>,
+    /// Raw `User-Agent` header captured when the audit row was written.
+    /// `NULL` for audit rows recorded outside of a route handler
+    /// (worker tasks, CLI actions, internal state transitions).
+    pub user_agent: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 }
@@ -1106,7 +1115,8 @@ pub async fn list_audit(
     .fetch_one(&state.pool)
     .await?;
     let items: Vec<AuditRow> = sqlx::query_as(
-        r#"SELECT id, actor_user_id, action, target_type, target_id, metadata, created_at
+        r#"SELECT id, actor_user_id, action, target_type, target_id, metadata,
+                  ip_prefix, user_agent, created_at
              FROM audit_logs
             WHERE ($3::TEXT IS NULL OR action        = $3)
               AND ($4::UUID IS NULL OR actor_user_id = $4)
@@ -1137,6 +1147,14 @@ pub struct FailedLoginRow {
     pub id: i64,
     pub email_attempted: Option<String>,
     pub reason: zerovpn_db::repos::failed_logins::FailedLoginReason,
+    /// Full client IP (Phase 2 / Stage A) — column is still named
+    /// `ip_prefix` for back-compat; semantically a `/32` or `/128` host
+    /// network now. Surfaced as a string so the OpenAPI consumer doesn't
+    /// have to know IpNetwork's serde form.
+    #[schema(value_type = Option<String>, example = "203.0.113.42/32")]
+    pub ip_prefix: Option<IpNetwork>,
+    /// Raw `User-Agent` header from the failing request. Plaintext.
+    pub user_agent: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub attempted_at: OffsetDateTime,
 }
@@ -1168,7 +1186,8 @@ pub async fn list_audit_csv(
 ) -> ApiResult<axum::response::Response> {
     let limit = q.limit.clamp(1, 5000);
     let items: Vec<AuditRow> = sqlx::query_as(
-        r#"SELECT id, actor_user_id, action, target_type, target_id, metadata, created_at
+        r#"SELECT id, actor_user_id, action, target_type, target_id, metadata,
+                  ip_prefix, user_agent, created_at
              FROM audit_logs
             WHERE ($2::TEXT IS NULL OR action        = $2)
               AND ($3::UUID IS NULL OR actor_user_id = $3)
@@ -1192,8 +1211,18 @@ pub async fn list_audit_csv(
     let mut buf = Vec::with_capacity(64 * items.len());
     {
         let mut wtr = csv::Writer::from_writer(&mut buf);
-        wtr.write_record(["id", "actor_user_id", "action", "target_type", "target_id", "metadata", "created_at"])
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        wtr.write_record([
+            "id",
+            "actor_user_id",
+            "action",
+            "target_type",
+            "target_id",
+            "metadata",
+            "ip",
+            "user_agent",
+            "created_at",
+        ])
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
         for r in items {
             wtr.write_record([
                 r.id.to_string(),
@@ -1202,6 +1231,8 @@ pub async fn list_audit_csv(
                 r.target_type.unwrap_or_default(),
                 r.target_id.map(|t| t.to_string()).unwrap_or_default(),
                 r.metadata.to_string(),
+                r.ip_prefix.map(|i| i.to_string()).unwrap_or_default(),
+                r.user_agent.unwrap_or_default(),
                 r.created_at.unix_timestamp().to_string(),
             ])
             .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1297,7 +1328,12 @@ pub async fn list_failed_logins(
             .fetch_one(&state.pool)
             .await?;
     let items: Vec<FailedLoginRow> = sqlx::query_as(
-        r#"SELECT id, email_attempted::TEXT AS email_attempted, reason, attempted_at
+        r#"SELECT id,
+                  email_attempted::TEXT AS email_attempted,
+                  reason,
+                  ip_prefix,
+                  user_agent,
+                  attempted_at
              FROM failed_logins
             ORDER BY id DESC
             LIMIT $1 OFFSET $2"#,
