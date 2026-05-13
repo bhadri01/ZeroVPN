@@ -33,6 +33,63 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Phase 2 / Stage A — full logging system shipped (2026-05-13)
+
+**Implementation of the policy decision recorded below.** Stage A is the contained subset: every retention/anonymization rule that was suppressing operationally-useful data has been removed; full client IPs and User-Agent strings are now captured on auth flows; WireGuard peer endpoints are captured (the `wg show dump` parser previously skipped this column entirely); the admin UI surfaces all of it. Public landing copy is honest about what's retained.
+
+**Migrations**
+- `00000000000014_full_logging_stage_a.sql` — rename `failed_logins.user_agent_hash` → `user_agent`, `sessions.user_agent_hash` → `user_agent` (type stays `TEXT`; only the application contract changes — plaintext instead of SHA-256).
+- `00000000000015_peer_endpoints.sql` — `devices.last_peer_endpoint TEXT` + `last_peer_endpoint_at TIMESTAMPTZ` (latest only, for the device-detail view); new append-only `peer_endpoint_history` table for the full per-device list, with `(device_id, observed_at DESC)` and `(endpoint, observed_at DESC)` indexes so admins can also answer "which devices have ever connected from this endpoint?". Stored as `TEXT` (not `INET`) because WG endpoints carry a port and IPv6 endpoints arrive in bracket form.
+- `00000000000016_audit_user_agent.sql` — `audit_logs.user_agent TEXT`. Populated through a parallel `audit::record_with_ua(...)` helper rather than sweeping every one of the ~33 `AuditEntry { ... }` literals — sites opt in piecemeal as their handlers grow `HeaderMap` access.
+
+**Retention purger** (`crates/zerovpn-worker/src/retention.rs`)
+- Dropped the **audit-log IP anonymization** pass (was nulling `ip_prefix` at 30 days).
+- Dropped the **`failed_logins` purge** (was deleting at 30 days).
+- Dropped the **`ZEROVPN_SAMPLE_RETENTION_DAYS`** env-var consultation for `bandwidth_samples`.
+- Dropped the **`ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS`** env-var consultation for `server_samples`.
+- Kept: verification-token expiry at 24 h, soft-deleted-user hard-purge at 30 d, pending-verification-account purge at 7 d — these reclaim storage for rows that have no operational utility once their TTL passes.
+
+**Auth flow** (`crates/zerovpn-api/src/routes/auth.rs`)
+- `client_ip_prefix()` → `client_ip()`. The `/24` (v4) / `/48` (v6) truncation is gone; returns the full address wrapped as a `/32`/`/128` host `IpNetwork`. INET columns accept it unchanged. Column names still say `ip_prefix`; rename is queued for the Stage B schema-cleanup migration to avoid a 50-file sweep on top of this change.
+- New `client_user_agent()` helper reads `User-Agent` header in plaintext.
+- Every `failed_logins::record(...)` site in `login()` now passes IP + UA (was `None, None`). Reasons covered: rate-limited, unknown-email, wrong-password, account-suspended, account-pending-verification, totp-failed.
+- `register()` gained `HeaderMap` and records IP + UA via `audit::record_with_ua` on the `user.registered` row.
+- Suspicious-login detection now compares full IPs against `users.last_login_ip_prefix`. Strictly more sensitive than the previous /24 baseline — mobile / VPN reconnects on a new public IP will trip the alert email. Matches the new full-logging posture.
+
+**WG poller** (`crates/zerovpn-worker/src/wg_poller.rs`)
+- The `Cumulative` struct now also tracks the last-observed endpoint per pubkey. Per-tick polling at 1 s with hundreds of peers would otherwise hammer the DB; the in-memory baseline means writes happen only when the endpoint changes.
+- Parser reads `cols[2]` (was explicitly skipped). `"(none)"` and empty values normalize to `None`. On change: `devices::set_last_peer_endpoint` updates the latest-only column; `peer_endpoint_history::record` appends a row.
+
+**Audit repo** (`crates/zerovpn-db/src/repos/audit.rs`)
+- New `record_with_ua(pool, entry, user_agent)` writes all seven columns including `user_agent`.
+- Existing `record(pool, entry)` delegates with `None` so every current call site continues working unchanged.
+- `AuditRow` (admin response shape) gained `ip_prefix: Option<IpNetwork>` and `user_agent: Option<String>`. Both `list_audit` and `list_audit_csv` SELECTs pull them; CSV writer adds two new columns (`ip`, `user_agent`).
+
+**Admin surfaces**
+- `pages/admin/AuditLog.tsx` — two new columns (IP, User-Agent). Subtitle reframed from "180-day retention" to "retained indefinitely · IP + UA captured".
+- `pages/admin/FailedLogins.tsx` — two new columns. Subtitle reframed from "/24 prefixes only" to "full IP + UA retained".
+- `pages/admin/UserDetail.tsx` — devices table gained a clickable **Last endpoint** column. Clicking opens a new `EndpointHistoryDialog` that fetches `/admin/devices/{id}/endpoint-history` lazily and renders every distinct WG endpoint observed for the device, newest first. Capped at 200 rows with an overflow notice.
+- `GET /admin/devices/{id}/endpoint-history` backend route returns `Vec<EndpointRow>` (`id`, `endpoint`, `observed_at`).
+- `AdminUserDevice` shape extended with `last_peer_endpoint` + `last_peer_endpoint_at`. The user-detail handler runs a dedicated SQL pulling these columns rather than going through `Device::FromRow` — sidesteps a cascade of SELECT rewrites for an admin-only shape.
+
+**Public copy** (`pages/public/Landing.tsx` + `README.md`)
+- Hero eyebrow `"Self-hosted · WireGuard · No-logs"` → `"... · Full admin visibility"`.
+- Hero paragraph `"Live telemetry. No traffic logs. No SaaS in the path."` → `"Live telemetry. Full operational logs for admins. No third-party SaaS in the data path."`
+- Persona `P/03` reframed from `"Privacy operator"` / `"You don't want anyone — even us — to see your traffic"` / `"Zero traffic-content logging"` to `"Compliance operator"` / `"You need to answer 'who did what, from where' on demand"` with bullets for sign-in trail, WG peer endpoint history, and self-hosted KEK encryption.
+- Feature card `04.3` `"Privacy by default"` → `"Self-hosted security"`. Body retained the still-true claim about no DPI / no traffic-content inspection.
+- Security `09.4` updated to `"5/15min/email rate-limit, full IP + UA retained"` (was the misleading `"10/min/IP rate-limit, /24 prefix tracking"`).
+- Security `09.6` `"Audit · 180 days"` → `"Full audit trail"` with indefinite retention.
+- Roadmap shipped item: `"180-day audit"` → `"full audit trail (no TTL)"`.
+- **FAQ: the big one.** `"Do you keep traffic logs?"` (answered `"No"`) → `"What does ZeroVPN log?"` with an honest enumeration of every retained surface (account events, failed-logins with UA + IP, admin actions, per-device WG handshake metadata, peer endpoint history) and the carve-outs (no DPI, no DNS-query logging, no destination-IP logging). Ends with the GDPR/CCPA caveat about bounded retention + erasure workflows.
+- CTA `"Stop renting your privacy"` → `"Own your infrastructure"`. Subhead reframes the value prop as "you hold the data and you set the retention".
+- README tagline dropped `"privacy-first (no-logs)"` claim and points readers at this CHANGELOG entry.
+
+**Carry-over into Stage B**
+- Schema-cleanup migration renaming `audit_logs.ip_prefix` → `ip`, `failed_logins.ip_prefix` → `ip`, `users.last_login_ip_prefix` → `last_login_ip`, and the matching repo helper `swap_last_login_ip_prefix`. Deliberately deferred so it could bundle with the `access_logs` migration (one operational disruption, not two).
+- Connection-history surface for individual devices — today the `device.online` / `device.offline` events are written to `audit_logs` by the WG poller; Stage B promotes them to a proper typed `connection_events` table and gives them a per-device timeline tab on the new `/admin/devices/:id` page.
+
+**Verification** — `cargo check --workspace` clean across all 14 crates. `npx tsc --noEmit` clean in `web/`. No new unit tests added; the path is exercised by the existing smoke suite once `make migrate && docker compose up -d` brings up a stack with the three new migrations applied.
+
 ### Policy reversal — full logging system (2026-05-13)
 
 **The "no-log VPN" posture is being abandoned. The system will now retain comprehensive operational logs, surfaced to admins.** This entry records the policy decision; the implementation is staged in `TODO.md` under "Phase 2 — Full logging system" and lands incrementally.

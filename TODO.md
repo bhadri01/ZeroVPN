@@ -212,23 +212,27 @@ These are minor polish items; the core v1 product is done.
 
 **Staging.** Stages A and B are toggles + small code changes against the existing surface; they can ship together. Stage C needs new container-level infrastructure (logging resolver, netfilter export) and is sized as its own milestone. Stage D is the compliance counterweight — it must ship alongside C, not after.
 
-### Stage A — Stop suppressing what we already capture
+### Stage A — Stop suppressing what we already capture — ✅ shipped 2026-05-13
 
-- [ ] **Drop audit-log IP anonymization** — `crates/zerovpn-worker/src/retention.rs` nulls `audit_logs.ip_prefix` at 30 days; remove that pass.
-- [ ] **Widen IP storage from /24 prefix to full address** — every call site that builds an `IpNetwork` from the request IP for audit / failed_logins / sessions stores the full host address. Schema column type already accepts it (INET); only the prefix-truncation helper changes.
-- [ ] **Stop purging `failed_logins` at 30 days** — retention purger removes rows >30 d; delete the rule.
-- [ ] **Store user-agent strings in plaintext** — sessions + failed_logins store SHA-256 hashes today. Add `user_agent TEXT`, drop the hash column on its own migration, surface in admin tables.
-- [ ] **Capture WireGuard peer endpoint** — `wg_poller` parses `wg show <iface> dump` and explicitly skips the `endpoint` column (cols[1]). Capture it, persist as `devices.last_peer_endpoint INET` + a `peer_endpoint_history` append-only table for handshake-to-handshake changes.
-- [ ] **Make `bandwidth_samples` retention indefinite by default explicit** — remove the env-var fallback `ZEROVPN_SAMPLE_RETENTION_DAYS`; samples are always retained. (Operators who want bounded retention configure it under Stage D.)
-- [ ] **Landing copy + privacy policy** — `/` must stop saying "no logs". Privacy policy enumerates every log table + retention. Prerequisite for any of the above shipping to a live deployment.
+- [x] **Drop audit-log IP anonymization** — anonymization pass removed from `retention.rs`. IPs now retained for the lifetime of the row.
+- [x] **Widen IP storage from /24 prefix to full address** — `client_ip_prefix()` → `client_ip()` in `routes/auth.rs`; returns `IpNetwork::from(IpAddr)` as `/32`/`/128`. The INET columns accept it unchanged; column names left as-is.
+- [x] **Stop purging `failed_logins` at 30 days** — retention rule deleted.
+- [x] **Store user-agent strings in plaintext** — `failed_logins.user_agent_hash` and `sessions.user_agent_hash` renamed to `user_agent` (migration 14); `audit_logs.user_agent` added (migration 16); `audit::record_with_ua` helper lets opted-in routes populate it without sweeping the 33 existing `AuditEntry { ... }` literals.
+- [x] **Capture WireGuard peer endpoint** — `wg_poller` now reads `cols[2]`; `devices.last_peer_endpoint` + `peer_endpoint_history` table added (migration 15). On-change detection via in-memory baseline so per-tick polling doesn't hammer the DB.
+- [x] **Make `bandwidth_samples` retention indefinite by default explicit** — `ZEROVPN_SAMPLE_RETENTION_DAYS` + `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS` env vars no longer consulted; samples always retained. Operator-tunable retention returns in Stage D.
+- [x] **Landing copy + privacy policy** — every "no-log" claim on `pages/public/Landing.tsx` rewritten honestly; FAQ "Do you keep traffic logs?" replaced with "What does ZeroVPN log?" enumerating every retained surface and the carve-outs (no DPI / DNS / destination). README tagline updated.
+
+**Stage A debt carried into Stage B:** schema-cleanup migration that renames `*.ip_prefix` → `*.ip` and `users.last_login_ip_prefix` → `last_login_ip` (the column names still say "prefix" but store full IPs). Bundle this with the `access_logs` migration so it's one disruption, not two.
 
 ### Stage B — New schema, new admin surfaces
 
-- [ ] **Session log** — append-only `session_events` table: `user_id`, `event` ∈ `{login, logout, idle_timeout, suspicious_login, password_change, totp_enable, totp_disable, impersonation_start, impersonation_end}`, `ip`, `user_agent`, `created_at`. Surface as `pages/admin/Sessions.tsx`.
+- [ ] **Session events table** — append-only `session_events`: `user_id`, `event` ∈ `{login, logout, idle_timeout, suspicious_login, password_change, totp_enable, totp_disable, impersonation_start, impersonation_end}`, `ip`, `user_agent`, `created_at`. Surface as `pages/admin/Sessions.tsx`. Highest admin value, cheapest to ship — recommended first.
+- [ ] **Connection events table** — promote the `device.online` / `device.offline` audit rows the WG poller already writes into a proper typed `connection_events` table carrying peer endpoint snapshot + session duration on disconnect. Drives a per-device "connection history" tab on the new admin device-detail page.
 - [ ] **Per-request access log** — middleware records `method`, `path`, `status`, `latency_ms`, `user_id`, `ip`, `user_agent`, `request_id` for every authenticated request. New `access_logs` table; partition monthly like `bandwidth_samples` (high volume).
-- [ ] **Per-user activity timeline** — `/admin/users/{id}` adds a unified timeline merging audit + session + access-log rows. New repo helper that fans out across the three tables.
+- [ ] **Schema-cleanup migration** — rename `audit_logs.ip_prefix` → `ip`, `failed_logins.ip_prefix` → `ip`, `users.last_login_ip_prefix` → `last_login_ip`; rename `swap_last_login_ip_prefix` helper to match. Bundle with the `access_logs` migration so it's one disruption.
+- [ ] **`/admin/devices/{id}` page** — admins currently drill down via the user-detail page. A real device-detail page is the natural home for connection history, endpoint history, bandwidth chart, and the device-targeted audit timeline.
+- [ ] **Per-user activity timeline** — `/admin/users/{id}` adds a unified timeline merging audit + session + access-log + connection rows. New repo helper that fans out across the tables.
 - [ ] **Admin search by IP / user-agent / endpoint** — backed by indexes on the new columns. Integrate with `pages/admin/Finder.tsx` so "find every account that logged in from 1.2.3.4" is one query.
-- [ ] **Connection log** — append-only `connection_events` table tracking online/offline transitions per device with peer endpoint, handshake time, session duration on disconnect. Drives a per-device "connection history" tab on the device-detail page.
 
 ### Stage C — Network-level capture (new infrastructure)
 
@@ -285,3 +289,41 @@ All Phase 1A foundation items above are done. Phase 1A milestone cut at commit `
 - Smoke test 11/11 ✅
 - ZeroMQ end-to-end: worker PUB → api SUB → log
 - Two git commits, AGPL-3.0 LICENSE, AGENTIC CHANGELOG, CI workflow stub
+
+---
+
+## Completed (Phase 2 / Stage A — 2026-05-13)
+
+The "no-log VPN" posture is reversed. Highlights rolled into [CHANGELOG.md](CHANGELOG.md) under the `[Unreleased]` "Phase 2 / Stage A — full logging system shipped" entry.
+
+**Migrations shipped:**
+- `00000000000014_full_logging_stage_a.sql` — rename `failed_logins.user_agent_hash` → `user_agent`, `sessions.user_agent_hash` → `user_agent`
+- `00000000000015_peer_endpoints.sql` — `devices.last_peer_endpoint TEXT` + `last_peer_endpoint_at TIMESTAMPTZ`, new `peer_endpoint_history` append-only table with two indexes
+- `00000000000016_audit_user_agent.sql` — `audit_logs.user_agent TEXT`
+
+**Retention purger** ([crates/zerovpn-worker/src/retention.rs](crates/zerovpn-worker/src/retention.rs)) — 4 rules deleted (audit-log IP anonymization, `failed_logins` purge, both bandwidth-sample env-controlled retentions). Survivors: verification-token expiry, soft-deleted-user purge, pending-verification-account purge.
+
+**Auth flow** ([crates/zerovpn-api/src/routes/auth.rs](crates/zerovpn-api/src/routes/auth.rs)) — `client_ip()` + `client_user_agent()` helpers; every `failed_logins::record(...)` call in `login()` now passes IP + UA; `register()` accepts `HeaderMap` and records IP + UA via `audit::record_with_ua`; suspicious-login detection compares full IPs (more sensitive than the previous /24 baseline).
+
+**WG poller** ([crates/zerovpn-worker/src/wg_poller.rs](crates/zerovpn-worker/src/wg_poller.rs)) — `Cumulative` struct gained `endpoint: Option<String>`; parser now reads `cols[2]`; on-change detection writes `devices.last_peer_endpoint` + appends to `peer_endpoint_history`.
+
+**Audit API** ([crates/zerovpn-db/src/repos/audit.rs](crates/zerovpn-db/src/repos/audit.rs)) — new `record_with_ua(pool, entry, user_agent)` writes the UA column; existing `record(pool, entry)` delegates with `None`. Avoids the 33-call-site struct-literal sweep; routes opt in piecemeal.
+
+**Admin surfaces:**
+- `pages/admin/AuditLog.tsx` — new IP + User-Agent columns; CSV export carries them too; subtitle no longer claims "180-day retention"
+- `pages/admin/FailedLogins.tsx` — new IP + User-Agent columns; subtitle no longer claims "/24 prefixes only"
+- `pages/admin/UserDetail.tsx` — devices table gained a clickable "Last endpoint" column; click opens `EndpointHistoryDialog` showing every distinct `host:port` observed for the device (newest first, capped at 200)
+- `GET /admin/devices/{id}/endpoint-history` endpoint backing the dialog
+
+**Public copy** — every "no-log" claim on `pages/public/Landing.tsx` rewritten:
+- Hero eyebrow / paragraph: "Full admin visibility" replaces "No-logs" / "No traffic logs"
+- Persona P/03 reframed from "Privacy operator" to "Compliance operator"
+- Security 09.4: "5/15min/email rate-limit, full IP + UA retained" (was "/24 prefix tracking")
+- Security 09.6: "Full audit trail" with indefinite retention (was "Audit · 180 days")
+- FAQ: "Do you keep traffic logs?" → **"What does ZeroVPN log?"** with the full enumeration
+- CTA: "Stop renting your privacy" → "Own your infrastructure"
+- README tagline dropped "(no-logs)"; points readers at the CHANGELOG policy entry
+
+**Build status** — `cargo check --workspace` clean. `npx tsc --noEmit` clean.
+
+**Deferred to Stage B:** schema-cleanup migration renaming the misleading `*.ip_prefix` columns to `*.ip` (currently they store full IPs but the name still says "prefix"). Bundling with the `access_logs` migration keeps it to one operational disruption.

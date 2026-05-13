@@ -52,15 +52,18 @@
     /* Swiss = sharp. 2px base maps to design --r-1. */
     --radius: 2px;
 
-    /* sidebar surface = paper bg, with surface-2 hover state */
-    --sidebar: #fafaf7;
-    --sidebar-foreground: #2a2a2a;
+    /* sidebar surface — stays dark in *both* themes so the chrome reads
+       as one continuous "shell" against the paper-light content area.
+       Mirrors the `.dark` block below; if you ever want a true light
+       sidebar back, swap these for paper tokens (#fafaf7 / #2a2a2a / …).  */
+    --sidebar: #0a0a0a;
+    --sidebar-foreground: #d8d8d0;
     --sidebar-primary: #c6ff3d;
     --sidebar-primary-foreground: #0a0a0a;
-    --sidebar-accent: #f7f7f3;
-    --sidebar-accent-foreground: #0a0a0a;
-    --sidebar-border: #e2e2dc;
-    --sidebar-ring: #0a0a0a;
+    --sidebar-accent: #161616;
+    --sidebar-accent-foreground: #f5f5f0;
+    --sidebar-border: #1f1f1f;
+    --sidebar-ring: #f5f5f0;
 
     /* Semantic status palette — used by StatusPill, never reuse --primary
        for "online" etc. Mapped to the Swiss ok/warn/paused/err anchors. */

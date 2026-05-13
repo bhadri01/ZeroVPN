@@ -250,7 +250,7 @@ export const resetPassword = (token: string, new_password: string) =>
     body: JSON.stringify({ token, new_password }),
   })
 
-/** Authenticated change-password. Used by the in-app Settings → Security
+/** Authenticated change-password. Used by the in-app Settings → Change password
  *  panel — keeps the current session alive while invalidating every
  *  other session for this user. */
 export const changePassword = (

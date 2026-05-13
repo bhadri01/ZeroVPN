@@ -67,7 +67,14 @@ export function AppSidebar() {
   const collapsed = state === "collapsed"
 
   return (
-    <Sidebar collapsible="icon" className="border-r">
+    // `dark` is applied to the sidebar root unconditionally so the
+    // sidebar surface stays dark even when the app is in light mode.
+    // Tailwind's `dark` variant (see index.css: `@custom-variant dark
+    // (&:is(.dark *))`) makes every descendant resolve text-foreground /
+    // border-border / etc against the dark palette — without this,
+    // `text-foreground` inside ServerStats would be #0a0a0a on a dark
+    // background and become invisible.
+    <Sidebar collapsible="icon" className="dark border-r">
       <SidebarHeader
         className={cn(
           "border-sidebar-border h-12 justify-center border-b py-0",

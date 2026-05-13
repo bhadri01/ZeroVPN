@@ -233,10 +233,6 @@ export function SecuritySections() {
         )}
       </Panel>
 
-      <Panel title="Password" sub="argon2id · m=64MB · t=3 · p=4">
-        <ChangePasswordForm />
-      </Panel>
-
       <Panel
         title="Active sessions"
         sub="Sign out of every other browser / device this account is open in"
@@ -300,7 +296,7 @@ function SignOutEverywherePanel() {
   )
 }
 
-function ChangePasswordForm() {
+export function ChangePasswordForm() {
   const [current, setCurrent] = useState("")
   const [next, setNext] = useState("")
   const [confirm, setConfirm] = useState("")
