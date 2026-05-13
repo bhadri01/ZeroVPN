@@ -43,7 +43,7 @@ fn client_ip_prefix(headers: &HeaderMap) -> Option<ipnetwork::IpNetwork> {
 
 use crate::{
     error::{ApiError, ApiResult},
-    extractors::auth::{CurrentUser, SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_USER_ID},
+    extractors::auth::{CurrentUser, SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_REAL_USER_ID, SESSION_KEY_USER_ID},
     routes::dto::StatusAck,
     state::AppState,
 };
@@ -166,6 +166,13 @@ pub struct PublicUser {
     /// so the frontend can auto-detect 2FA status on the Security page
     /// instead of guessing.
     pub totp_enabled: bool,
+    /// True when the current session is an admin impersonating this account.
+    #[serde(default)]
+    pub is_impersonated: bool,
+    /// Email of the admin who initiated impersonation. Only present when
+    /// `is_impersonated` is true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub impersonator_email: Option<String>,
 }
 
 #[utoipa::path(
@@ -273,6 +280,8 @@ pub async fn login(
                         email: user_with_secrets.email.clone(),
                         role: user_with_secrets.role,
                         totp_enabled: user_with_secrets.totp_enabled,
+                        is_impersonated: false,
+                        impersonator_email: None,
                     },
                     must_change_password: user_with_secrets.must_change_password,
                     totp_required: true,
@@ -382,6 +391,8 @@ pub async fn login(
             email: user.email,
             role: user.role,
             totp_enabled: user.totp_enabled,
+            is_impersonated: false,
+            impersonator_email: None,
         },
         must_change_password: must_change,
         totp_required: false,
@@ -445,13 +456,32 @@ pub async fn logout(session: Session) -> ApiResult<impl IntoResponse> {
     ),
     security(("session_cookie" = [])),
 )]
-pub async fn me(CurrentUser(user): CurrentUser) -> impl IntoResponse {
-    Json(PublicUser {
+pub async fn me(
+    State(state): State<AppState>,
+    session: Session,
+    CurrentUser(user): CurrentUser,
+) -> ApiResult<impl IntoResponse> {
+    let real_user_id: Option<uuid::Uuid> = session
+        .get(SESSION_KEY_REAL_USER_ID)
+        .await
+        .unwrap_or(None);
+
+    let impersonator_email = if let Some(rid) = real_user_id {
+        users::find_by_id(&state.pool, rid)
+            .await?
+            .map(|u| u.email)
+    } else {
+        None
+    };
+
+    Ok(Json(PublicUser {
         id: user.id,
         email: user.email,
         role: user.role,
         totp_enabled: user.totp_enabled,
-    })
+        is_impersonated: impersonator_email.is_some(),
+        impersonator_email,
+    }))
 }
 
 #[allow(dead_code)]

@@ -75,6 +75,11 @@ export interface PublicUser {
    *  `/me` and the login / verify-email responses so the Security
    *  page can auto-detect 2FA state without an extra round-trip. */
   totp_enabled: boolean
+  /** True when the active session is an admin impersonating this account. */
+  is_impersonated?: boolean
+  /** Email of the admin who initiated impersonation. Only present when
+   *  `is_impersonated` is true. */
+  impersonator_email?: string
 }
 
 export interface LoginResponse {
@@ -85,6 +90,7 @@ export interface LoginResponse {
 
 export interface PublicDevice {
   id: string
+  user_id: string
   name: string
   os: DeviceOs
   public_key: string
@@ -517,6 +523,55 @@ export const adminListUsers = (q?: string, limit = 50, offset = 0) => {
   )
 }
 
+// ── User detail (admin) ──────────────────────────────────────────────
+// Bundles core user fields, quota state, the device list, and recent
+// audit entries that target this user. One request hydrates the whole
+// admin user-detail page.
+
+export interface AdminUserDetail {
+  id: string
+  email: string
+  role: UserRole
+  status: UserStatus
+  totp_enabled: boolean
+  must_change_password: boolean
+  created_at: string
+  last_login_at: string | null
+  email_verified_at: string | null
+  password_changed_at: string
+  current_month_bytes: number
+  monthly_byte_cap: number | null
+  quota_resets_at: string | null
+  device_count: number
+}
+
+export interface AdminUserDevice {
+  id: string
+  name: string
+  os: DeviceOs
+  status: DeviceStatus
+  allocated_ip: string
+  dns_names: string[]
+  last_handshake_at: string | null
+  created_at: string
+}
+
+export interface AdminUserActivity {
+  id: number
+  action: string
+  metadata: unknown
+  created_at: string
+}
+
+export interface AdminUserDetailResponse {
+  user: AdminUserDetail
+  devices: AdminUserDevice[]
+  activity: AdminUserActivity[]
+}
+
+export const adminGetUserDetail = (id: string) =>
+  apiFetch<AdminUserDetailResponse>(`/admin/users/${id}`)
+
 export interface AdminStats {
   total: number
   active: number
@@ -644,3 +699,16 @@ export const adminRotateServerKeys = (id: string) =>
     wg0_conf_rewritten: boolean
     warning: string
   }>(`/admin/servers/${id}/rotate-keys`, { method: "POST" })
+
+/** Admin-only: every non-revoked device across the fleet, each row
+ *  carrying its owning `user_id`. Powers the admin topology view. */
+export const adminListDevices = () =>
+  apiFetch<PublicDevice[]>("/admin/devices")
+
+export const adminImpersonateUser = (id: string) =>
+  apiFetch<{ status: string }>(`/admin/users/${id}/impersonate`, {
+    method: "POST",
+  })
+
+export const adminStopImpersonation = () =>
+  apiFetch<{ status: string }>("/admin/impersonate/stop", { method: "POST" })

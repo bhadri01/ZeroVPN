@@ -236,6 +236,7 @@ async fn main() -> Result<()> {
                 .route("/admin/stats", get(routes::admin::stats))
                 .route("/admin/bandwidth", get(routes::admin::fleet_bandwidth))
                 .route("/admin/users", get(routes::admin::list_users))
+                .route("/admin/users/{id}", get(routes::admin::user_detail))
                 .route(
                     "/admin/users/{id}/status",
                     axum::routing::put(routes::admin::set_user_status),
@@ -251,6 +252,7 @@ async fn main() -> Result<()> {
                     "/admin/users/{id}/quota",
                     axum::routing::put(routes::admin::set_user_quota),
                 )
+                .route("/admin/devices", get(routes::admin::list_devices))
                 .route("/admin/servers", get(routes::admin::list_servers))
                 .route(
                     "/admin/servers/{id}",
@@ -259,6 +261,14 @@ async fn main() -> Result<()> {
                 .route(
                     "/admin/servers/{id}/rotate-keys",
                     post(routes::admin::rotate_server_keys),
+                )
+                .route(
+                    "/admin/users/{id}/impersonate",
+                    post(routes::admin::impersonate_user),
+                )
+                .route(
+                    "/admin/impersonate/stop",
+                    post(routes::admin::stop_impersonation),
                 )
                 .route("/auth/verify-email", post(routes::email_auth::verify_email))
                 .route("/auth/resend-verify", post(routes::email_auth::resend_verify))

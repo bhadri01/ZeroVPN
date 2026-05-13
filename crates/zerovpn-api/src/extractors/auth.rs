@@ -19,6 +19,14 @@ pub const SESSION_KEY_USER_ID: &str = "user_id";
 /// reach into tower-sessions' opaque storage.
 pub const SESSION_KEY_PW_CHANGED_AT: &str = "pw_changed_at_unix";
 
+/// Set when an admin is impersonating another user. Stores the admin's
+/// real UUID so the session can be restored when impersonation ends.
+pub const SESSION_KEY_REAL_USER_ID: &str = "real_user_id";
+/// Companion to `SESSION_KEY_REAL_USER_ID`: stores the admin's
+/// `password_changed_at` unix timestamp so the pw-version check passes
+/// when we restore the admin's identity after stopping impersonation.
+pub const SESSION_KEY_REAL_PW_CHANGED_AT: &str = "real_pw_changed_at_unix";
+
 /// Extracted authenticated user. Returns 401 if there's no session or the
 /// session points at a missing/non-active user.
 pub struct CurrentUser(pub User);

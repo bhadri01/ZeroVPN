@@ -66,6 +66,11 @@ const AdminOverviewPage = lazy(() =>
 const UsersPage = lazy(() =>
   import("@/pages/admin/Users").then((m) => ({ default: m.UsersPage })),
 )
+const UserDetailPage = lazy(() =>
+  import("@/pages/admin/UserDetail").then((m) => ({
+    default: m.UserDetailPage,
+  })),
+)
 const AuditLogPage = lazy(() =>
   import("@/pages/admin/AuditLog").then((m) => ({ default: m.AuditLogPage })),
 )
@@ -76,6 +81,11 @@ const FailedLoginsPage = lazy(() =>
 )
 const ServersPage = lazy(() =>
   import("@/pages/admin/Servers").then((m) => ({ default: m.ServersPage })),
+)
+const AdminTopologyPage = lazy(() =>
+  import("@/pages/admin/Topology").then((m) => ({
+    default: m.AdminTopologyPage,
+  })),
 )
 
 /**
@@ -165,6 +175,14 @@ export const router = createBrowserRouter([
                 element: <UsersPage />,
               },
               {
+                path: "/admin/users/:id",
+                handle: {
+                  breadcrumb: "Detail",
+                  parents: [{ label: "Users", to: "/admin/users" }],
+                },
+                element: <UserDetailPage />,
+              },
+              {
                 path: "/admin/audit",
                 handle: { breadcrumb: "Audit log" },
                 element: <AuditLogPage />,
@@ -178,6 +196,11 @@ export const router = createBrowserRouter([
                 path: "/admin/servers",
                 handle: { breadcrumb: "Servers" },
                 element: <ServersPage />,
+              },
+              {
+                path: "/admin/topology",
+                handle: { breadcrumb: "Topology" },
+                element: <AdminTopologyPage />,
               },
               {
                 path: "/admin/finder",

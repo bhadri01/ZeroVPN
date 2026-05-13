@@ -57,6 +57,7 @@ const ADMIN: NavEntry[] = [
   { to: "/admin/audit", label: "Audit log", icon: IconClipboardList, k: "3" },
   { to: "/admin/failed-logins", label: "Failed logins", icon: IconCircleDashedX, k: "4" },
   { to: "/admin/servers", label: "Servers", icon: IconRouter, k: "5" },
+  { to: "/admin/topology", label: "Topology", icon: IconHierarchy3, k: "6" },
   { to: "/admin/finder", label: "Finder", icon: IconSearch, k: "F" },
 ]
 

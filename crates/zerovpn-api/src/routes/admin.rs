@@ -7,16 +7,20 @@ use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
+use tower_sessions::Session;
 use tracing::info;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use zerovpn_core::models::{Server, UserRole, UserStatus};
-use zerovpn_db::repos::{audit, bandwidth, servers, users};
+use zerovpn_db::repos::{audit, bandwidth, devices, servers, users};
 
 use crate::{
     error::{ApiError, ApiResult},
-    extractors::auth::RequireAdmin,
-    routes::dto::StatusAck,
+    extractors::auth::{
+        RequireAdmin, SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_REAL_PW_CHANGED_AT,
+        SESSION_KEY_REAL_USER_ID, SESSION_KEY_USER_ID,
+    },
+    routes::{devices::PublicDevice, dto::StatusAck},
     state::AppState,
 };
 
@@ -86,6 +90,134 @@ pub async fn list_users(
         })
         .collect();
     Ok(Json(AdminUserList { total, items }))
+}
+
+// ---- User detail --------------------------------------------------------
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminUserDetail {
+    pub id: Uuid,
+    pub email: String,
+    pub role: UserRole,
+    pub status: UserStatus,
+    pub totp_enabled: bool,
+    pub must_change_password: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_login_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub email_verified_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub password_changed_at: OffsetDateTime,
+    pub current_month_bytes: i64,
+    pub monthly_byte_cap: Option<i64>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub quota_resets_at: Option<OffsetDateTime>,
+    pub device_count: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminUserDevice {
+    pub id: Uuid,
+    pub name: String,
+    pub os: zerovpn_core::models::DeviceOs,
+    pub status: zerovpn_core::models::DeviceStatus,
+    pub allocated_ip: String,
+    pub dns_names: Vec<String>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_handshake_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminUserActivity {
+    pub id: i64,
+    pub action: String,
+    pub metadata: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminUserDetailResponse {
+    pub user: AdminUserDetail,
+    pub devices: Vec<AdminUserDevice>,
+    /// Recent audit entries where this user is the *target* (admin
+    /// actions taken on them). Newest first, hard-capped at 50.
+    pub activity: Vec<AdminUserActivity>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/users/{id}",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Target user UUID"),
+    ),
+    responses(
+        (status = 200, description = "Bundled user detail (core + quota + devices + recent activity)", body = AdminUserDetailResponse),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "User not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn user_detail(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let row = users::admin_user_detail(&state.pool, target_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    let device_rows = devices::list_for_user(&state.pool, target_id).await?;
+    let devices = device_rows
+        .into_iter()
+        .map(|d| AdminUserDevice {
+            id: d.id,
+            name: d.name,
+            os: d.os,
+            status: d.status,
+            allocated_ip: d.allocated_ip.ip().to_string(),
+            dns_names: d.dns_names,
+            last_handshake_at: d.last_handshake_at,
+            created_at: d.created_at,
+        })
+        .collect();
+
+    let activity_rows = audit::list_for_target(&state.pool, "user", target_id, 50).await?;
+    let activity = activity_rows
+        .into_iter()
+        .map(|a| AdminUserActivity {
+            id: a.id,
+            action: a.action,
+            metadata: a.metadata,
+            created_at: a.created_at,
+        })
+        .collect();
+
+    Ok(Json(AdminUserDetailResponse {
+        user: AdminUserDetail {
+            id: row.id,
+            email: row.email,
+            role: row.role,
+            status: row.status,
+            totp_enabled: row.totp_enabled,
+            must_change_password: row.must_change_password,
+            created_at: row.created_at,
+            last_login_at: row.last_login_at,
+            email_verified_at: row.email_verified_at,
+            password_changed_at: row.password_changed_at,
+            current_month_bytes: row.current_month_bytes,
+            monthly_byte_cap: row.monthly_byte_cap,
+            quota_resets_at: row.quota_resets_at,
+            device_count: row.device_count,
+        },
+        devices,
+        activity,
+    }))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -692,6 +824,28 @@ pub async fn rotate_server_keys(
     })))
 }
 
+/// Admin-only: every non-revoked device across the deployment, used to
+/// render the fleet-wide topology view. Each row carries its owning
+/// `user_id` so the frontend can cluster devices under their user node.
+#[utoipa::path(
+    get,
+    path = "/admin/devices",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "All non-revoked devices (every user)", body = Vec<PublicDevice>),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn list_devices(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+) -> ApiResult<impl IntoResponse> {
+    let rows = devices::list_all_active(&state.pool).await?;
+    let out: Vec<PublicDevice> = rows.into_iter().map(Into::into).collect();
+    Ok(Json(out))
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AdminStatsResponse {
     pub total: i64,
@@ -755,4 +909,129 @@ pub async fn fleet_bandwidth(
 ) -> ApiResult<impl IntoResponse> {
     let (rx_bytes, tx_bytes) = bandwidth::fleet_totals(&state.pool).await?;
     Ok(Json(AdminFleetBandwidthResponse { rx_bytes, tx_bytes }))
+}
+
+// --- Impersonation ---------------------------------------------------------
+
+/// Begin impersonating a user. Swaps the session's `user_id` to the target
+/// while saving the admin's real identity under `real_user_id` so it can be
+/// restored when impersonation ends. Requires admin role.
+pub async fn impersonate_user(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    session: Session,
+    Path(target_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    if target_id == actor.id {
+        return Err(ApiError::Validation("cannot impersonate yourself".into()));
+    }
+
+    let target = users::find_by_id(&state.pool, target_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    if target.status != UserStatus::Active {
+        return Err(ApiError::Validation(
+            "can only impersonate active users".into(),
+        ));
+    }
+
+    // Preserve the admin's real identity so we can restore it later.
+    session
+        .insert(SESSION_KEY_REAL_USER_ID, actor.id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    session
+        .insert(
+            SESSION_KEY_REAL_PW_CHANGED_AT,
+            actor.password_changed_at.unix_timestamp(),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Swap to the target user.
+    session
+        .insert(SESSION_KEY_USER_ID, target.id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    session
+        .insert(
+            SESSION_KEY_PW_CHANGED_AT,
+            target.password_changed_at.unix_timestamp(),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.impersonate_start",
+            target_type: Some("user"),
+            target_id: Some(target_id),
+            metadata: json!({ "target_email": target.email }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %target_id, "admin started impersonation");
+
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+/// Stop impersonating. Restores the admin's real session identity.
+/// Does not require `RequireAdmin` because the active session now belongs
+/// to the impersonated (possibly non-admin) user.
+pub async fn stop_impersonation(
+    State(state): State<AppState>,
+    session: Session,
+) -> ApiResult<impl IntoResponse> {
+    let real_user_id: Option<Uuid> = session
+        .get(SESSION_KEY_REAL_USER_ID)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let real_user_id =
+        real_user_id.ok_or_else(|| ApiError::Validation("not in an impersonated session".into()))?;
+
+    let real_pw: Option<i64> = session
+        .get(SESSION_KEY_REAL_PW_CHANGED_AT)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let real_pw = real_pw.ok_or_else(|| ApiError::Internal("missing real pw watermark".into()))?;
+
+    // Restore the admin's identity.
+    session
+        .insert(SESSION_KEY_USER_ID, real_user_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    session
+        .insert(SESSION_KEY_PW_CHANGED_AT, real_pw)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Clear impersonation keys.
+    session
+        .remove::<Uuid>(SESSION_KEY_REAL_USER_ID)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    session
+        .remove::<i64>(SESSION_KEY_REAL_PW_CHANGED_AT)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(real_user_id),
+            action: "admin.impersonate_stop",
+            target_type: None,
+            target_id: None,
+            metadata: json!({}),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(admin = %real_user_id, "admin stopped impersonation");
+
+    Ok(Json(json!({ "status": "ok" })))
 }

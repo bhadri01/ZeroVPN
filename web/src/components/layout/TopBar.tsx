@@ -1,12 +1,15 @@
-import { IconArrowLeft, IconSearch } from "@tabler/icons-react"
+import { IconArrowLeft, IconSearch, IconUserX } from "@tabler/icons-react"
 import { useEffect, useState } from "react"
 import { Link, useMatches, useNavigate } from "react-router"
+import { toast } from "sonner"
 
 import { UserMenu } from "@/components/layout/UserMenu"
 import { ModeToggle } from "@/components/mode-toggle"
 import { Kbd, LiveDot } from "@/components/swiss"
 import { WithTooltip } from "@/components/ui/with-tooltip"
 import { useBreadcrumbStore } from "@/stores/breadcrumb"
+import { adminStopImpersonation, me } from "@/lib/api"
+import { useAuth } from "@/stores/auth"
 
 type Crumb = { to?: string; label: string }
 type CrumbHandle = {
@@ -57,46 +60,90 @@ export function TopBar({
   onOpenCommand?: () => void
 }) {
   const crumbs = useBreadcrumbs()
-  return (
-    <header className="bg-background sticky top-0 z-30 flex h-12 items-center gap-3 border-b px-4">
-      <BackButton parentTo={parentOfLeaf(crumbs)} />
-      <nav
-        aria-label="breadcrumb"
-        className="text-muted-foreground flex min-w-0 items-center gap-2 font-mono text-[12px]"
-      >
-        {crumbs.length === 0 ? (
-          <span className="text-foreground truncate font-medium">ZeroVPN</span>
-        ) : (
-          crumbs.map((c, i) => {
-            const last = i === crumbs.length - 1
-            return (
-              <span key={`${c.to}-${i}`} className="flex items-center gap-2">
-                {i > 0 && (
-                  <span className="text-muted-foreground/50 shrink-0">/</span>
-                )}
-                {last || !c.to ? (
-                  <span className="text-foreground truncate font-medium">
-                    {c.label}
-                  </span>
-                ) : (
-                  <Link
-                    to={c.to}
-                    className="hover:text-foreground truncate transition-colors"
-                  >
-                    {c.label}
-                  </Link>
-                )}
-              </span>
-            )
-          })
-        )}
-      </nav>
+  const user = useAuth((s) => s.user)
+  const setUser = useAuth((s) => s.setUser)
+  const navigate = useNavigate()
+  const [stopping, setStopping] = useState(false)
 
-      <div className="ml-auto flex items-center gap-2">
-        <SearchTrigger onClick={onOpenCommand} />
-        <LivePill />
-        <ModeToggle />
-        <UserMenu />
+  const handleStopImpersonation = async () => {
+    setStopping(true)
+    try {
+      await adminStopImpersonation()
+      const updated = await me()
+      setUser(updated)
+      toast.success("Returned to your admin session")
+      void navigate("/admin/users")
+    } catch {
+      toast.error("Failed to stop impersonation")
+    } finally {
+      setStopping(false)
+    }
+  }
+
+  return (
+    <header className="bg-background sticky top-0 z-30 border-b">
+      {user?.is_impersonated && (
+        <div className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-1.5">
+          <IconUserX className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="font-mono text-[11px] text-amber-700 dark:text-amber-400">
+            Impersonating{" "}
+            <span className="font-semibold">{user.email}</span>
+            {user.impersonator_email && (
+              <span className="text-amber-600/70 dark:text-amber-500/70">
+                {" "}· admin: {user.impersonator_email}
+              </span>
+            )}
+          </span>
+          <button
+            type="button"
+            disabled={stopping}
+            onClick={() => void handleStopImpersonation()}
+            className="ml-auto inline-flex items-center gap-1 border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-700 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
+          >
+            {stopping ? "Stopping…" : "Exit impersonation →"}
+          </button>
+        </div>
+      )}
+      <div className="flex h-12 items-center gap-3 px-4">
+        <BackButton parentTo={parentOfLeaf(crumbs)} />
+        <nav
+          aria-label="breadcrumb"
+          className="text-muted-foreground flex min-w-0 items-center gap-2 font-mono text-[12px]"
+        >
+          {crumbs.length === 0 ? (
+            <span className="text-foreground truncate font-medium">ZeroVPN</span>
+          ) : (
+            crumbs.map((c, i) => {
+              const last = i === crumbs.length - 1
+              return (
+                <span key={`${c.to}-${i}`} className="flex items-center gap-2">
+                  {i > 0 && (
+                    <span className="text-muted-foreground/50 shrink-0">/</span>
+                  )}
+                  {last || !c.to ? (
+                    <span className="text-foreground truncate font-medium">
+                      {c.label}
+                    </span>
+                  ) : (
+                    <Link
+                      to={c.to}
+                      className="hover:text-foreground truncate transition-colors"
+                    >
+                      {c.label}
+                    </Link>
+                  )}
+                </span>
+              )
+            })
+          )}
+        </nav>
+
+        <div className="ml-auto flex items-center gap-2">
+          <SearchTrigger onClick={onOpenCommand} />
+          <LivePill />
+          <ModeToggle />
+          <UserMenu />
+        </div>
       </div>
     </header>
   )

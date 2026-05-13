@@ -451,9 +451,10 @@ export function LiveTopology({
   const userGroups = useMemo(() => {
     const groups = new Map<string, PublicDevice[]>()
     for (const d of visible) {
-      const list = groups.get("__self__") ?? []
+      const key = d.user_id
+      const list = groups.get(key) ?? []
       list.push(d)
-      groups.set("__self__", list)
+      groups.set(key, list)
     }
     // Cap user count for sanity in admin-wide views; the rest drop off the
     // graph but the HUD count still reflects them.

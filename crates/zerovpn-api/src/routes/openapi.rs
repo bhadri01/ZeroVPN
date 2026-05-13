@@ -82,6 +82,7 @@ use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, t
         admin::list_failed_logins,
         admin::get_maintenance,
         admin::set_maintenance,
+        admin::list_devices,
         admin::list_servers,
         admin::patch_server,
         admin::rotate_server_keys,

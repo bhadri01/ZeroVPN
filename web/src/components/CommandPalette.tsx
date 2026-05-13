@@ -65,6 +65,12 @@ const ITEMS: Item[] = [
   },
   { to: "/admin/servers", label: "Servers", icon: IconRouter, group: "Admin" },
   {
+    to: "/admin/topology",
+    label: "Topology (fleet)",
+    icon: IconHierarchy3,
+    group: "Admin",
+  },
+  {
     to: "/admin/audit",
     label: "Audit log",
     icon: IconClipboardList,

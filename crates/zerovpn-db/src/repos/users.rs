@@ -300,6 +300,49 @@ pub struct AdminUserRow {
     pub device_count: i64,
 }
 
+/// Row used by the admin user-detail page. Adds quota fields, the
+/// password-change watermark, and verification flags on top of the list
+/// row so the detail view can render a complete picture in one query.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AdminUserDetailRow {
+    pub id: Uuid,
+    pub email: String,
+    pub role: UserRole,
+    pub status: UserStatus,
+    pub totp_enabled: bool,
+    pub must_change_password: bool,
+    pub created_at: OffsetDateTime,
+    pub last_login_at: Option<OffsetDateTime>,
+    pub email_verified_at: Option<OffsetDateTime>,
+    pub password_changed_at: OffsetDateTime,
+    pub current_month_bytes: i64,
+    pub monthly_byte_cap: Option<i64>,
+    pub quota_resets_at: Option<OffsetDateTime>,
+    pub device_count: i64,
+}
+
+/// Fetch a single user with everything the admin detail page needs.
+/// Returns None when the id doesn't match a non-deleted user.
+pub async fn admin_user_detail(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> sqlx::Result<Option<AdminUserDetailRow>> {
+    sqlx::query_as::<_, AdminUserDetailRow>(
+        r#"SELECT u.id, u.email::TEXT AS email, u.role, u.status, u.totp_enabled,
+                  u.must_change_password, u.created_at, u.last_login_at,
+                  u.email_verified_at, u.password_changed_at,
+                  COALESCE(u.current_month_bytes, 0)::BIGINT AS current_month_bytes,
+                  u.monthly_byte_cap, u.quota_resets_at,
+                  (SELECT COUNT(*) FROM devices d
+                    WHERE d.user_id = u.id AND d.status <> 'revoked') AS device_count
+             FROM users u
+            WHERE u.id = $1 AND u.deleted_at IS NULL"#,
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+}
+
 pub async fn admin_list(
     pool: &PgPool,
     limit: i64,

@@ -72,6 +72,7 @@ pub struct CreatedDevice {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PublicDevice {
     pub id: Uuid,
+    pub user_id: Uuid,
     pub name: String,
     pub os: DeviceOs,
     pub public_key: String,
@@ -102,6 +103,7 @@ impl From<Device> for PublicDevice {
         let private_key_stored = d.private_key_encrypted.is_some();
         Self {
             id: d.id,
+            user_id: d.user_id,
             name: d.name,
             os: d.os,
             public_key: d.public_key,

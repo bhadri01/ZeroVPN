@@ -71,6 +71,23 @@ pub async fn find_for_user(
     .await
 }
 
+/// Admin-only: every non-revoked device across all users. Powers the
+/// admin topology view, so devices come back in a stable order
+/// (`user_id`, then `created_at`) — the renderer groups by user, and
+/// stable ordering keeps the graph from re-laying-out on each refetch.
+pub async fn list_all_active(pool: &PgPool) -> sqlx::Result<Vec<Device>> {
+    sqlx::query_as::<_, Device>(
+        r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
+                  dns_names, allowed_ips_override, dns_override,
+                  last_handshake_at, created_at, private_key_encrypted
+           FROM devices
+           WHERE status <> 'revoked'
+           ORDER BY user_id, created_at"#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn list_by_server(pool: &PgPool, server_id: Uuid) -> sqlx::Result<Vec<Device>> {
     sqlx::query_as::<_, Device>(
         r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,

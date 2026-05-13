@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { IconSearch } from "@tabler/icons-react"
 import { useEffect, useState } from "react"
+import { Link, useNavigate } from "react-router"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { Identicon } from "@/components/Identicon"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { Pagination } from "@/components/Pagination"
 import { RelativeTime } from "@/components/RelativeTime"
@@ -16,8 +18,10 @@ import {
   ApiError,
   type AdminUser,
   type UserStatus,
+  adminImpersonateUser,
   adminListUsers,
   adminSetUserStatus,
+  me,
 } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
@@ -29,11 +33,14 @@ const USER_STATUS_TO_PILL: Record<UserStatus, Status> = {
 }
 
 export function UsersPage() {
-  const me = useAuth((s) => s.user)
+  const self = useAuth((s) => s.user)
+  const setUser = useAuth((s) => s.setUser)
   const qc = useQueryClient()
+  const navigate = useNavigate()
 
   const [search, setSearch] = useState("")
   const [suspendTarget, setSuspendTarget] = useState<AdminUser | null>(null)
+  const [impersonateTarget, setImpersonateTarget] = useState<AdminUser | null>(null)
   const [pageSize, setPageSize] = useState(50)
   const [page, setPage] = useState(0)
   // Reset to page 0 whenever the search term or page size changes —
@@ -57,6 +64,24 @@ export function UsersPage() {
       void qc.invalidateQueries({ queryKey: ["admin", "users"] })
       setSuspendTarget(null)
       toast.success("User status updated")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const impersonateM = useMutation({
+    mutationFn: (id: string) => adminImpersonateUser(id),
+    onSuccess: async () => {
+      try {
+        const updated = await me()
+        setUser(updated)
+        setImpersonateTarget(null)
+        toast.success(`Now acting as ${impersonateTarget?.email ?? "user"}`)
+        void navigate("/app")
+      } catch {
+        toast.error("Impersonation started but failed to refresh session")
+      }
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)
@@ -111,16 +136,21 @@ export function UsersPage() {
             </thead>
             <tbody>
               {items.map((u) => {
-                const isSelf = u.id === me?.id
+                const isSelf = u.id === self?.id
                 return (
                   <tr key={u.id}>
                     <td>
-                      <span className="inline-flex items-center gap-2">
-                        <span className="bg-muted border-border text-muted-foreground flex size-5 items-center justify-center border font-mono text-[10px] uppercase">
-                          {u.email.slice(0, 2)}
+                      <Link
+                        to={`/admin/users/${u.id}`}
+                        className="hover:text-primary inline-flex items-center gap-2 transition-colors"
+                      >
+                        <span className="border-border bg-card flex size-6 shrink-0 items-center justify-center border p-0.5">
+                          <Identicon seed={u.email} size={20} cells={5} />
                         </span>
-                        <span className="font-medium">{u.email}</span>
-                      </span>
+                        <span className="font-medium underline-offset-2 hover:underline">
+                          {u.email}
+                        </span>
+                      </Link>
                       {isSelf && (
                         <span className="text-muted-foreground/60 ml-2 font-mono text-[10px] uppercase">
                           you
@@ -158,6 +188,15 @@ export function UsersPage() {
                       <RelativeTime value={u.last_login_at} fallback="Never" />
                     </td>
                     <td className="zv-actions">
+                      {!isSelf && u.status === "active" && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setImpersonateTarget(u)}
+                        >
+                          Impersonate
+                        </Button>
+                      )}
                       {!isSelf && u.status === "active" && (
                         <Button
                           size="sm"
@@ -218,6 +257,18 @@ export function UsersPage() {
         onConfirm={() =>
           suspendTarget &&
           setStatusM.mutate({ id: suspendTarget.id, status: "suspended" })
+        }
+      />
+
+      <ConfirmDialog
+        open={!!impersonateTarget}
+        onOpenChange={(o) => !o && setImpersonateTarget(null)}
+        title={`Impersonate ${impersonateTarget?.email ?? "user"}?`}
+        description="You will be redirected to the dashboard acting as this user. A banner will remind you to exit impersonation when done."
+        confirmLabel="Impersonate"
+        pending={impersonateM.isPending}
+        onConfirm={() =>
+          impersonateTarget && impersonateM.mutate(impersonateTarget.id)
         }
       />
     </PageStagger>
