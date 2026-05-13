@@ -611,17 +611,108 @@ export interface EndpointHistoryRow {
 export const adminListDeviceEndpointHistory = (deviceId: string) =>
   apiFetch<EndpointHistoryRow[]>(`/admin/devices/${deviceId}/endpoint-history`)
 
-export interface AdminUserActivity {
+/** One WireGuard connection session — see migration 18. `ended_at`
+ *  is `null` while the session is still open. `rx_bytes_at_end` /
+ *  `tx_bytes_at_end` are `null` for open sessions OR for sessions that
+ *  were swept closed by the worker-startup pass (no clean offline
+ *  observation, so the counters never got snapshot). */
+export interface ConnectionSessionRow {
+  id: number
+  device_id: string
+  user_id: string
+  started_at: string
+  ended_at: string | null
+  peer_endpoint_at_start: string | null
+  peer_endpoint_at_end: string | null
+  rx_bytes_at_start: number
+  tx_bytes_at_start: number
+  rx_bytes_at_end: number | null
+  tx_bytes_at_end: number | null
+}
+
+export const adminListDeviceConnectionHistory = (deviceId: string) =>
+  apiFetch<ConnectionSessionRow[]>(
+    `/admin/devices/${deviceId}/connection-history`,
+  )
+
+// ── Admin device detail (Phase 2 / Stage B) ─────────────────────────
+
+export interface AdminDeviceOwner {
+  id: string
+  email: string
+  role: UserRole
+  status: UserStatus
+}
+
+export interface AdminDeviceDetail {
+  id: string
+  user_id: string
+  server_id: string
+  name: string
+  os: DeviceOs
+  status: DeviceStatus
+  allocated_ip: string
+  public_key: string
+  dns_names: string[]
+  allowed_ips_override: string[] | null
+  dns_override: string[] | null
+  private_key_stored: boolean
+  last_handshake_at: string | null
+  last_peer_endpoint: string | null
+  last_peer_endpoint_at: string | null
+  created_at: string
+}
+
+export interface AdminDeviceActivity {
   id: number
   action: string
   metadata: unknown
   created_at: string
 }
 
+export interface AdminDeviceDetailResponse {
+  device: AdminDeviceDetail
+  owner: AdminDeviceOwner
+  activity: AdminDeviceActivity[]
+}
+
+export const adminGetDeviceDetail = (id: string) =>
+  apiFetch<AdminDeviceDetailResponse>(`/admin/devices/${id}`)
+
+export const adminDeviceBandwidth = (id: string, range: BandwidthRange) =>
+  apiFetch<{
+    bucket: "hour" | "day"
+    range: string
+    buckets: BandwidthBucket[]
+  }>(`/admin/devices/${id}/bandwidth?range=${range}`)
+
+export interface AdminUserActivity {
+  id: number
+  action: string
+  metadata: unknown
+  /** Full client IP captured when the audit row was written. `null`
+   *  for worker / CLI / state-transition emitters. */
+  ip: string | null
+  /** Raw `User-Agent` header. `null` for the same set as `ip`. */
+  user_agent: string | null
+  target_type: string | null
+  target_id: string | null
+  created_at: string
+}
+
 export interface AdminUserDetailResponse {
   user: AdminUserDetail
   devices: AdminUserDevice[]
+  /** Audit entries where this user is either the actor (their own
+   *  actions) or the target (admin actions taken on them). Newest
+   *  first, capped at 100. */
   activity: AdminUserActivity[]
+  /** Recent `session_events` rows scoped to this user. Newest first,
+   *  capped at 50. */
+  session_events: SessionEventRow[]
+  /** Recent `connection_sessions` across all of the user's devices.
+   *  Newest first, capped at 50. */
+  connection_sessions: ConnectionSessionRow[]
 }
 
 export const adminGetUserDetail = (id: string) =>
@@ -760,9 +851,9 @@ export interface AuditRow {
   target_id: string | null
   metadata: unknown
   /** Full client IP serialised as an `IpNetwork` ("203.0.113.42/32").
-   *  Phase 2 / Stage A — captured for audit rows written from a route
-   *  handler. `null` for worker/CLI-emitted rows. */
-  ip_prefix: string | null
+   *  Captured for audit rows written from a route handler. `null` for
+   *  worker/CLI-emitted rows. Renamed from `ip_prefix` in migration 20. */
+  ip: string | null
   /** Raw `User-Agent` header from the request that produced this audit
    *  row. `null` for non-route-handler emitters. */
   user_agent: string | null
@@ -815,8 +906,9 @@ export interface FailedLoginRow {
   id: number
   email_attempted: string | null
   reason: string
-  /** Full client IP serialised as an `IpNetwork` ("203.0.113.42/32"). */
-  ip_prefix: string | null
+  /** Full client IP serialised as an `IpNetwork` ("203.0.113.42/32").
+   *  Renamed from `ip_prefix` in migration 20. */
+  ip: string | null
   /** Raw User-Agent header from the failing request. */
   user_agent: string | null
   attempted_at: string
@@ -825,6 +917,124 @@ export interface FailedLoginRow {
 export const adminListFailedLogins = (limit = 100, offset = 0) =>
   apiFetch<{ total: number; items: FailedLoginRow[] }>(
     `/admin/failed-logins?limit=${limit}&offset=${offset}`,
+  )
+
+// ── Session events (Phase 2 / Stage B) ──────────────────────────────────
+
+export type SessionEventKind =
+  | "login"
+  | "logout"
+  | "idle_timeout"
+  | "suspicious_login"
+  | "password_change"
+  | "totp_enable"
+  | "totp_disable"
+  | "impersonation_start"
+  | "impersonation_end"
+
+export interface SessionEventRow {
+  id: number
+  user_id: string
+  event: SessionEventKind
+  /** Full client IP as `IpNetwork` ("203.0.113.42/32"). */
+  ip: string | null
+  user_agent: string | null
+  /** Free-form event-specific context: `previous_ip` for suspicious_login,
+   *  `via` for password_change ("settings" | "email_link"), `by_user_id` /
+   *  `by_email` for impersonation_*. Always an object, never null. */
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface AdminSessionEventFilters {
+  user_id?: string
+  event?: SessionEventKind
+  ip?: string
+  since?: string
+  until?: string
+}
+
+function adminSessionEventsQs(
+  f: AdminSessionEventFilters,
+  limit: number,
+  offset: number,
+): string {
+  const params = new URLSearchParams()
+  params.set("limit", String(limit))
+  params.set("offset", String(offset))
+  if (f.user_id) params.set("user_id", f.user_id)
+  if (f.event) params.set("event", f.event)
+  if (f.ip) params.set("ip", f.ip)
+  if (f.since) params.set("since", f.since)
+  if (f.until) params.set("until", f.until)
+  return params.toString()
+}
+
+export const adminListSessionEvents = (
+  filters: AdminSessionEventFilters = {},
+  limit = 100,
+  offset = 0,
+) =>
+  apiFetch<{ total: number; items: SessionEventRow[] }>(
+    `/admin/session-events?${adminSessionEventsQs(filters, limit, offset)}`,
+  )
+
+// ── Access logs (Phase 2 / Stage B) ─────────────────────────────────────
+
+export interface AccessLogRow {
+  id: number
+  created_at: string
+  user_id: string | null
+  method: string
+  path: string
+  status: number
+  latency_ms: number
+  /** Full client IP as `IpNetwork` ("203.0.113.42/32"). */
+  ip: string | null
+  user_agent: string | null
+  request_id: string | null
+}
+
+export interface AdminAccessLogFilters {
+  user_id?: string
+  method?: string
+  /** Path prefix — matches every row whose `path` starts with this
+   *  string. SQL-side does the `LIKE 'foo%'` matching. */
+  path?: string
+  /** Lower / upper bounds on the HTTP status code (both inclusive). */
+  status_min?: number
+  status_max?: number
+  ip?: string
+  since?: string
+  until?: string
+}
+
+function adminAccessLogsQs(
+  f: AdminAccessLogFilters,
+  limit: number,
+  offset: number,
+): string {
+  const params = new URLSearchParams()
+  params.set("limit", String(limit))
+  params.set("offset", String(offset))
+  if (f.user_id) params.set("user_id", f.user_id)
+  if (f.method) params.set("method", f.method)
+  if (f.path) params.set("path", f.path)
+  if (f.status_min != null) params.set("status_min", String(f.status_min))
+  if (f.status_max != null) params.set("status_max", String(f.status_max))
+  if (f.ip) params.set("ip", f.ip)
+  if (f.since) params.set("since", f.since)
+  if (f.until) params.set("until", f.until)
+  return params.toString()
+}
+
+export const adminListAccessLogs = (
+  filters: AdminAccessLogFilters = {},
+  limit = 100,
+  offset = 0,
+) =>
+  apiFetch<{ total: number; items: AccessLogRow[] }>(
+    `/admin/access-logs?${adminAccessLogsQs(filters, limit, offset)}`,
   )
 
 export interface MaintenanceState {

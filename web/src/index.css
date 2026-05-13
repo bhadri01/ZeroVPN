@@ -612,8 +612,11 @@
 
 /* Drag handle column for the draggable devices table. The icon is muted
    until the row is hovered, picks up the cursor affordance to telegraph
-   "grab me". The row itself is double-clickable to open detail. */
-.zv-table-draggable tbody tr { cursor: default; }
+   "grab me". The row itself is double-clickable to open detail —
+   `cursor: pointer` over the body telegraphs that, while the grip
+   column's own `cursor: grab` rule wins via specificity when the
+   pointer is on the icon. */
+.zv-table-draggable tbody tr { cursor: pointer; }
 .zv-table-draggable .zv-drag-handle {
   padding: 0 6px 0 10px;
   color: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
@@ -626,10 +629,141 @@
 }
 .zv-table-draggable .zv-drag-handle:active { cursor: grabbing; }
 /* Row being dragged — dim it so the user can clearly see where it
-   originated while a copy floats with the pointer. */
+   originated while a copy floats with the pointer. The grabbing cursor
+   stays on for the whole row so the user doesn't see a flickery
+   pointer↔grabbing swap if they slide off the grip mid-drag. */
+.zv-table-draggable tbody tr[data-dragging="1"] {
+  cursor: grabbing;
+}
 .zv-table-draggable tbody tr[data-dragging="1"] td {
   opacity: 0.4;
 }
+
+/* ── Sortable list (div-grid, used by Devices list view) ─────────────
+   We swap the native `<table>` for a div-based CSS-grid layout so the
+   rows can host motion's `<Reorder.Item>` (pointer-driven sortable that
+   animates siblings out of the dragged item's way). Tables are great
+   for tabular data but fight `transform`-based animations; a grid of
+   divs is the standard fix.
+
+   The list lives inside `.zv-list-scroll` which owns the horizontal
+   scroll. Without that wrapper, the row's fixed-width columns (12 of
+   them, summing to ~1200px) push the *page* into horizontal scroll on
+   any laptop-width viewport — which both breaks the dashboard frame
+   and hides the rightmost action column. The wrapper traps the
+   overflow locally; the actions column stays pinned to the right edge
+   via `position: sticky`. */
+.zv-list-scroll {
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+}
+.zv-list {
+  display: flex;
+  flex-direction: column;
+  /* Forces a horizontal scrollbar when the viewport can't fit all the
+     columns. The value is the sum of the row's grid-template-columns
+     plus a little padding so the last sticky cell never visually
+     overlaps the rightmost data cell at full width. */
+  min-width: 1196px;
+}
+.zv-list-row {
+  display: grid;
+  grid-template-columns:
+    32px                  /* drag grip                */
+    minmax(160px, 1.4fr)  /* name + status dot        */
+    72px                  /* OS                       */
+    120px                 /* VPN IP                   */
+    minmax(120px, 1fr)    /* allowed IPs              */
+    minmax(110px, 0.9fr)  /* DNS                      */
+    110px                 /* status pill(s)           */
+    140px                 /* activity chart           */
+    90px                  /* TX                       */
+    90px                  /* RX                       */
+    96px                  /* last seen                */
+    64px;                 /* actions (sticky)         */
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  position: relative;
+  background: var(--card);
+}
+.zv-list-row > .zv-cell {
+  padding: 8px 12px;
+  min-width: 0;       /* allow truncation inside grid cells */
+  overflow: hidden;
+}
+.zv-list-row > .zv-cell.zv-num {
+  font-variant-numeric: tabular-nums slashed-zero;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+.zv-list-head {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--muted) 40%, var(--card));
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.zv-list-head > .zv-cell {
+  padding: 8px 12px;
+}
+.zv-list-body { display: contents; }
+.zv-list-body .zv-list-row { cursor: pointer; }
+.zv-list-body .zv-list-row:hover { background: var(--muted); }
+.zv-list-body .zv-list-row > .zv-drag-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: color-mix(in oklch, var(--muted-foreground) 45%, transparent);
+  cursor: grab;
+  user-select: none;
+  transition: color 120ms;
+  padding: 8px 0 8px 8px;
+}
+.zv-list-body .zv-list-row:hover > .zv-drag-cell { color: var(--muted-foreground); }
+.zv-list-body .zv-list-row > .zv-drag-cell:active { cursor: grabbing; }
+
+/* Right-sticky actions cell. Sits inside the horizontal-scroll
+   container so it pins to the *visible* right edge as the user
+   scrolls. The hairline left-border + matching background draws a
+   clean break from the data columns underneath the cell. */
+.zv-list-row > .zv-cell-sticky-right {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: inherit;          /* matches row background incl. hover  */
+  border-left: 1px solid var(--border);
+}
+.zv-list-head > .zv-cell-sticky-right {
+  background: color-mix(in oklch, var(--muted) 40%, var(--card));
+  z-index: 3;                   /* head sticky beats body sticky      */
+}
+/* The hover background needs to apply to the sticky cell too — sticky
+   uses its own background context, so inheriting only works when we
+   set the parent's background explicitly. */
+.zv-list-body .zv-list-row:hover > .zv-cell-sticky-right { background: var(--muted); }
+
+/* While dragging — the actively-dragged row dims and floats above
+   siblings. motion sets `z-index: 1` on the drag target inline; we add
+   visual emphasis with a stronger border + shadow + grabbing cursor.   */
+.zv-list-body .zv-list-row[data-dragging="1"] {
+  cursor: grabbing;
+  background: var(--card);
+  box-shadow:
+    0 0 0 1px var(--primary),
+    0 14px 28px -8px color-mix(in oklch, var(--primary) 18%, transparent);
+}
+.zv-list-body .zv-list-row[data-dragging="1"] > .zv-cell { opacity: 0.92; }
+.zv-list-body .zv-list-row[data-dragging="1"] > .zv-cell-sticky-right { background: var(--card); }
 /* Row currently under the pointer during a drag — primary-tinted top
    border telegraphs "drop here lands above this row" without needing
    an extra render slot between rows. */
@@ -1034,4 +1168,30 @@
   h1, h2, h3, h4, h5, h6 {
     @apply font-heading tracking-tight;
     }
+
+  /* Global: hide native scrollbars on every element while keeping
+     scroll functionality (wheel, touch, keyboard, programmatic). The
+     codebase has lots of `overflow-y-auto` panes, table-scroll wrappers,
+     and the device-add side sheet — applying this across `*` keeps the
+     hidden treatment consistent so no one pane stands out with a chrome
+     scrollbar while its neighbours don't.
+
+       • Blink/WebKit (Chrome, Edge, Safari, Brave): suppress the
+         pseudo-element so it occupies zero pixels.
+       • Firefox: `scrollbar-width: none` does the same thing.
+       • Legacy Edge / IE: `-ms-overflow-style: none` covers it.
+
+     Important: do NOT add `overflow: hidden` here — that would also
+     kill scrolling. We only want the *track + thumb* gone. */
+  *,
+  *::before,
+  *::after {
+    scrollbar-width: none;          /* Firefox */
+    -ms-overflow-style: none;       /* legacy Edge / IE */
+  }
+  *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    background: transparent;        /* Chrome, Safari, Edge (Blink) */
+  }
 }

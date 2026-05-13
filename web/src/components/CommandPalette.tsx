@@ -4,6 +4,8 @@ import {
   IconDevices,
   IconHierarchy3,
   IconLayoutDashboard,
+  IconLogin2,
+  IconRoute,
   IconRouter,
   IconSearch,
   IconSettings,
@@ -74,6 +76,18 @@ const ITEMS: Item[] = [
     to: "/admin/audit",
     label: "Audit log",
     icon: IconClipboardList,
+    group: "Admin",
+  },
+  {
+    to: "/admin/sessions",
+    label: "Sessions",
+    icon: IconLogin2,
+    group: "Admin",
+  },
+  {
+    to: "/admin/access-logs",
+    label: "Access logs",
+    icon: IconRoute,
     group: "Admin",
   },
   {

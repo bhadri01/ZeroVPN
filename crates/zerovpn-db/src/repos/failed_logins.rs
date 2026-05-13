@@ -18,10 +18,11 @@ pub enum FailedLoginReason {
 }
 
 /// Record a failed-login attempt. The `ip` parameter takes the **full**
-/// client address (Phase 2 / Stage A — no more /24 truncation); the
-/// column is still named `ip_prefix` for now but accepts `/32` (v4) and
-/// `/128` (v6) host networks. The `user_agent` parameter stores the raw
-/// `User-Agent` header in plaintext (no more SHA-256 hashing).
+/// client address (Phase 2 / Stage A — no more /24 truncation). The
+/// column type is `INET`, accepting `/32` (v4) or `/128` (v6) host
+/// networks. Renamed from `ip_prefix` in migration 20.
+/// The `user_agent` parameter stores the raw `User-Agent` header in
+/// plaintext (no more SHA-256 hashing).
 pub async fn record(
     pool: &PgPool,
     email: Option<&str>,
@@ -30,7 +31,7 @@ pub async fn record(
     reason: FailedLoginReason,
 ) -> sqlx::Result<()> {
     sqlx::query(
-        r#"INSERT INTO failed_logins (email_attempted, ip_prefix, user_agent, reason)
+        r#"INSERT INTO failed_logins (email_attempted, ip, user_agent, reason)
            VALUES ($1::CITEXT, $2, $3, $4)"#,
     )
     .bind(email)

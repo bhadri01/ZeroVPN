@@ -91,7 +91,7 @@ pub async fn set(
             target_type: Some("device"),
             target_id: Some(id),
             metadata: json!({ "dns_names": wanted }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;

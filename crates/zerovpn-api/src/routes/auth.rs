@@ -13,20 +13,20 @@ use tower_sessions::Session;
 use tracing::{info, warn};
 use utoipa::ToSchema;
 use zerovpn_core::models::{User, UserRole, UserStatus};
-use zerovpn_db::repos::{audit, failed_logins, users};
+use zerovpn_db::repos::{audit, failed_logins, session_events, users};
 
 /// Best-effort full client IP from the `X-Forwarded-For` header (Caddy
 /// populates this) or the `X-Real-IP` header. Returns `None` if neither
 /// is present. Wrapped in `IpNetwork` as a `/32` (v4) or `/128` (v6)
 /// host prefix so it lands directly into the `INET`-typed columns
-/// (`audit_logs.ip_prefix`, `failed_logins.ip_prefix`, etc).
+/// (`audit_logs.ip`, `failed_logins.ip`, etc).
 ///
 /// **Phase 2 / Stage A** — the previous implementation truncated to
 /// `/24` (v4) or `/48` (v6) to keep the recorded address coarse-grained.
-/// That truncation is gone: admins want to see the actual address. The
-/// column name still says `ip_prefix`; renaming is queued for a later
-/// schema-cleanup migration so this commit isn't a 50-file rename sweep.
-fn client_ip(headers: &HeaderMap) -> Option<ipnetwork::IpNetwork> {
+/// That truncation is gone: admins want to see the actual address.
+/// **Stage B (migration 20)** completed the schema rename — the columns
+/// are now plain `ip` everywhere.
+pub(crate) fn client_ip(headers: &HeaderMap) -> Option<ipnetwork::IpNetwork> {
     let raw = headers
         .get("x-forwarded-for")
         .or_else(|| headers.get("x-real-ip"))
@@ -44,7 +44,7 @@ fn client_ip(headers: &HeaderMap) -> Option<ipnetwork::IpNetwork> {
 /// to spot brute-force tooling (`curl/...`, `python-requests/...`) and
 /// to correlate suspicious-login emails with the browser the user was
 /// actually on. Stored in plaintext, no longer hashed.
-fn client_user_agent(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn client_user_agent(headers: &HeaderMap) -> Option<String> {
     let raw = headers.get(axum::http::header::USER_AGENT)?.to_str().ok()?.trim();
     if raw.is_empty() {
         None
@@ -124,7 +124,7 @@ pub async fn register(
                 target_type: Some("user"),
                 target_id: Some(user_id),
                 metadata: json!({ "role": role }),
-                ip_prefix: client_ip(&headers),
+                ip: client_ip(&headers),
             },
             ua.as_deref(),
         )
@@ -338,6 +338,23 @@ pub async fn login(
 
     users::touch_last_login(&state.pool, user_with_secrets.id).await?;
 
+    // Phase 2 / Stage B — record the login on session_events. Best-effort:
+    // a transient DB error here must not block the login response. The
+    // audit log already captured the action via the failed_logins path /
+    // touch_last_login, so the session_events miss is recoverable.
+    if let Err(e) = session_events::record(
+        &state.pool,
+        user_with_secrets.id,
+        session_events::SessionEvent::Login,
+        req_ip,
+        req_ua.as_deref(),
+        json!({}),
+    )
+    .await
+    {
+        warn!(?e, user_id = %user_with_secrets.id, "session_events login record failed");
+    }
+
     // Suspicious-login detection: compare the current request's IP to the
     // last successful login. If they differ and a previous one existed,
     // fire an info email so the user can flag it. First-ever login
@@ -346,11 +363,10 @@ pub async fn login(
     // Stage A — we now compare *full* IPs, not /24 prefixes. That makes
     // the alert more sensitive (mobile / VPN reconnects with a new
     // public IP will trip it) but matches the new full-logging policy.
-    // The repo helper is still named `swap_last_login_ip_prefix` and the
-    // column `users.last_login_ip_prefix` for now; rename queued for the
-    // Stage B schema-cleanup migration.
+    // Stage B (migration 20) finished the schema rename — column is
+    // `users.last_login_ip`, helper is `users::swap_last_login_ip`.
     if let Some(new_ip) = req_ip {
-        match users::swap_last_login_ip_prefix(
+        match users::swap_last_login_ip(
             &state.pool,
             user_with_secrets.id,
             new_ip,
@@ -404,14 +420,26 @@ pub async fn login(
                             "prev": prev.to_string(),
                             "new": new_ip.to_string(),
                         }),
-                        ip_prefix: Some(new_ip),
+                        ip: Some(new_ip),
                     },
                     req_ua.as_deref(),
                 )
                 .await;
+                // Phase 2 / Stage B — session_events sibling row. Carries
+                // the previous IP in metadata so the admin Sessions page
+                // can render the diff inline.
+                let _ = session_events::record(
+                    &state.pool,
+                    user_with_secrets.id,
+                    session_events::SessionEvent::SuspiciousLogin,
+                    Some(new_ip),
+                    req_ua.as_deref(),
+                    json!({ "previous_ip": prev.to_string() }),
+                )
+                .await;
             }
             Ok(_) => {}
-            Err(e) => warn!(?e, "swap_last_login_ip_prefix failed"),
+            Err(e) => warn!(?e, "swap_last_login_ip failed"),
         }
     }
 
@@ -473,11 +501,37 @@ async fn verify_totp_or_recovery(
     ),
     security(("session_cookie" = [])),
 )]
-pub async fn logout(session: Session) -> ApiResult<impl IntoResponse> {
+pub async fn logout(
+    State(state): State<AppState>,
+    session: Session,
+    headers: HeaderMap,
+) -> ApiResult<impl IntoResponse> {
+    // Read the user_id off the session *before* flush so we can attribute
+    // the session_events row. Missing key (already logged out / never
+    // authed) is fine — we just skip the record.
+    let user_id: Option<uuid::Uuid> = session
+        .get(SESSION_KEY_USER_ID)
+        .await
+        .ok()
+        .flatten();
     session
         .flush()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if let Some(uid) = user_id {
+        if let Err(e) = session_events::record(
+            &state.pool,
+            uid,
+            session_events::SessionEvent::Logout,
+            client_ip(&headers),
+            client_user_agent(&headers).as_deref(),
+            json!({}),
+        )
+        .await
+        {
+            warn!(?e, user_id = %uid, "session_events logout record failed");
+        }
+    }
     Ok(Json(json!({ "status": "ok" })))
 }
 

@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
 use garde::Validate;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tower_sessions::Session;
-use tracing::info;
+use tracing::{info, warn};
 use utoipa::ToSchema;
-use zerovpn_db::repos::{audit, devices, servers, topology_positions, user_prefs, users};
+use zerovpn_db::repos::{
+    audit, devices, servers, session_events, topology_positions, user_prefs, users,
+};
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -367,6 +369,7 @@ pub async fn change_password(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     session: Session,
+    headers: HeaderMap,
     Json(body): Json<ChangePasswordBody>,
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
@@ -404,10 +407,23 @@ pub async fn change_password(
             target_type: Some("user"),
             target_id: Some(user.id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
+    // Phase 2 / Stage B — session_events row.
+    if let Err(e) = session_events::record(
+        &state.pool,
+        user.id,
+        session_events::SessionEvent::PasswordChange,
+        crate::routes::auth::client_ip(&headers),
+        crate::routes::auth::client_user_agent(&headers).as_deref(),
+        json!({ "via": "settings" }),
+    )
+    .await
+    {
+        warn!(?e, user_id = %user.id, "session_events password_change record failed");
+    }
     info!(user_id = %user.id, "password changed");
     Ok(Json(json!({ "status": "ok" })))
 }
@@ -446,7 +462,7 @@ pub async fn revoke_other_sessions(
             target_type: Some("user"),
             target_id: Some(user.id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -478,7 +494,7 @@ pub async fn delete_account(
             target_type: Some("user"),
             target_id: Some(user.id),
             metadata: serde_json::json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;

@@ -13,7 +13,7 @@ import {
   IconUserX,
 } from "@tabler/icons-react"
 import { useEffect, useState } from "react"
-import { useNavigate, useParams } from "react-router"
+import { Link, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 
 import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
@@ -21,7 +21,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { Identicon } from "@/components/Identicon"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { RelativeTime } from "@/components/RelativeTime"
-import { PageHead, Panel, Pill, type PillTone } from "@/components/swiss"
+import { Kbd, PageHead, Panel, Pill, type PillTone } from "@/components/swiss"
 import { StatusPill, type Status } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
 import {
@@ -47,6 +47,7 @@ import {
   ApiError,
   type BandwidthBucket,
   type BandwidthRange,
+  type ConnectionSessionRow,
   type DeviceStatus,
   type EndpointHistoryRow,
   type UserRole,
@@ -55,6 +56,7 @@ import {
   adminDisableUser2FA,
   adminGetUserDetail,
   adminImpersonateUser,
+  adminListDeviceConnectionHistory,
   adminListDeviceEndpointHistory,
   adminRevokeUserSessions,
   adminSendPasswordReset,
@@ -105,6 +107,11 @@ export function UserDetailPage() {
   // device row to drill into every distinct WG endpoint that peer has
   // ever connected from.
   const [endpointDevice, setEndpointDevice] = useState<{
+    id: string
+    name: string
+  } | null>(null)
+  // Phase 2 / Stage B — connection-session history per device.
+  const [connectionDevice, setConnectionDevice] = useState<{
     id: string
     name: string
   } | null>(null)
@@ -477,6 +484,7 @@ export function UserDetailPage() {
                         <th>Status</th>
                         <th>Last handshake</th>
                         <th>Last endpoint</th>
+                        <th>Connections</th>
                         <th>Created</th>
                       </tr>
                     </thead>
@@ -484,10 +492,14 @@ export function UserDetailPage() {
                       {detailQ.data.devices.map((d) => (
                         <tr key={d.id}>
                           <td>
-                            <span className="inline-flex items-center gap-2">
+                            <Link
+                              to={`/admin/devices/${d.id}`}
+                              className="hover:text-foreground inline-flex items-center gap-2 underline-offset-2 hover:underline"
+                              title="Open admin device detail"
+                            >
                               <IconDeviceDesktop className="text-muted-foreground size-4" />
                               <span className="font-medium">{d.name}</span>
-                            </span>
+                            </Link>
                           </td>
                           <td className="text-muted-foreground capitalize">
                             {d.os}
@@ -522,6 +534,18 @@ export function UserDetailPage() {
                             )}
                           </td>
                           <td className="text-muted-foreground font-mono text-xs">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConnectionDevice({ id: d.id, name: d.name })
+                              }
+                              className="hover:text-foreground underline-offset-2 hover:underline"
+                              title="View connection-session history"
+                            >
+                              history
+                            </button>
+                          </td>
+                          <td className="text-muted-foreground font-mono text-xs">
                             <RelativeTime value={d.created_at} fallback="—" />
                           </td>
                         </tr>
@@ -539,45 +563,47 @@ export function UserDetailPage() {
 
           <StaggerItem>
             <Panel
-              title="Recent activity"
-              sub="Audit entries targeting this user, newest first"
+              title="Activity timeline"
+              sub="Audit + session events + connection sessions, merged chronologically — newest first"
               flush
             >
-              {detailQ.data && detailQ.data.activity.length > 0 ? (
-                <div className="zv-table-scroll">
-                  <table className="zv-table">
-                    <thead>
-                      <tr>
-                        <th>Action</th>
-                        <th>Detail</th>
-                        <th>When</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {detailQ.data.activity.map((a) => (
-                        <tr key={a.id}>
-                          <td>
-                            <Pill tone={toneForAction(a.action)} dot={false}>
-                              {a.action}
-                            </Pill>
-                          </td>
-                          <td className="text-muted-foreground font-mono text-xs">
-                            <ActivityIcon action={a.action} />
-                            {summarizeMetadata(a.metadata)}
-                          </td>
-                          <td className="text-muted-foreground font-mono text-xs">
-                            <RelativeTime value={a.created_at} fallback="—" />
-                          </td>
+              {detailQ.data && (() => {
+                const items = buildTimeline(detailQ.data)
+                if (items.length === 0) {
+                  return (
+                    <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                      No activity yet.
+                    </div>
+                  )
+                }
+                const deviceNameById = new Map(
+                  detailQ.data.devices.map((d) => [d.id, d.name]),
+                )
+                return (
+                  <div className="zv-table-scroll">
+                    <table className="zv-table">
+                      <thead>
+                        <tr>
+                          <th className="w-[150px]">When</th>
+                          <th className="w-[100px]">Kind</th>
+                          <th>Event</th>
+                          <th className="w-[140px]">IP</th>
+                          <th>Detail</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="text-muted-foreground py-8 text-center font-mono text-sm">
-                  No activity.
-                </div>
-              )}
+                      </thead>
+                      <tbody>
+                        {items.map((it) => (
+                          <TimelineRow
+                            key={`${it.kind}-${it.id}`}
+                            item={it}
+                            deviceNameById={deviceNameById}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              })()}
             </Panel>
           </StaggerItem>
         </>
@@ -704,6 +730,13 @@ export function UserDetailPage() {
         device={endpointDevice}
         onOpenChange={(open) => {
           if (!open) setEndpointDevice(null)
+        }}
+      />
+
+      <ConnectionHistoryDialog
+        device={connectionDevice}
+        onOpenChange={(open) => {
+          if (!open) setConnectionDevice(null)
         }}
       />
     </PageStagger>
@@ -983,6 +1016,234 @@ function summarizeMetadata(metadata: unknown): string {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// Phase 2 / Stage B — unified activity timeline. Merges three feeds
+// fetched server-side (audit / session_events / connection_sessions)
+// into one chronological list. Each item is a discriminated union and
+// renders to one table row.
+
+type TimelineItem =
+  | {
+      kind: "audit"
+      id: number
+      ts: string
+      action: string
+      metadata: unknown
+      ip: string | null
+      user_agent: string | null
+      target_type: string | null
+      target_id: string | null
+    }
+  | {
+      kind: "session"
+      id: number
+      ts: string
+      event: string
+      ip: string | null
+      user_agent: string | null
+      metadata: unknown
+    }
+  | {
+      kind: "connection"
+      id: number
+      ts: string
+      device_id: string
+      started_at: string
+      ended_at: string | null
+      endpoint_start: string | null
+      endpoint_end: string | null
+      rx: number | null
+      tx: number | null
+    }
+
+function buildTimeline(d: {
+  activity: import("@/lib/api").AdminUserActivity[]
+  session_events: import("@/lib/api").SessionEventRow[]
+  connection_sessions: import("@/lib/api").ConnectionSessionRow[]
+}): TimelineItem[] {
+  const items: TimelineItem[] = []
+  for (const a of d.activity) {
+    items.push({
+      kind: "audit",
+      id: a.id,
+      ts: a.created_at,
+      action: a.action,
+      metadata: a.metadata,
+      ip: a.ip,
+      user_agent: a.user_agent,
+      target_type: a.target_type,
+      target_id: a.target_id,
+    })
+  }
+  for (const e of d.session_events) {
+    items.push({
+      kind: "session",
+      id: e.id,
+      ts: e.created_at,
+      event: e.event,
+      ip: e.ip,
+      user_agent: e.user_agent,
+      metadata: e.metadata,
+    })
+  }
+  for (const c of d.connection_sessions) {
+    const rx =
+      c.rx_bytes_at_end != null
+        ? Math.max(0, c.rx_bytes_at_end - c.rx_bytes_at_start)
+        : null
+    const tx =
+      c.tx_bytes_at_end != null
+        ? Math.max(0, c.tx_bytes_at_end - c.tx_bytes_at_start)
+        : null
+    items.push({
+      kind: "connection",
+      id: c.id,
+      ts: c.started_at,
+      device_id: c.device_id,
+      started_at: c.started_at,
+      ended_at: c.ended_at,
+      endpoint_start: c.peer_endpoint_at_start,
+      endpoint_end: c.peer_endpoint_at_end,
+      rx,
+      tx,
+    })
+  }
+  items.sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0))
+  return items
+}
+
+function TimelineRow({
+  item,
+  deviceNameById,
+}: {
+  item: TimelineItem
+  deviceNameById: Map<string, string>
+}) {
+  if (item.kind === "audit") {
+    const targetLabel = item.target_type
+      ? `${item.target_type}${item.target_id ? `·${item.target_id.slice(0, 6)}` : ""}`
+      : null
+    return (
+      <tr>
+        <td className="text-muted-foreground font-mono text-xs">
+          <RelativeTime value={item.ts} fallback="—" />
+        </td>
+        <td>
+          <Pill tone="info" dot={false}>
+            audit
+          </Pill>
+        </td>
+        <td>
+          <Pill tone={toneForAction(item.action)} dot={false}>
+            {item.action}
+          </Pill>
+        </td>
+        <td className="font-mono text-xs tabular-nums">
+          {item.ip ? (
+            item.ip.replace(/\/(32|128)$/, "")
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </td>
+        <td className="text-muted-foreground font-mono text-[11px]">
+          {targetLabel && (
+            <span className="text-foreground mr-2">→ {targetLabel}</span>
+          )}
+          {summarizeMetadata(item.metadata)}
+        </td>
+      </tr>
+    )
+  }
+  if (item.kind === "session") {
+    return (
+      <tr>
+        <td className="text-muted-foreground font-mono text-xs">
+          <RelativeTime value={item.ts} fallback="—" />
+        </td>
+        <td>
+          <Pill tone="ok" dot={false}>
+            session
+          </Pill>
+        </td>
+        <td>
+          <Kbd>{item.event}</Kbd>
+        </td>
+        <td className="font-mono text-xs tabular-nums">
+          {item.ip ? (
+            item.ip.replace(/\/(32|128)$/, "")
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </td>
+        <td
+          className="text-muted-foreground font-mono text-[11px]"
+          title={item.user_agent ?? undefined}
+        >
+          {summarizeMetadata(item.metadata)}
+          {item.user_agent && (
+            <span className="ml-2 truncate">{item.user_agent}</span>
+          )}
+        </td>
+      </tr>
+    )
+  }
+  // connection
+  const open = item.ended_at == null
+  const deviceName =
+    deviceNameById.get(item.device_id) ?? item.device_id.slice(0, 8)
+  const duration = open ? "active" : connectionDuration(item.started_at, item.ended_at!)
+  const endpoint = item.endpoint_start
+    ? item.endpoint_start +
+      (item.endpoint_end && item.endpoint_end !== item.endpoint_start
+        ? ` → ${item.endpoint_end}`
+        : "")
+    : null
+  return (
+    <tr>
+      <td className="text-muted-foreground font-mono text-xs">
+        <RelativeTime value={item.ts} fallback="—" />
+      </td>
+      <td>
+        <Pill tone={open ? "ok" : "neutral"} dot={open}>
+          connection
+        </Pill>
+      </td>
+      <td>
+        <span className="font-mono text-xs">
+          <span className="text-foreground">{deviceName}</span>
+          <span className="text-muted-foreground"> · </span>
+          {open ? "active" : `closed after ${duration}`}
+        </span>
+      </td>
+      <td className="font-mono text-xs">
+        {endpoint ? (
+          endpoint
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </td>
+      <td className="text-muted-foreground font-mono text-[11px] tabular-nums">
+        {item.rx != null && item.tx != null
+          ? `↓ ${formatBytes(item.rx)} · ↑ ${formatBytes(item.tx)}`
+          : open
+            ? "in flight"
+            : "—"}
+      </td>
+    </tr>
+  )
+}
+
+function connectionDuration(startIso: string, endIso: string): string {
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return "—"
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${(s % 60).toString().padStart(2, "0")}s`
+  const h = Math.floor(m / 60)
+  return `${h}h ${(m % 60).toString().padStart(2, "0")}m`
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // Phase 2 / Stage A — endpoint history dialog. Renders every distinct
 // `host:port` the WG poller has ever observed for the device, newest
 // first. Capped at 200 rows server-side; if a device sees more than
@@ -1066,4 +1327,166 @@ function EndpointHistoryDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 2 / Stage B — connection-session history. One row per WG
+// connection (online → offline pair) with duration, start/end
+// endpoint, and rx/tx delivered. Open sessions show "active" and a
+// `—` duration. Sessions closed by the worker-startup sweep (no clean
+// offline observation) show their start byte counters but the end
+// columns are blank.
+
+function ConnectionHistoryDialog({
+  device,
+  onOpenChange,
+}: {
+  device: { id: string; name: string } | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const open = device != null
+  const q = useQuery({
+    queryKey: ["admin", "device", device?.id, "connection-history"],
+    queryFn: () => adminListDeviceConnectionHistory(device!.id),
+    enabled: open,
+    staleTime: 30_000,
+  })
+  const rows: ConnectionSessionRow[] = q.data ?? []
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>
+            Connection history{device ? ` · ${device.name}` : ""}
+          </DialogTitle>
+          <DialogDescription>
+            One row per WireGuard connection. `RX` / `TX` are the bytes
+            delivered during that session (snapshot end − snapshot
+            start). Open sessions show a `—` for end-state columns until
+            the peer disconnects.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[420px] overflow-y-auto">
+          {q.isLoading && (
+            <div className="text-muted-foreground py-8 text-center font-mono text-xs">
+              Loading…
+            </div>
+          )}
+          {q.isError && (
+            <div className="text-destructive py-8 text-center font-mono text-xs">
+              Failed to load history.
+            </div>
+          )}
+          {q.data && rows.length === 0 && (
+            <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+              No connection sessions yet. The device hasn't transitioned
+              online since this feature shipped.
+            </div>
+          )}
+          {q.data && rows.length > 0 && (
+            <div className="zv-table-scroll">
+              <table className="zv-table">
+                <thead>
+                  <tr>
+                    <th className="w-[180px]">Started</th>
+                    <th className="w-[110px]">Duration</th>
+                    <th>Endpoint</th>
+                    <th className="text-right">RX</th>
+                    <th className="text-right">TX</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((s) => {
+                    const open = s.ended_at == null
+                    const duration = open
+                      ? "active"
+                      : formatDuration(s.started_at, s.ended_at!)
+                    const rx =
+                      s.rx_bytes_at_end != null
+                        ? Math.max(0, s.rx_bytes_at_end - s.rx_bytes_at_start)
+                        : null
+                    const tx =
+                      s.tx_bytes_at_end != null
+                        ? Math.max(0, s.tx_bytes_at_end - s.tx_bytes_at_start)
+                        : null
+                    const endpointChanged =
+                      !open &&
+                      s.peer_endpoint_at_end != null &&
+                      s.peer_endpoint_at_end !== s.peer_endpoint_at_start
+                    return (
+                      <tr key={s.id}>
+                        <td className="text-muted-foreground font-mono text-xs">
+                          <RelativeTime value={s.started_at} />
+                        </td>
+                        <td className="font-mono text-xs tabular-nums">
+                          {open ? (
+                            <Pill tone="ok" dot>
+                              active
+                            </Pill>
+                          ) : (
+                            duration
+                          )}
+                        </td>
+                        <td className="font-mono text-xs">
+                          {s.peer_endpoint_at_start ?? (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                          {endpointChanged && (
+                            <span
+                              className="text-muted-foreground"
+                              title={`Ended on ${s.peer_endpoint_at_end}`}
+                            >
+                              {" → "}
+                              {s.peer_endpoint_at_end}
+                            </span>
+                          )}
+                        </td>
+                        <td className="text-muted-foreground text-right font-mono text-xs tabular-nums">
+                          {rx != null ? (
+                            formatBytes(rx)
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="text-muted-foreground text-right font-mono text-xs tabular-nums">
+                          {tx != null ? (
+                            formatBytes(tx)
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        {rows.length === 200 && (
+          <p className="text-muted-foreground font-mono text-[11px]">
+            Showing the 200 most recent sessions. Older entries exist
+            but aren't surfaced here yet.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Compact duration formatter for the connection-history table.
+ *  Shows seconds for <1 min, m:ss for <1 h, otherwise H:MM. */
+function formatDuration(startIso: string, endIso: string): string {
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return "—"
+  const totalSec = Math.floor(ms / 1000)
+  if (totalSec < 60) return `${totalSec}s`
+  const totalMin = Math.floor(totalSec / 60)
+  if (totalMin < 60) {
+    const s = totalSec % 60
+    return `${totalMin}m ${s.toString().padStart(2, "0")}s`
+  }
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  return `${h}h ${m.toString().padStart(2, "0")}m`
 }

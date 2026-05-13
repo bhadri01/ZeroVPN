@@ -6,6 +6,8 @@ import {
   IconLayoutDashboard,
   IconLayoutSidebar,
   IconLayoutSidebarLeftCollapse,
+  IconLogin2,
+  IconRoute,
   IconRouter,
   IconSearch,
   IconSettings,
@@ -55,9 +57,11 @@ const ADMIN: NavEntry[] = [
   { to: "/admin", label: "Overview", icon: IconUserShield, k: "1", end: true },
   { to: "/admin/users", label: "Users", icon: IconUsers, k: "2" },
   { to: "/admin/audit", label: "Audit log", icon: IconClipboardList, k: "3" },
-  { to: "/admin/failed-logins", label: "Failed logins", icon: IconCircleDashedX, k: "4" },
-  { to: "/admin/servers", label: "Servers", icon: IconRouter, k: "5" },
-  { to: "/admin/topology", label: "Topology", icon: IconHierarchy3, k: "6" },
+  { to: "/admin/sessions", label: "Sessions", icon: IconLogin2, k: "4" },
+  { to: "/admin/access-logs", label: "Access logs", icon: IconRoute, k: "5" },
+  { to: "/admin/failed-logins", label: "Failed logins", icon: IconCircleDashedX, k: "6" },
+  { to: "/admin/servers", label: "Servers", icon: IconRouter, k: "7" },
+  { to: "/admin/topology", label: "Topology", icon: IconHierarchy3, k: "8" },
   { to: "/admin/finder", label: "Finder", icon: IconSearch, k: "F" },
 ]
 

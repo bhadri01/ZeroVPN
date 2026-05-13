@@ -6,7 +6,7 @@ use tokio::{signal, sync::mpsc};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use uuid::Uuid;
-use zerovpn_db::{PgPool, repos::devices};
+use zerovpn_db::{PgPool, repos::{connection_sessions, devices}};
 use zerovpn_events::Publisher;
 use zerovpn_wire::Event;
 
@@ -57,6 +57,21 @@ async fn main() -> Result<()> {
                 }
             }
         });
+    }
+
+    // Phase 2 / Stage B — close orphaned connection sessions before the
+    // poller starts. If the worker died mid-session the row is still
+    // open in the DB; the new poller's in-memory `prev_online` map is
+    // empty so it won't naturally close them. Sweep them now so the
+    // first online observation cleanly opens a fresh session.
+    match connection_sessions::close_all_open(&pool).await {
+        Ok(0) => {}
+        Ok(n) => {
+            tracing::info!(rows = n, "closed orphan connection sessions on startup");
+        }
+        Err(e) => {
+            tracing::warn!(?e, "connection_sessions startup sweep failed");
+        }
     }
 
     // Stats simulation task — queries active devices every 30s and emits a

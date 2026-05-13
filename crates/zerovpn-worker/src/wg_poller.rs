@@ -20,7 +20,10 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 use zerovpn_db::{
     PgPool,
-    repos::{audit, bandwidth, devices, peer_endpoint_history, server_samples, servers},
+    repos::{
+        audit, bandwidth, connection_sessions, devices, peer_endpoint_history,
+        server_samples, servers,
+    },
 };
 use zerovpn_wire::Event;
 
@@ -207,7 +210,8 @@ async fn poll_once(
         // don't generate a phantom transition the moment the worker
         // restarts. We don't suppress this on counter resets — those
         // are real reconnects worth surfacing.
-        if let Some(&was_online) = prev_online.get(&device_id) {
+        let prev = prev_online.get(&device_id).copied();
+        if let Some(was_online) = prev {
             if was_online != online {
                 let action = if online {
                     "device.online"
@@ -226,7 +230,7 @@ async fn poll_once(
                             "last_handshake_ms": last_handshake_ms,
                             "source": "wg_poller",
                         }),
-                        ip_prefix: None,
+                        ip: None,
                     },
                 )
                 .await
@@ -234,6 +238,52 @@ async fn poll_once(
                     warn!(?e, %device_id, online, "audit record (transition) failed");
                 }
             }
+        }
+
+        // Phase 2 / Stage B — connection_sessions transitions. Unlike
+        // the audit row above we DO record the first observation if
+        // it's an online state: the startup sweep
+        // (`close_all_open`) has just closed any stale rows, so the
+        // first-online observation is a real "session start" that the
+        // admin connection-history dialog should surface. The audit log
+        // stays quiet here to avoid spamming the per-device timeline
+        // after every worker restart.
+        match (prev, online) {
+            // Fresh connection (None → online is "this peer was already
+            // online when we booted, sweep-then-open kicks off a fresh
+            // session"; Some(false) → online is the regular reconnect).
+            (None, true) | (Some(false), true) => {
+                if let Err(e) = connection_sessions::open(
+                    pool,
+                    device_id,
+                    user_id,
+                    endpoint_now.as_deref(),
+                    rx_total as i64,
+                    tx_total as i64,
+                    now,
+                )
+                .await
+                {
+                    warn!(?e, %device_id, "connection_sessions open failed");
+                }
+            }
+            // Disconnect — close the open row, stamping end-state
+            // endpoint + cumulative byte counters.
+            (Some(true), false) => {
+                if let Err(e) = connection_sessions::close(
+                    pool,
+                    device_id,
+                    endpoint_now.as_deref(),
+                    rx_total as i64,
+                    tx_total as i64,
+                    now,
+                )
+                .await
+                {
+                    warn!(?e, %device_id, "connection_sessions close failed");
+                }
+            }
+            _ => {}
         }
         prev_online.insert(device_id, online);
 

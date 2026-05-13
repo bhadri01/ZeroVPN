@@ -389,7 +389,7 @@ pub async fn create(
                 "dns_override": body.dns_override,
                 "private_key_stored": store_private,
             }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -525,7 +525,7 @@ pub async fn reorder(
             target_type: Some("device"),
             target_id: None,
             metadata: json!({ "count": body.ids.len() }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -688,7 +688,7 @@ pub async fn rotate_keys(
             target_type: Some("device"),
             target_id: Some(id),
             metadata: json!({ "name": device.name }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -742,7 +742,7 @@ pub async fn delete(
             target_type: Some("device"),
             target_id: Some(id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -808,7 +808,7 @@ pub async fn clear_stored_key(
             target_type: Some("device"),
             target_id: Some(id),
             metadata: json!({ "name": device.name }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -925,7 +925,7 @@ pub async fn redownload_conf(
             target_type: Some("device"),
             target_id: Some(id),
             metadata: json!({ "name": device.name }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -1019,7 +1019,7 @@ pub async fn patch(
                 "split_tunnel_changed": body.allowed_ips_override.is_some(),
                 "dns_changed": body.dns_override.is_some(),
             }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -1124,7 +1124,7 @@ async fn set_pause_state(
             target_type: Some("device"),
             target_id: Some(device_id),
             metadata: json!({ "to": target }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;

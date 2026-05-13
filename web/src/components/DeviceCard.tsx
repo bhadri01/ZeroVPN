@@ -1,5 +1,15 @@
-import { IconArrowDown, IconArrowUp, IconExternalLink } from "@tabler/icons-react"
-import { useMemo, type HTMLAttributes, type ReactNode } from "react"
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconExternalLink,
+  IconGripVertical,
+} from "@tabler/icons-react"
+import {
+  useMemo,
+  type HTMLAttributes,
+  type PointerEventHandler,
+  type ReactNode,
+} from "react"
 import { Link } from "react-router"
 
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
@@ -40,6 +50,17 @@ export interface DeviceCardProps extends HTMLAttributes<HTMLDivElement> {
    *  the device-detail page. Set to false to suppress the affordance
    *  entirely. Defaults to true. */
   showOpenLink?: boolean
+  /** When present, render a grip handle in the card's top-left corner
+   *  and route drag-source props through it instead of making the
+   *  whole card draggable. The handle gets a grab cursor on hover and
+   *  grabbing while held; the rest of the card stays clickable. Pointer
+   *  events are the supported path now (motion `<Reorder>` drives drag
+   *  via `onPointerDown`); the older HTML5-drag props are kept on the
+   *  type so the previous integration site doesn't have to change in
+   *  the same commit. */
+  dragHandleProps?: {
+    onPointerDown?: PointerEventHandler<HTMLDivElement>
+  }
 }
 
 /** Single, shared visual representation of a device — used by the Finder
@@ -59,6 +80,7 @@ export function DeviceCard({
   device: d,
   actions,
   showOpenLink = true,
+  dragHandleProps,
   className,
   ...divProps
 }: DeviceCardProps) {
@@ -98,14 +120,32 @@ export function DeviceCard({
     <div
       {...divProps}
       className={cn(
-        "zv-panel relative flex flex-col transition-colors",
+        "zv-panel group/card relative flex cursor-pointer flex-col transition-colors",
         // Drag-state visuals — kick in when callers set
         // data-dragging="1" / data-drop-target="1" on the root.
-        "data-[dragging=1]:opacity-40",
+        // While being dragged the cursor switches to grabbing on the
+        // whole card so it doesn't visually contradict the operation.
+        "data-[dragging=1]:cursor-grabbing data-[dragging=1]:opacity-40",
         "data-[drop-target=1]:border-primary data-[drop-target=1]:shadow-[inset_0_0_0_1px_var(--primary)]",
         className,
       )}
     >
+      {/* Drag handle — only rendered when the caller supplies drag-source
+          props. Absolutely positioned in the top-left corner so it stays
+          out of the header's normal flow; the rest of the card keeps its
+          existing layout untouched. Faint at rest; lights up on
+          card-hover (via group-hover/card) so it doesn't compete with
+          the name + status while idle. */}
+      {dragHandleProps && (
+        <div
+          {...dragHandleProps}
+          aria-label="Drag to reorder"
+          title="Drag to reorder"
+          className="border-border bg-card text-muted-foreground/40 group-hover/card:text-muted-foreground hover:text-foreground hover:border-foreground absolute left-1.5 top-1.5 z-10 inline-flex size-5 cursor-grab select-none items-center justify-center border opacity-0 transition-[opacity,color,border-color] group-hover/card:opacity-100 active:cursor-grabbing"
+        >
+          <IconGripVertical className="size-3" />
+        </div>
+      )}
       <div className="flex items-start justify-between gap-2 px-4 pt-4 pb-3">
         <Link
           to={`/app/devices/${d.id}`}

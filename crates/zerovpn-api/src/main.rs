@@ -280,6 +280,14 @@ async fn main() -> Result<()> {
                 .route("/admin/audit.csv", get(routes::admin::list_audit_csv))
                 .route("/admin/failed-logins", get(routes::admin::list_failed_logins))
                 .route(
+                    "/admin/session-events",
+                    get(routes::admin::list_session_events),
+                )
+                .route(
+                    "/admin/access-logs",
+                    get(routes::admin::list_access_logs),
+                )
+                .route(
                     "/admin/maintenance",
                     get(routes::admin::get_maintenance).put(routes::admin::set_maintenance),
                 )
@@ -289,8 +297,20 @@ async fn main() -> Result<()> {
                 )
                 .route("/admin/devices", get(routes::admin::list_devices))
                 .route(
+                    "/admin/devices/{id}",
+                    get(routes::admin::device_detail),
+                )
+                .route(
+                    "/admin/devices/{id}/bandwidth",
+                    get(routes::admin::device_bandwidth),
+                )
+                .route(
                     "/admin/devices/{id}/endpoint-history",
                     get(routes::admin::device_endpoint_history),
+                )
+                .route(
+                    "/admin/devices/{id}/connection-history",
+                    get(routes::admin::device_connection_history),
                 )
                 .route("/admin/servers", get(routes::admin::list_servers))
                 .route(
@@ -333,6 +353,15 @@ async fn main() -> Result<()> {
         .layer(axum::middleware::from_fn_with_state(
             app_state.clone(),
             middleware::maintenance_gate,
+        ))
+        // Phase 2 / Stage B — per-request access log. Slotted INSIDE the
+        // session layer (so `req.extensions::<Session>()` is populated)
+        // and OUTSIDE the maintenance_gate (so a maintenance-mode 503
+        // is still logged, with status 503). SetRequestIdLayer is even
+        // further out, so the `x-request-id` header is already set.
+        .layer(axum::middleware::from_fn_with_state(
+            app_state.clone(),
+            middleware::access_log,
         ))
         .layer(session_layer)
         .with_state(app_state)

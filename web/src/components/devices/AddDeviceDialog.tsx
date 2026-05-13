@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { IconDownload, IconQrcode } from "@tabler/icons-react"
+import {
+  IconChevronDown,
+  IconCopy,
+  IconDownload,
+  IconEye,
+  IconEyeOff,
+  IconQrcode,
+} from "@tabler/icons-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
@@ -238,6 +245,7 @@ export function AddDeviceDialog({
   return (
     <SheetContent
       side="right"
+      showCloseButton={false}
       className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-[820px]"
     >
       <SheetHeader className="border-border border-b">
@@ -515,80 +523,292 @@ export function AddDeviceDialog({
       )}
 
       {step === 2 && result && (
-        <div className="flex min-h-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-          <p className="text-muted-foreground text-[13px] leading-relaxed">
-            The keypair was generated server-side for this peer; the private
-            key is in the config below and{" "}
-            <strong className="text-foreground">isn't stored</strong> after
-            you dismiss this dialog.{" "}
-            <span className="text-foreground">Save it now.</span>
-          </p>
-
-          <div className="border-border grid gap-0 border md:grid-cols-[auto_1fr]">
-            <div className="border-border bg-card flex aspect-square shrink-0 items-center justify-center md:aspect-auto md:w-[180px] md:border-r">
-              <span
-                className="block size-[148px] [&>svg]:size-full"
-                dangerouslySetInnerHTML={{ __html: result.qr_svg }}
-              />
-            </div>
-            <div className="flex min-w-0 flex-col gap-3 p-4">
-              <div className="flex flex-col gap-1">
-                <Eyebrow>Scan with WireGuard / mobile</Eyebrow>
-                <p className="text-muted-foreground font-mono text-[11px]">
-                  Allocated IP{" "}
-                  <span className="text-foreground">
-                    {result.device.allocated_ip}
-                  </span>
-                </p>
-              </div>
-              <div className="mt-auto grid grid-cols-2 gap-2">
-                <Button
-                  size="sm"
-                  onClick={() =>
-                    downloadConfig(result.device.name, result.config)
-                  }
-                >
-                  <IconDownload size={14} />
-                  Download .conf
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(result.config)
-                    toast.success("Config copied")
-                  }}
-                >
-                  <IconQrcode size={14} />
-                  Copy config
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <div className="max-h-[260px] overflow-y-auto">
-            <CopyableCode value={result.config} multiline />
-          </div>
-
-        </div>
-          <SheetFooter className="border-border flex-row justify-end gap-2 border-t">
-            <Button variant="ghost" onClick={() => setStep(1)}>
-              ← Back
-            </Button>
-            <Button
-              onClick={() => {
-                onCreated(result)
-                resetAll()
-              }}
-            >
-              Done
-            </Button>
-          </SheetFooter>
-        </div>
+        <Step2Result
+          result={result}
+          onDone={() => {
+            onCreated(result)
+            resetAll()
+          }}
+        />
       )}
     </SheetContent>
   )
+}
+
+/**
+ * Step-2 "config ready" pane. Fills the available side-sheet height
+ * with a parsed view of the generated WireGuard config — [Interface]
+ * and [Peer] cards rendered as compact key/value rows — instead of
+ * leaving dead space below the QR. The raw .conf is still one click
+ * away via the "View raw .conf" disclosure at the bottom.
+ */
+function Step2Result({
+  result,
+  onDone,
+}: {
+  result: CreatedDevice
+  onDone: () => void
+}) {
+  const parsed = useMemo(() => parseWgConf(result.config), [result.config])
+  const [showRaw, setShowRaw] = useState(false)
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+        <p className="text-muted-foreground text-[13px] leading-relaxed">
+          The keypair was generated server-side for this peer; the private
+          key is in the config below and{" "}
+          <strong className="text-foreground">isn't stored</strong> after
+          you dismiss this dialog.{" "}
+          <span className="text-foreground">Save it now.</span>
+        </p>
+
+        <div className="border-border grid gap-0 border md:grid-cols-[auto_1fr]">
+          <div className="border-border bg-card flex aspect-square shrink-0 items-center justify-center md:aspect-auto md:w-[180px] md:border-r">
+            <span
+              className="block size-[148px] [&>svg]:size-full"
+              dangerouslySetInnerHTML={{ __html: result.qr_svg }}
+            />
+          </div>
+          <div className="flex min-w-0 flex-col gap-3 p-4">
+            <div className="flex flex-col gap-1">
+              <Eyebrow>Scan with WireGuard / mobile</Eyebrow>
+              <p className="text-muted-foreground font-mono text-[11px]">
+                Allocated IP{" "}
+                <span className="text-foreground">
+                  {result.device.allocated_ip}
+                </span>
+              </p>
+            </div>
+            <div className="mt-auto grid grid-cols-2 gap-2">
+              <Button
+                size="sm"
+                onClick={() =>
+                  downloadConfig(result.device.name, result.config)
+                }
+              >
+                <IconDownload size={14} />
+                Download .conf
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  void navigator.clipboard.writeText(result.config)
+                  toast.success("Config copied")
+                }}
+              >
+                <IconQrcode size={14} />
+                Copy config
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Interface / Peer cards — fill the formerly-empty space below
+            the QR with the structured view of the .conf. Stack into a
+            single column on narrow viewports. */}
+        <div className="grid gap-3 md:grid-cols-2">
+          <ConfigSection title="Interface" eyebrow="Local peer">
+            <ConfigRow label="Address" value={parsed.interface.address} mono />
+            <ConfigRow label="DNS" value={parsed.interface.dns} mono />
+            <ConfigRow label="MTU" value={parsed.interface.mtu} mono />
+            {parsed.interface.privateKey && (
+              <SecretRow label="Private key" value={parsed.interface.privateKey} />
+            )}
+          </ConfigSection>
+
+          <ConfigSection title="Peer" eyebrow="Remote server">
+            <ConfigRow label="Public key" value={parsed.peer.publicKey} mono truncate />
+            <ConfigRow label="Endpoint" value={parsed.peer.endpoint} mono />
+            <ConfigRow label="Allowed IPs" value={parsed.peer.allowedIps} mono />
+            <ConfigRow label="Keepalive" value={parsed.peer.keepalive} mono />
+          </ConfigSection>
+        </div>
+
+        <details
+          open={showRaw}
+          onToggle={(e) => setShowRaw((e.target as HTMLDetailsElement).open)}
+          className="border-border border"
+        >
+          <summary className="text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-2 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] transition-colors">
+            <IconChevronDown
+              className={`size-3.5 transition-transform ${showRaw ? "rotate-0" : "-rotate-90"}`}
+            />
+            View raw .conf
+          </summary>
+          <div className="border-border max-h-[260px] overflow-y-auto border-t">
+            <CopyableCode value={result.config} multiline />
+          </div>
+        </details>
+      </div>
+
+      <SheetFooter className="border-border flex-row justify-end gap-2 border-t">
+        <Button onClick={onDone}>Done</Button>
+      </SheetFooter>
+    </div>
+  )
+}
+
+/** Bordered card with an eyebrow + title + body. Sized to match the rest
+ *  of the dialog's visual rhythm. */
+function ConfigSection({
+  title,
+  eyebrow,
+  children,
+}: {
+  title: string
+  eyebrow: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="border-border flex flex-col border">
+      <div className="border-border border-b px-3 py-2">
+        <div className="text-muted-foreground font-mono text-[10px] uppercase tracking-[0.08em]">
+          {eyebrow}
+        </div>
+        <div className="text-foreground text-sm font-medium">{title}</div>
+      </div>
+      <dl className="flex flex-col">{children}</dl>
+    </div>
+  )
+}
+
+/** Single key/value row inside a ConfigSection. Renders dt/dd pair with
+ *  a hairline divider on top so consecutive rows separate cleanly. */
+function ConfigRow({
+  label,
+  value,
+  mono,
+  truncate,
+}: {
+  label: string
+  value: string | null | undefined
+  mono?: boolean
+  truncate?: boolean
+}) {
+  return (
+    <div className="border-border [&:not(:first-child)]:border-t flex items-baseline justify-between gap-3 px-3 py-2">
+      <dt className="text-muted-foreground shrink-0 font-mono text-[10px] uppercase tracking-[0.08em]">
+        {label}
+      </dt>
+      <dd
+        className={[
+          "text-foreground min-w-0 text-right text-[12px]",
+          mono ? "font-mono" : "",
+          truncate ? "truncate" : "break-all",
+        ].join(" ")}
+        title={truncate && value ? value : undefined}
+      >
+        {value || <span className="text-muted-foreground/60">—</span>}
+      </dd>
+    </div>
+  )
+}
+
+/** Like ConfigRow but for the private key: masked by default with an
+ *  eye-toggle to reveal and a one-click copy. The plaintext only lives
+ *  in component state — it's never stored after the sheet closes. */
+function SecretRow({ label, value }: { label: string; value: string }) {
+  const [revealed, setRevealed] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value)
+      toast.success(`${label} copied`)
+    } catch {
+      toast.error("Clipboard blocked — copy from the raw .conf instead")
+    }
+  }
+  return (
+    <div className="border-border [&:not(:first-child)]:border-t flex items-center justify-between gap-3 px-3 py-2">
+      <dt className="text-muted-foreground shrink-0 font-mono text-[10px] uppercase tracking-[0.08em]">
+        {label}
+      </dt>
+      <dd className="flex min-w-0 items-center gap-1.5">
+        <span
+          className={[
+            "text-foreground max-w-[180px] truncate font-mono text-[12px] sm:max-w-[260px]",
+            revealed ? "" : "tracking-[0.15em]",
+          ].join(" ")}
+        >
+          {revealed ? value : "•".repeat(Math.min(24, value.length))}
+        </span>
+        <button
+          type="button"
+          onClick={() => setRevealed((v) => !v)}
+          className="text-muted-foreground hover:text-foreground border-border hover:border-foreground inline-flex size-6 shrink-0 items-center justify-center border transition-colors"
+          aria-label={revealed ? "Hide private key" : "Reveal private key"}
+        >
+          {revealed ? (
+            <IconEyeOff className="size-3.5" />
+          ) : (
+            <IconEye className="size-3.5" />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="text-muted-foreground hover:text-foreground border-border hover:border-foreground inline-flex size-6 shrink-0 items-center justify-center border transition-colors"
+          aria-label={`Copy ${label}`}
+        >
+          <IconCopy className="size-3.5" />
+        </button>
+      </dd>
+    </div>
+  )
+}
+
+interface ParsedConf {
+  interface: {
+    address?: string
+    dns?: string
+    mtu?: string
+    privateKey?: string
+  }
+  peer: {
+    publicKey?: string
+    endpoint?: string
+    allowedIps?: string
+    keepalive?: string
+  }
+}
+
+/** Minimal WireGuard .conf parser. Walks the [section] / Key = Value
+ *  lines the server emits — order-independent, comment-tolerant — and
+ *  surfaces the four-or-so fields we want to show on each card. Anything
+ *  unrecognised is ignored: the source of truth is still the raw .conf
+ *  available through the disclosure below. */
+function parseWgConf(src: string): ParsedConf {
+  const out: ParsedConf = { interface: {}, peer: {} }
+  let section: "interface" | "peer" | "" = ""
+  for (const rawLine of src.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith("#")) continue
+    const sec = line.match(/^\[(.+)\]$/)
+    if (sec) {
+      const tag = sec[1].toLowerCase()
+      section = tag === "interface" ? "interface" : tag === "peer" ? "peer" : ""
+      continue
+    }
+    const eq = line.indexOf("=")
+    if (eq < 0) continue
+    const key = line.slice(0, eq).trim().toLowerCase()
+    const value = line.slice(eq + 1).trim()
+    if (section === "interface") {
+      if (key === "address") out.interface.address = value
+      else if (key === "dns") out.interface.dns = value
+      else if (key === "mtu") out.interface.mtu = value
+      else if (key === "privatekey") out.interface.privateKey = value
+    } else if (section === "peer") {
+      if (key === "publickey") out.peer.publicKey = value
+      else if (key === "endpoint") out.peer.endpoint = value
+      else if (key === "allowedips") out.peer.allowedIps = value
+      else if (key === "persistentkeepalive") {
+        out.peer.keepalive = /^\d+$/.test(value) ? `${value}s` : value
+      }
+    }
+  }
+  return out
 }
 
 function DnsNameStatus({

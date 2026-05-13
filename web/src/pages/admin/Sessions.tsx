@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { IconDownload, IconSearch, IconX } from "@tabler/icons-react"
+import { IconSearch, IconX } from "@tabler/icons-react"
 import { useEffect, useMemo, useState } from "react"
 
 import { CopyableCode } from "@/components/CopyableCode"
@@ -18,9 +18,9 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  type AdminAuditFilters,
-  adminAuditCsvUrl,
-  adminListAudit,
+  type AdminSessionEventFilters,
+  type SessionEventKind,
+  adminListSessionEvents,
 } from "@/lib/api"
 
 type RangeChoice = "all" | "1h" | "24h" | "7d" | "30d"
@@ -46,60 +46,60 @@ function rangeToSince(r: RangeChoice): string | undefined {
   return new Date(Date.now() - ms).toISOString()
 }
 
-const TARGET_TYPE_OPTIONS = [
-  { value: "all", label: "All targets" },
-  { value: "user", label: "User" },
-  { value: "device", label: "Device" },
-  { value: "server", label: "Server" },
+const EVENT_OPTIONS: { value: "all" | SessionEventKind; label: string }[] = [
+  { value: "all", label: "All events" },
+  { value: "login", label: "Login" },
+  { value: "logout", label: "Logout" },
+  { value: "idle_timeout", label: "Idle timeout" },
+  { value: "suspicious_login", label: "Suspicious login" },
+  { value: "password_change", label: "Password change" },
+  { value: "totp_enable", label: "2FA enable" },
+  { value: "totp_disable", label: "2FA disable" },
+  { value: "impersonation_start", label: "Impersonation start" },
+  { value: "impersonation_end", label: "Impersonation end" },
 ]
 
-export function AuditLogPage() {
+export function SessionsPage() {
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(50)
 
-  const [actionFilter, setActionFilter] = useState("")
-  const [actorIdFilter, setActorIdFilter] = useState("")
-  const [targetIdFilter, setTargetIdFilter] = useState("")
-  const [targetType, setTargetType] = useState<string>("all")
+  const [eventFilter, setEventFilter] = useState<"all" | SessionEventKind>("all")
+  const [userIdFilter, setUserIdFilter] = useState("")
+  const [ipFilter, setIpFilter] = useState("")
   const [range, setRange] = useState<RangeChoice>("all")
 
-  // Reset to page 0 whenever a filter changes — pagination cursor on
-  // the unfiltered set isn't meaningful for the filtered one.
   useEffect(() => {
     setPage(0)
-  }, [actionFilter, actorIdFilter, targetIdFilter, targetType, range, pageSize])
+  }, [eventFilter, userIdFilter, ipFilter, range, pageSize])
 
-  const filters = useMemo<AdminAuditFilters>(
+  const filters = useMemo<AdminSessionEventFilters>(
     () => ({
-      action: actionFilter.trim() || undefined,
-      actor_user_id: actorIdFilter.trim() || undefined,
-      target_id: targetIdFilter.trim() || undefined,
-      target_type: targetType === "all" ? undefined : targetType,
+      event: eventFilter === "all" ? undefined : eventFilter,
+      user_id: userIdFilter.trim() || undefined,
+      ip: ipFilter.trim() || undefined,
       since: rangeToSince(range),
     }),
-    [actionFilter, actorIdFilter, targetIdFilter, targetType, range],
+    [eventFilter, userIdFilter, ipFilter, range],
   )
 
   const filtersActive =
-    !!filters.action ||
-    !!filters.actor_user_id ||
-    !!filters.target_id ||
-    !!filters.target_type ||
+    !!filters.event ||
+    !!filters.user_id ||
+    !!filters.ip ||
     !!filters.since
 
-  const auditQ = useQuery({
-    queryKey: ["admin", "audit", filters, page, pageSize],
-    queryFn: () => adminListAudit(filters, pageSize, page * pageSize),
+  const q = useQuery({
+    queryKey: ["admin", "session-events", filters, page, pageSize],
+    queryFn: () => adminListSessionEvents(filters, pageSize, page * pageSize),
     placeholderData: (prev) => prev,
   })
-  const items = auditQ.data?.items ?? []
-  const total = auditQ.data?.total ?? 0
+  const items = q.data?.items ?? []
+  const total = q.data?.total ?? 0
 
   const clearFilters = () => {
-    setActionFilter("")
-    setActorIdFilter("")
-    setTargetIdFilter("")
-    setTargetType("all")
+    setEventFilter("all")
+    setUserIdFilter("")
+    setIpFilter("")
     setRange("all")
   }
 
@@ -107,63 +107,27 @@ export function AuditLogPage() {
     <PageStagger>
       <StaggerItem>
         <PageHead
-          eyebrow="Admin · 03"
-          title="Audit log"
-          sub={`${total.toLocaleString()} entries${filtersActive ? " (filtered)" : ""} · retained indefinitely · IP + UA captured · CSV export honors filters`}
-          right={
-            <Button asChild variant="outline" size="sm">
-              <a href={adminAuditCsvUrl(filters, 5000)} download="audit.csv">
-                <IconDownload />
-                Export CSV
-              </a>
-            </Button>
-          }
+          eyebrow="Admin · 07"
+          title="Sessions"
+          sub={`${total.toLocaleString()} events${filtersActive ? " (filtered)" : ""} · login · logout · 2FA · impersonation · suspicious-login`}
         />
       </StaggerItem>
 
       <StaggerItem>
         <Panel flush>
           <div className="border-border flex flex-wrap items-end gap-2 border-b p-2">
-            <FilterField label="Action" htmlFor="audit-action" widthClass="w-56">
-              <div className="relative">
-                <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
-                <Input
-                  id="audit-action"
-                  value={actionFilter}
-                  onChange={(e) => setActionFilter(e.target.value)}
-                  placeholder="e.g. admin.user_deleted"
-                  className="h-8 pl-8 font-mono text-xs"
-                />
-              </div>
-            </FilterField>
-            <FilterField label="Actor user-id" htmlFor="audit-actor" widthClass="w-64">
-              <Input
-                id="audit-actor"
-                value={actorIdFilter}
-                onChange={(e) => setActorIdFilter(e.target.value)}
-                placeholder="UUID prefix or full"
-                className="h-8 font-mono text-xs"
-              />
-            </FilterField>
-            <FilterField label="Target id" htmlFor="audit-target" widthClass="w-64">
-              <Input
-                id="audit-target"
-                value={targetIdFilter}
-                onChange={(e) => setTargetIdFilter(e.target.value)}
-                placeholder="UUID"
-                className="h-8 font-mono text-xs"
-              />
-            </FilterField>
-            <FilterField label="Target type" htmlFor="audit-tt" widthClass="w-36">
+            <FilterField label="Event" htmlFor="sess-event" widthClass="w-44">
               <Select
-                value={targetType}
-                onValueChange={setTargetType}
+                value={eventFilter}
+                onValueChange={(v) =>
+                  setEventFilter(v as "all" | SessionEventKind)
+                }
               >
-                <SelectTrigger id="audit-tt" className="h-8 text-xs">
+                <SelectTrigger id="sess-event" className="h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {TARGET_TYPE_OPTIONS.map((o) => (
+                  {EVENT_OPTIONS.map((o) => (
                     <SelectItem key={o.value} value={o.value}>
                       {o.label}
                     </SelectItem>
@@ -171,12 +135,33 @@ export function AuditLogPage() {
                 </SelectContent>
               </Select>
             </FilterField>
-            <FilterField label="Range" htmlFor="audit-range" widthClass="w-36">
+            <FilterField label="User-id" htmlFor="sess-user" widthClass="w-64">
+              <Input
+                id="sess-user"
+                value={userIdFilter}
+                onChange={(e) => setUserIdFilter(e.target.value)}
+                placeholder="UUID"
+                className="h-8 font-mono text-xs"
+              />
+            </FilterField>
+            <FilterField label="IP" htmlFor="sess-ip" widthClass="w-44">
+              <div className="relative">
+                <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
+                <Input
+                  id="sess-ip"
+                  value={ipFilter}
+                  onChange={(e) => setIpFilter(e.target.value)}
+                  placeholder="203.0.113.42"
+                  className="h-8 pl-8 font-mono text-xs"
+                />
+              </div>
+            </FilterField>
+            <FilterField label="Range" htmlFor="sess-range" widthClass="w-36">
               <Select
                 value={range}
                 onValueChange={(v) => setRange(v as RangeChoice)}
               >
-                <SelectTrigger id="audit-range" className="h-8 text-xs">
+                <SelectTrigger id="sess-range" className="h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -201,22 +186,21 @@ export function AuditLogPage() {
             )}
           </div>
 
-          {auditQ.isLoading && (
+          {q.isLoading && (
             <div className="flex flex-col gap-2 p-4">
               <Skeleton className="h-8 rounded-none" />
               <Skeleton className="h-8 rounded-none" />
               <Skeleton className="h-8 rounded-none" />
             </div>
           )}
-          {auditQ.data && (
+          {q.data && (
             <div className="zv-table-scroll">
               <table className="zv-table">
                 <thead>
                   <tr>
                     <th className="w-[180px]">When</th>
-                    <th>Actor</th>
-                    <th>Action</th>
-                    <th>Target</th>
+                    <th>User</th>
+                    <th>Event</th>
                     <th className="w-[140px]">IP</th>
                     <th>User-Agent</th>
                     <th>Metadata</th>
@@ -229,50 +213,43 @@ export function AuditLogPage() {
                         <RelativeTime value={row.created_at} />
                       </td>
                       <td className="text-muted-foreground font-mono text-xs">
-                        {row.actor_user_id ? (
-                          <button
-                            type="button"
-                            onClick={() => setActorIdFilter(row.actor_user_id!)}
-                            className="hover:text-foreground transition-colors"
-                            title="Filter by this actor"
-                          >
-                            {row.actor_user_id.slice(0, 8)}
-                          </button>
-                        ) : (
-                          "—"
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setUserIdFilter(row.user_id)}
+                          className="hover:text-foreground transition-colors"
+                          title="Filter by this user"
+                        >
+                          {row.user_id.slice(0, 8)}
+                        </button>
                       </td>
                       <td>
                         <button
                           type="button"
-                          onClick={() => setActionFilter(row.action)}
-                          title="Filter by this action"
+                          onClick={() => setEventFilter(row.event)}
+                          title="Filter by this event"
                         >
-                          <Kbd>{row.action}</Kbd>
+                          <Kbd>{row.event}</Kbd>
                         </button>
-                      </td>
-                      <td className="font-mono text-xs">
-                        {row.target_type ?? "—"}
-                        {row.target_id && (
-                          <button
-                            type="button"
-                            onClick={() => setTargetIdFilter(row.target_id!)}
-                            className="text-muted-foreground hover:text-foreground ml-1 transition-colors"
-                            title="Filter by this target"
-                          >
-                            · {String(row.target_id).slice(0, 8)}
-                          </button>
-                        )}
                       </td>
                       <td className="font-mono text-xs tabular-nums">
                         {row.ip ? (
-                          row.ip.replace(/\/(32|128)$/, "")
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const bare = row.ip!.replace(/\/(32|128)$/, "")
+                              setIpFilter(bare)
+                            }}
+                            className="text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                            title="Filter by this IP"
+                          >
+                            {row.ip.replace(/\/(32|128)$/, "")}
+                          </button>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
                       </td>
                       <td
-                        className="text-muted-foreground max-w-[260px] truncate font-mono text-[11px]"
+                        className="text-muted-foreground max-w-[240px] truncate font-mono text-[11px]"
                         title={row.user_agent ?? undefined}
                       >
                         {row.user_agent ?? (
@@ -280,22 +257,28 @@ export function AuditLogPage() {
                         )}
                       </td>
                       <td className="max-w-[280px]">
-                        <CopyableCode
-                          value={JSON.stringify(row.metadata)}
-                          truncate
-                        />
+                        {Object.keys(row.metadata).length > 0 ? (
+                          <CopyableCode
+                            value={JSON.stringify(row.metadata)}
+                            truncate
+                          />
+                        ) : (
+                          <span className="text-muted-foreground font-mono text-[11px]">
+                            —
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}
                   {items.length === 0 && (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={6}
                         className="text-muted-foreground py-8 text-center font-mono text-sm"
                       >
                         {filtersActive
-                          ? "No entries match the current filters."
-                          : "No audit entries yet."}
+                          ? "No events match the current filters."
+                          : "No session events yet."}
                       </td>
                     </tr>
                   )}
@@ -308,7 +291,7 @@ export function AuditLogPage() {
             pageSize={pageSize}
             total={total}
             itemCount={items.length}
-            fetching={auditQ.isFetching}
+            fetching={q.isFetching}
             onPageChange={setPage}
             onPageSizeChange={setPageSize}
           />

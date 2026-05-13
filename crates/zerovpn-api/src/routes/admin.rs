@@ -1,6 +1,7 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::IntoResponse,
 };
 use ipnetwork::IpNetwork;
@@ -13,7 +14,8 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use zerovpn_core::models::{Server, UserRole, UserStatus};
 use zerovpn_db::repos::{
-    audit, bandwidth, devices, peer_endpoint_history, servers,
+    access_logs, audit, bandwidth, connection_sessions, devices, peer_endpoint_history,
+    servers, session_events,
     users::{self, AdminUserFilters},
 };
 
@@ -306,6 +308,17 @@ pub struct AdminUserActivity {
     pub id: i64,
     pub action: String,
     pub metadata: serde_json::Value,
+    /// Full client IP captured when the audit row was written. `null`
+    /// for rows emitted from worker tasks / CLI / state transitions.
+    #[schema(value_type = Option<String>, example = "203.0.113.42/32")]
+    pub ip: Option<IpNetwork>,
+    /// Raw `User-Agent` header. `null` for the same set as `ip`.
+    pub user_agent: Option<String>,
+    /// `"user"` / `"device"` / `"server"` / etc. — surface what the
+    /// audit row was *about* so the timeline can render "edited device
+    /// X" not just "device.updated".
+    pub target_type: Option<String>,
+    pub target_id: Option<Uuid>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 }
@@ -314,9 +327,20 @@ pub struct AdminUserActivity {
 pub struct AdminUserDetailResponse {
     pub user: AdminUserDetail,
     pub devices: Vec<AdminUserDevice>,
-    /// Recent audit entries where this user is the *target* (admin
-    /// actions taken on them). Newest first, hard-capped at 50.
+    /// Recent audit entries where this user is either the *actor* (own
+    /// actions) or the *target* (admin actions taken on them). Newest
+    /// first, hard-capped at 100. Drives the unified per-user activity
+    /// timeline together with `session_events` and `connection_sessions`.
     pub activity: Vec<AdminUserActivity>,
+    /// Recent `session_events` rows scoped to this user (logins,
+    /// logouts, 2FA toggles, impersonations, etc.). Newest first,
+    /// hard-capped at 50.
+    pub session_events: Vec<session_events::SessionEventRow>,
+    /// Recent `connection_sessions` rows across every one of this
+    /// user's devices. Newest first, hard-capped at 50. Lets the
+    /// timeline render "device A came online at HH:MM, disconnected
+    /// after 12m, 50MB up" inline.
+    pub connection_sessions: Vec<connection_sessions::ConnectionSessionRow>,
 }
 
 #[utoipa::path(
@@ -386,16 +410,43 @@ pub async fn user_detail(
         })
         .collect();
 
-    let activity_rows = audit::list_for_target(&state.pool, "user", target_id, 50).await?;
+    // Phase 2 / Stage B — richer per-user audit feed: includes rows
+    // where this user is the ACTOR (their own actions), not just rows
+    // where they're the target. Carries IP / UA / target so the
+    // unified timeline can render the full context inline.
+    let activity_rows = audit::list_for_user(&state.pool, target_id, 100).await?;
     let activity = activity_rows
         .into_iter()
         .map(|a| AdminUserActivity {
             id: a.id,
             action: a.action,
             metadata: a.metadata,
+            ip: a.ip,
+            user_agent: a.user_agent,
+            target_type: a.target_type,
+            target_id: a.target_id,
             created_at: a.created_at,
         })
         .collect();
+
+    // Per-user session events — same shape the cross-fleet
+    // /admin/session-events page renders, filtered to this user.
+    let session_events_rows = session_events::list_recent(
+        &state.pool,
+        session_events::Filters {
+            user_id: Some(target_id),
+            ..Default::default()
+        },
+        50,
+        0,
+    )
+    .await?;
+
+    // Per-user connection sessions across every one of their devices.
+    // Feeds the unified activity timeline; admins can also drill into
+    // a single device for the per-device list via /admin/devices/:id.
+    let connection_sessions_rows =
+        connection_sessions::list_for_user(&state.pool, target_id, 50).await?;
 
     Ok(Json(AdminUserDetailResponse {
         user: AdminUserDetail {
@@ -416,6 +467,8 @@ pub async fn user_detail(
         },
         devices,
         activity,
+        session_events: session_events_rows,
+        connection_sessions: connection_sessions_rows,
     }))
 }
 
@@ -484,7 +537,7 @@ pub async fn set_user_status(
             target_type: Some("user"),
             target_id: Some(target_id),
             metadata: json!({ "status": body.status, "prior": prior }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -550,7 +603,7 @@ pub async fn set_user_role(
             target_type: Some("user"),
             target_id: Some(target_id),
             metadata: json!({ "role": body.role }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -592,7 +645,7 @@ pub async fn admin_send_reset(
             target_type: Some("user"),
             target_id: Some(target.id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -631,7 +684,7 @@ pub async fn admin_disable_2fa(
             target_type: Some("user"),
             target_id: Some(target.id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -673,7 +726,7 @@ pub async fn admin_revoke_sessions(
             target_type: Some("user"),
             target_id: Some(target.id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -739,7 +792,7 @@ pub async fn admin_set_email_route(
             target_type: Some("user"),
             target_id: Some(target.id),
             metadata: json!({ "from": target.email, "to": new_email }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -809,7 +862,7 @@ pub async fn delete_user(
             target_type: Some("user"),
             target_id: Some(target.id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -961,7 +1014,7 @@ pub async fn create_user(
                 "skip_verification": body.skip_verification,
                 "generated_password": generated,
             }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -1093,10 +1146,10 @@ pub struct AuditRow {
     pub target_id: Option<Uuid>,
     pub metadata: serde_json::Value,
     /// Full client IP serialised as `IpNetwork` ("203.0.113.42/32").
-    /// Stage A — full address, no longer /24-truncated. Column name
-    /// is still `ip_prefix` for back-compat; rename queued for Stage B.
+    /// Stage A — full address, no longer /24-truncated. Renamed from
+    /// `ip_prefix` in migration 20.
     #[schema(value_type = Option<String>, example = "203.0.113.42/32")]
-    pub ip_prefix: Option<IpNetwork>,
+    pub ip: Option<IpNetwork>,
     /// Raw `User-Agent` header captured when the audit row was written.
     /// `NULL` for audit rows recorded outside of a route handler
     /// (worker tasks, CLI actions, internal state transitions).
@@ -1152,7 +1205,7 @@ pub async fn list_audit(
     .await?;
     let items: Vec<AuditRow> = sqlx::query_as(
         r#"SELECT id, actor_user_id, action, target_type, target_id, metadata,
-                  ip_prefix, user_agent, created_at
+                  ip, user_agent, created_at
              FROM audit_logs
             WHERE ($3::TEXT IS NULL OR action        = $3)
               AND ($4::UUID IS NULL OR actor_user_id = $4)
@@ -1183,12 +1236,10 @@ pub struct FailedLoginRow {
     pub id: i64,
     pub email_attempted: Option<String>,
     pub reason: zerovpn_db::repos::failed_logins::FailedLoginReason,
-    /// Full client IP (Phase 2 / Stage A) — column is still named
-    /// `ip_prefix` for back-compat; semantically a `/32` or `/128` host
-    /// network now. Surfaced as a string so the OpenAPI consumer doesn't
-    /// have to know IpNetwork's serde form.
+    /// Full client IP (Phase 2 / Stage A). `/32` or `/128` host
+    /// network. Renamed from `ip_prefix` in migration 20.
     #[schema(value_type = Option<String>, example = "203.0.113.42/32")]
-    pub ip_prefix: Option<IpNetwork>,
+    pub ip: Option<IpNetwork>,
     /// Raw `User-Agent` header from the failing request. Plaintext.
     pub user_agent: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -1223,7 +1274,7 @@ pub async fn list_audit_csv(
     let limit = q.limit.clamp(1, 5000);
     let items: Vec<AuditRow> = sqlx::query_as(
         r#"SELECT id, actor_user_id, action, target_type, target_id, metadata,
-                  ip_prefix, user_agent, created_at
+                  ip, user_agent, created_at
              FROM audit_logs
             WHERE ($2::TEXT IS NULL OR action        = $2)
               AND ($3::UUID IS NULL OR actor_user_id = $3)
@@ -1267,7 +1318,7 @@ pub async fn list_audit_csv(
                 r.target_type.unwrap_or_default(),
                 r.target_id.map(|t| t.to_string()).unwrap_or_default(),
                 r.metadata.to_string(),
-                r.ip_prefix.map(|i| i.to_string()).unwrap_or_default(),
+                r.ip.map(|i| i.to_string()).unwrap_or_default(),
                 r.user_agent.unwrap_or_default(),
                 r.created_at.unix_timestamp().to_string(),
             ])
@@ -1333,7 +1384,7 @@ pub async fn set_user_quota(
             target_type: Some("user"),
             target_id: Some(target_id),
             metadata: json!({ "monthly_byte_cap": cap }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -1367,7 +1418,7 @@ pub async fn list_failed_logins(
         r#"SELECT id,
                   email_attempted::TEXT AS email_attempted,
                   reason,
-                  ip_prefix,
+                  ip,
                   user_agent,
                   attempted_at
              FROM failed_logins
@@ -1450,7 +1501,7 @@ pub async fn set_maintenance(
             target_type: None,
             target_id: None,
             metadata: json!({ "on": body.maintenance_mode }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -1592,7 +1643,7 @@ pub async fn patch_server(
                 "mtu": body.mtu,
                 "dns_servers": body.dns_servers,
             }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -1679,7 +1730,7 @@ pub async fn rotate_server_keys(
                 "new_public_key": public,
                 "wg0_conf_rewritten": conf_write_ok,
             }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -1897,6 +1948,373 @@ pub async fn device_endpoint_history(
     Ok(Json(rows))
 }
 
+/// Admin-only: per-device connection-session log. One row per
+/// WireGuard connection (online → offline pair), with start / end
+/// endpoints and rx/tx byte counters so admins can read each session's
+/// duration and traffic without joining over transition pairs.
+/// Open sessions (still online) come back with `ended_at = null`.
+#[utoipa::path(
+    get,
+    path = "/admin/devices/{id}/connection-history",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    responses(
+        (status = 200, description = "Device's connection sessions, newest first", body = Vec<connection_sessions::ConnectionSessionRow>),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn device_connection_history(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let rows = connection_sessions::list_for_device(&state.pool, device_id, 200).await?;
+    Ok(Json(rows))
+}
+
+// ---- Admin device detail -------------------------------------------------
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminDeviceOwner {
+    pub id: Uuid,
+    pub email: String,
+    pub role: UserRole,
+    pub status: UserStatus,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminDeviceDetail {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub server_id: Uuid,
+    pub name: String,
+    pub os: zerovpn_core::models::DeviceOs,
+    pub status: zerovpn_core::models::DeviceStatus,
+    pub allocated_ip: String,
+    pub public_key: String,
+    pub dns_names: Vec<String>,
+    pub allowed_ips_override: Option<Vec<String>>,
+    pub dns_override: Option<Vec<String>>,
+    pub private_key_stored: bool,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_handshake_at: Option<OffsetDateTime>,
+    pub last_peer_endpoint: Option<String>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_peer_endpoint_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminDeviceActivity {
+    pub id: i64,
+    pub action: String,
+    pub metadata: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminDeviceDetailResponse {
+    pub device: AdminDeviceDetail,
+    pub owner: AdminDeviceOwner,
+    /// Recent audit entries where this device is the *target*. Newest
+    /// first, hard-capped at 50. Endpoint history and connection
+    /// sessions live behind their own paginated endpoints
+    /// (`/admin/devices/{id}/endpoint-history` and `/connection-history`).
+    pub activity: Vec<AdminDeviceActivity>,
+}
+
+/// Bundled admin device detail. Returns the device core, its owner,
+/// and the most recent 50 audit entries targeting the device. The
+/// frontend pulls endpoint + connection history in parallel.
+#[utoipa::path(
+    get,
+    path = "/admin/devices/{id}",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Device UUID")),
+    responses(
+        (status = 200, description = "Bundled admin device detail", body = AdminDeviceDetailResponse),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "Device not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn device_detail(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    // Direct SELECT so we can fetch the Stage A peer-endpoint columns
+    // without touching the core `Device` model.
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: Uuid,
+        user_id: Uuid,
+        server_id: Uuid,
+        name: String,
+        os: zerovpn_core::models::DeviceOs,
+        status: zerovpn_core::models::DeviceStatus,
+        allocated_ip: ipnetwork::IpNetwork,
+        public_key: String,
+        dns_names: Vec<String>,
+        allowed_ips_override: Option<Vec<String>>,
+        dns_override: Option<Vec<String>>,
+        private_key_encrypted: Option<Vec<u8>>,
+        last_handshake_at: Option<OffsetDateTime>,
+        last_peer_endpoint: Option<String>,
+        last_peer_endpoint_at: Option<OffsetDateTime>,
+        created_at: OffsetDateTime,
+    }
+    let row: Row = sqlx::query_as(
+        r#"SELECT id, user_id, server_id, name, os, status, allocated_ip,
+                  public_key, dns_names, allowed_ips_override, dns_override,
+                  private_key_encrypted, last_handshake_at,
+                  last_peer_endpoint, last_peer_endpoint_at, created_at
+             FROM devices
+            WHERE id = $1"#,
+    )
+    .bind(device_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    let owner_row = users::find_by_id(&state.pool, row.user_id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("device owner missing".into()))?;
+
+    let activity_rows = audit::list_for_target(&state.pool, "device", device_id, 50).await?;
+    let activity = activity_rows
+        .into_iter()
+        .map(|a| AdminDeviceActivity {
+            id: a.id,
+            action: a.action,
+            metadata: a.metadata,
+            created_at: a.created_at,
+        })
+        .collect();
+
+    Ok(Json(AdminDeviceDetailResponse {
+        device: AdminDeviceDetail {
+            id: row.id,
+            user_id: row.user_id,
+            server_id: row.server_id,
+            name: row.name,
+            os: row.os,
+            status: row.status,
+            allocated_ip: row.allocated_ip.ip().to_string(),
+            public_key: row.public_key,
+            dns_names: row.dns_names,
+            allowed_ips_override: row.allowed_ips_override,
+            dns_override: row.dns_override,
+            private_key_stored: row.private_key_encrypted.is_some(),
+            last_handshake_at: row.last_handshake_at,
+            last_peer_endpoint: row.last_peer_endpoint,
+            last_peer_endpoint_at: row.last_peer_endpoint_at,
+            created_at: row.created_at,
+        },
+        owner: AdminDeviceOwner {
+            id: owner_row.id,
+            email: owner_row.email,
+            role: owner_row.role,
+            status: owner_row.status,
+        },
+        activity,
+    }))
+}
+
+// ---- Admin device bandwidth ----------------------------------------------
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminDeviceBandwidthBucket {
+    #[serde(with = "time::serde::rfc3339")]
+    pub bucket_start: OffsetDateTime,
+    pub rx_bytes: i64,
+    pub tx_bytes: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminDeviceBandwidthResponse {
+    pub bucket: &'static str,
+    pub range: String,
+    pub buckets: Vec<AdminDeviceBandwidthBucket>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/devices/{id}/bandwidth",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Device UUID"), BandwidthRangeQuery),
+    responses(
+        (status = 200, description = "Bucketed RX/TX history for this device", body = AdminDeviceBandwidthResponse),
+        (status = 400, description = "Invalid range"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn device_bandwidth(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+    Query(q): Query<BandwidthRangeQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let range = q.range.unwrap_or_else(|| "24h".into());
+    let (rows, bucket) = match range.as_str() {
+        "24h" => (bandwidth::device_hourly(&state.pool, device_id, 24).await?, "hour"),
+        "7d" => (bandwidth::device_hourly(&state.pool, device_id, 24 * 7).await?, "hour"),
+        "30d" => (bandwidth::device_daily(&state.pool, device_id, 30).await?, "day"),
+        other => {
+            return Err(ApiError::Validation(format!(
+                "range must be 24h | 7d | 30d (got {other})"
+            )));
+        }
+    };
+    Ok(Json(AdminDeviceBandwidthResponse {
+        bucket: if bucket == "hour" { "hour" } else { "day" },
+        range,
+        buckets: rows
+            .into_iter()
+            .map(|b| AdminDeviceBandwidthBucket {
+                bucket_start: b.bucket_start,
+                rx_bytes: b.rx_bytes,
+                tx_bytes: b.tx_bytes,
+            })
+            .collect(),
+    }))
+}
+
+// ---- Session events ------------------------------------------------------
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct SessionEventsQuery {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    /// Filter by user UUID. Omit to include every user.
+    #[serde(default)]
+    pub user_id: Option<Uuid>,
+    /// Filter by event kind (login, logout, etc).
+    #[serde(default)]
+    pub event: Option<session_events::SessionEvent>,
+    /// Filter by IP (accepts the full `/32`/`/128` host form or a bare
+    /// address — Postgres widens either way).
+    #[serde(default)]
+    pub ip: Option<String>,
+    /// Inclusive lower bound on `created_at`.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub since: Option<OffsetDateTime>,
+    /// Exclusive upper bound on `created_at`.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub until: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SessionEventList {
+    pub total: i64,
+    pub items: Vec<session_events::SessionEventRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/session-events",
+    tag = "Admin",
+    params(SessionEventsQuery),
+    responses(
+        (status = 200, description = "Account-security event feed, newest first", body = SessionEventList),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn list_session_events(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Query(q): Query<SessionEventsQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let f = session_events::Filters {
+        user_id: q.user_id,
+        event: q.event,
+        ip: q.ip.as_deref(),
+        since: q.since,
+        until: q.until,
+    };
+    let total = session_events::count_recent(&state.pool, f).await?;
+    let items = session_events::list_recent(&state.pool, f, q.limit, q.offset).await?;
+    Ok(Json(SessionEventList { total, items }))
+}
+
+// ---- Access logs --------------------------------------------------------
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct AccessLogsQuery {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    /// Filter by user UUID. Omit to include unauthenticated rows too.
+    #[serde(default)]
+    pub user_id: Option<Uuid>,
+    /// Exact HTTP method (GET / POST / PUT / PATCH / DELETE).
+    #[serde(default)]
+    pub method: Option<String>,
+    /// Path prefix. `/api/v1/admin` matches every admin endpoint.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Lower bound on the HTTP status code (inclusive). Combined with
+    /// `status_max` this lets admins surface "every 4xx in the last
+    /// hour" or "every 5xx today".
+    #[serde(default)]
+    pub status_min: Option<i16>,
+    #[serde(default)]
+    pub status_max: Option<i16>,
+    #[serde(default)]
+    pub ip: Option<String>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub since: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub until: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AccessLogList {
+    pub total: i64,
+    pub items: Vec<access_logs::AccessLogRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/access-logs",
+    tag = "Admin",
+    params(AccessLogsQuery),
+    responses(
+        (status = 200, description = "Per-request HTTP access log, newest first", body = AccessLogList),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn list_access_logs(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Query(q): Query<AccessLogsQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let f = access_logs::Filters {
+        user_id: q.user_id,
+        method: q.method.as_deref(),
+        path_prefix: q.path.as_deref(),
+        status_min: q.status_min,
+        status_max: q.status_max,
+        ip: q.ip.as_deref(),
+        since: q.since,
+        until: q.until,
+    };
+    let total = access_logs::count_recent(&state.pool, f).await?;
+    let items = access_logs::list_recent(&state.pool, f, q.limit, q.offset).await?;
+    Ok(Json(AccessLogList { total, items }))
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AdminStatsResponse {
     pub total: i64,
@@ -1971,6 +2389,7 @@ pub async fn impersonate_user(
     State(state): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
     session: Session,
+    headers: HeaderMap,
     Path(target_id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
     if target_id == actor.id {
@@ -2021,10 +2440,25 @@ pub async fn impersonate_user(
             target_type: Some("user"),
             target_id: Some(target_id),
             metadata: json!({ "target_email": target.email }),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
+    // Phase 2 / Stage B — record under the TARGET user's id so the
+    // per-user Sessions panel surfaces "you were impersonated by $admin".
+    // The cross-fleet admin Sessions page picks it up via event filter.
+    if let Err(e) = session_events::record(
+        &state.pool,
+        target_id,
+        session_events::SessionEvent::ImpersonationStart,
+        crate::routes::auth::client_ip(&headers),
+        crate::routes::auth::client_user_agent(&headers).as_deref(),
+        json!({ "by_user_id": actor.id, "by_email": actor.email }),
+    )
+    .await
+    {
+        warn!(?e, target = %target_id, "session_events impersonation_start record failed");
+    }
     info!(actor = %actor.id, target = %target_id, "admin started impersonation");
 
     Ok(Json(json!({ "status": "ok" })))
@@ -2036,7 +2470,16 @@ pub async fn impersonate_user(
 pub async fn stop_impersonation(
     State(state): State<AppState>,
     session: Session,
+    headers: HeaderMap,
 ) -> ApiResult<impl IntoResponse> {
+    // Capture the impersonated (target) user id before we restore the
+    // admin's identity, so we can attribute the impersonation_end event
+    // to them. Best-effort — if missing, we just skip the row.
+    let impersonated_user_id: Option<Uuid> = session
+        .get(SESSION_KEY_USER_ID)
+        .await
+        .ok()
+        .flatten();
     let real_user_id: Option<Uuid> = session
         .get(SESSION_KEY_REAL_USER_ID)
         .await
@@ -2078,10 +2521,27 @@ pub async fn stop_impersonation(
             target_type: None,
             target_id: None,
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
+    // Phase 2 / Stage B — record under the impersonated user (mirrors
+    // the impersonation_start attribution). The metadata carries the
+    // admin who's stepping out.
+    if let Some(target) = impersonated_user_id {
+        if let Err(e) = session_events::record(
+            &state.pool,
+            target,
+            session_events::SessionEvent::ImpersonationEnd,
+            crate::routes::auth::client_ip(&headers),
+            crate::routes::auth::client_user_agent(&headers).as_deref(),
+            json!({ "by_user_id": real_user_id }),
+        )
+        .await
+        {
+            warn!(?e, target = %target, "session_events impersonation_end record failed");
+        }
+    }
     info!(admin = %real_user_id, "admin stopped impersonation");
 
     Ok(Json(json!({ "status": "ok" })))

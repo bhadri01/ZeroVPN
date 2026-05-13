@@ -11,7 +11,10 @@ pub struct AuditEntry<'a> {
     pub target_type: Option<&'a str>,
     pub target_id: Option<Uuid>,
     pub metadata: Value,
-    pub ip_prefix: Option<IpNetwork>,
+    /// Full client IP captured at the time the audit row was written.
+    /// `INET` column type, `/32` (v4) or `/128` (v6) host network.
+    /// Renamed from `ip_prefix` in migration 20.
+    pub ip: Option<IpNetwork>,
 }
 
 /// Insert an audit row with no `user_agent` captured. Most call sites
@@ -35,7 +38,7 @@ pub async fn record_with_ua(
 ) -> sqlx::Result<()> {
     sqlx::query(
         r#"INSERT INTO audit_logs
-              (actor_user_id, action, target_type, target_id, metadata, ip_prefix, user_agent)
+              (actor_user_id, action, target_type, target_id, metadata, ip, user_agent)
            VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
     )
     .bind(e.actor_user_id)
@@ -43,7 +46,7 @@ pub async fn record_with_ua(
     .bind(e.target_type)
     .bind(e.target_id)
     .bind(e.metadata)
-    .bind(e.ip_prefix)
+    .bind(e.ip)
     .bind(user_agent)
     .execute(pool)
     .await?;
@@ -51,7 +54,7 @@ pub async fn record_with_ua(
 }
 
 /// Row returned by `list_for_target`. Just the columns the device
-/// timeline UI needs — ip_prefix and target_type are stripped because
+/// timeline UI needs — ip and target_type are stripped because
 /// the caller already filtered on them.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TimelineEntry {
@@ -82,6 +85,45 @@ pub async fn list_for_target(
     )
     .bind(target_type)
     .bind(target_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Richer row for the per-user activity timeline. Includes the IP / UA
+/// captured at write time + the target so the frontend can render
+/// "user X edited device Y" in one line.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UserActivityEntry {
+    pub id: i64,
+    pub action: String,
+    pub metadata: Value,
+    pub ip: Option<ipnetwork::IpNetwork>,
+    pub user_agent: Option<String>,
+    pub target_type: Option<String>,
+    pub target_id: Option<Uuid>,
+    pub created_at: OffsetDateTime,
+}
+
+/// Fetch audit entries where the user is either the *actor* (their own
+/// actions: device created, password changed, login, etc.) or the
+/// *target* (admin actions taken on them: status changed, role changed,
+/// impersonated). Newest first; `limit` hard-capped at 500.
+pub async fn list_for_user(
+    pool: &PgPool,
+    user_id: Uuid,
+    limit: i64,
+) -> sqlx::Result<Vec<UserActivityEntry>> {
+    let limit = limit.clamp(1, 500);
+    sqlx::query_as::<_, UserActivityEntry>(
+        r#"SELECT id, action, metadata, ip, user_agent, target_type, target_id, created_at
+             FROM audit_logs
+            WHERE actor_user_id = $1
+               OR (target_type = 'user' AND target_id = $1)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2"#,
+    )
+    .bind(user_id)
     .bind(limit)
     .fetch_all(pool)
     .await

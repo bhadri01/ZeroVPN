@@ -1,10 +1,10 @@
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tracing::info;
+use tracing::{info, warn};
 use utoipa::ToSchema;
 use zerovpn_auth::totp;
-use zerovpn_db::repos::{audit, users};
+use zerovpn_db::repos::{audit, session_events, users};
 use zerovpn_wg::qr;
 
 use crate::{
@@ -90,6 +90,7 @@ pub async fn setup(
 pub async fn enable(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
+    headers: HeaderMap,
     Json(body): Json<EnableBody>,
 ) -> ApiResult<impl IntoResponse> {
     if user.totp_enabled {
@@ -116,10 +117,22 @@ pub async fn enable(
             target_type: Some("user"),
             target_id: Some(user.id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
+    if let Err(e) = session_events::record(
+        &state.pool,
+        user.id,
+        session_events::SessionEvent::TotpEnable,
+        crate::routes::auth::client_ip(&headers),
+        crate::routes::auth::client_user_agent(&headers).as_deref(),
+        json!({}),
+    )
+    .await
+    {
+        warn!(?e, user_id = %user.id, "session_events totp_enable record failed");
+    }
     info!(user_id = %user.id, "totp enabled");
     Ok(Json(EnableResponse { recovery_codes: plaintext_codes }))
 }
@@ -141,6 +154,7 @@ pub async fn enable(
 pub async fn disable(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
+    headers: HeaderMap,
     Json(body): Json<VerifyBody>,
 ) -> ApiResult<impl IntoResponse> {
     if !user.totp_enabled {
@@ -169,10 +183,22 @@ pub async fn disable(
             target_type: Some("user"),
             target_id: Some(user.id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
+    if let Err(e) = session_events::record(
+        &state.pool,
+        user.id,
+        session_events::SessionEvent::TotpDisable,
+        crate::routes::auth::client_ip(&headers),
+        crate::routes::auth::client_user_agent(&headers).as_deref(),
+        json!({}),
+    )
+    .await
+    {
+        warn!(?e, user_id = %user.id, "session_events totp_disable record failed");
+    }
     info!(user_id = %user.id, "totp disabled");
     Ok(Json(json!({ "status": "ok" })))
 }

@@ -4,7 +4,7 @@
 //! same email-by-link UX. We hash the plaintext token (sha256) at rest so
 //! a stolen DB doesn't directly hand over working links.
 
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use garde::Validate;
 use rand::RngCore;
@@ -15,7 +15,7 @@ use tower_sessions::Session;
 use tracing::{info, warn};
 use utoipa::ToSchema;
 use zerovpn_core::models::{UserRole, UserStatus};
-use zerovpn_db::repos::{audit, users, verification_tokens};
+use zerovpn_db::repos::{audit, session_events, users, verification_tokens};
 use zerovpn_db::repos::verification_tokens::TokenPurpose;
 use zerovpn_mail::templates::{PasswordReset, VerifyEmail};
 
@@ -216,7 +216,7 @@ pub async fn verify_email(
             target_type: Some("user"),
             target_id: Some(token.user_id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
@@ -288,7 +288,7 @@ pub async fn forgot_password(
                     target_type: Some("user"),
                     target_id: Some(u.id),
                     metadata: json!({}),
-                    ip_prefix: None,
+                    ip: None,
                 },
             )
             .await?;
@@ -375,6 +375,7 @@ pub async fn verify_reset_token(
 )]
 pub async fn reset_password(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<ResetBody>,
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
@@ -400,10 +401,24 @@ pub async fn reset_password(
             target_type: Some("user"),
             target_id: Some(token.user_id),
             metadata: json!({}),
-            ip_prefix: None,
+            ip: None,
         },
     )
     .await?;
+    // Phase 2 / Stage B — session_events row, distinguished from
+    // settings-driven changes via metadata.via.
+    if let Err(e) = session_events::record(
+        &state.pool,
+        token.user_id,
+        session_events::SessionEvent::PasswordChange,
+        crate::routes::auth::client_ip(&headers),
+        crate::routes::auth::client_user_agent(&headers).as_deref(),
+        json!({ "via": "email_link" }),
+    )
+    .await
+    {
+        warn!(?e, user_id = %token.user_id, "session_events password_reset record failed");
+    }
     info!(user_id = %token.user_id, "password reset");
     Ok(Json(Ack { status: "ok" }))
 }

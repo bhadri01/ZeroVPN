@@ -71,12 +71,25 @@ const UserDetailPage = lazy(() =>
     default: m.UserDetailPage,
   })),
 )
+const AdminDeviceDetailPage = lazy(() =>
+  import("@/pages/admin/DeviceDetail").then((m) => ({
+    default: m.AdminDeviceDetailPage,
+  })),
+)
 const AuditLogPage = lazy(() =>
   import("@/pages/admin/AuditLog").then((m) => ({ default: m.AuditLogPage })),
 )
 const FailedLoginsPage = lazy(() =>
   import("@/pages/admin/FailedLogins").then((m) => ({
     default: m.FailedLoginsPage,
+  })),
+)
+const SessionsPage = lazy(() =>
+  import("@/pages/admin/Sessions").then((m) => ({ default: m.SessionsPage })),
+)
+const AccessLogsPage = lazy(() =>
+  import("@/pages/admin/AccessLogs").then((m) => ({
+    default: m.AccessLogsPage,
   })),
 )
 const ServersPage = lazy(() =>
@@ -188,6 +201,14 @@ export const router = createBrowserRouter([
                 element: <UserDetailPage />,
               },
               {
+                path: "/admin/devices/:id",
+                handle: {
+                  breadcrumb: "Device",
+                  parents: [{ label: "Users", to: "/admin/users" }],
+                },
+                element: <AdminDeviceDetailPage />,
+              },
+              {
                 path: "/admin/audit",
                 handle: { breadcrumb: "Audit log" },
                 element: <AuditLogPage />,
@@ -196,6 +217,16 @@ export const router = createBrowserRouter([
                 path: "/admin/failed-logins",
                 handle: { breadcrumb: "Failed logins" },
                 element: <FailedLoginsPage />,
+              },
+              {
+                path: "/admin/sessions",
+                handle: { breadcrumb: "Sessions" },
+                element: <SessionsPage />,
+              },
+              {
+                path: "/admin/access-logs",
+                handle: { breadcrumb: "Access logs" },
+                element: <AccessLogsPage />,
               },
               {
                 path: "/admin/servers",

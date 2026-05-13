@@ -209,7 +209,7 @@ async fn rotate_server_keys(
                     "new_public_key": public,
                     "wg0_conf_rewritten": conf_write_ok,
                 }),
-                ip_prefix: None,
+                ip: None,
             },
         )
         .await?;

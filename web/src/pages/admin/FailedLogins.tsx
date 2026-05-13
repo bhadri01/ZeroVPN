@@ -104,11 +104,11 @@ export function FailedLoginsPage() {
                     {reasonPill(row.reason)}
                   </td>
                   <td className="font-mono text-xs tabular-nums">
-                    {row.ip_prefix ? (
+                    {row.ip ? (
                       // Strip the `/32` or `/128` suffix for the table cell
                       // — the column type is INET so the API returns
                       // "203.0.113.42/32" but the suffix is noise here.
-                      row.ip_prefix.replace(/\/(32|128)$/, "")
+                      row.ip.replace(/\/(32|128)$/, "")
                     ) : (
                       <span className="text-muted-foreground">(unknown)</span>
                     )}

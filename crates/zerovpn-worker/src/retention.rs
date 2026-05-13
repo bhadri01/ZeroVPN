@@ -16,7 +16,7 @@
 //!   re-registered.
 //!
 //! Notably **no longer enforced**:
-//! - `audit_logs.ip_prefix` is no longer anonymized at 30 days.
+//! - `audit_logs.ip` is no longer anonymized at 30 days.
 //! - `failed_logins` rows are kept indefinitely.
 //! - `bandwidth_samples` and `server_samples` are kept indefinitely
 //!   (the env vars `ZEROVPN_SAMPLE_RETENTION_DAYS` and

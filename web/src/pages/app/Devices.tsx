@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   IconDeviceTablet,
+  IconDotsVertical,
   IconGripVertical,
   IconLayoutGrid,
   IconLayoutList,
@@ -8,15 +9,24 @@ import {
   IconPlayerPlay,
   IconPlus,
   IconSearch,
+  IconTrash,
   IconX,
 } from "@tabler/icons-react"
+import { Reorder, useDragControls } from "motion/react"
 import { Link, useNavigate } from "react-router"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
+import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { DeviceCard } from "@/components/DeviceCard"
 import { AddDeviceDialog } from "@/components/devices/AddDeviceDialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   DevicesLoadingSkeleton,
   type ViewMode,
@@ -26,7 +36,7 @@ import { sumHistoriesRightAligned } from "@/components/devices/helpers"
 import { EmptyState } from "@/components/EmptyState"
 import { FilterDropdown } from "@/components/FilterDropdown"
 import { PageStagger, StaggerItem } from "@/components/motion"
-import { fmtRel, IconBtn, PageHead, Panel } from "@/components/swiss"
+import { fmtRel, PageHead, Panel } from "@/components/swiss"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
 import { WithTooltip } from "@/components/ui/with-tooltip"
@@ -49,6 +59,13 @@ import {
 } from "@/lib/deviceState"
 import { useLiveStats } from "@/stores/liveStats"
 
+/** Frames of live history rendered in each list-row sparkline. Matches
+ *  the grid view's DeviceCard so the two layouts feel related — long
+ *  enough to show shape, short enough that the Y axis isn't pulled by
+ *  an hour-old peak. The live store retains up to 1800 frames (30 min
+ *  at 1 Hz) so this is purely a render-side cap. */
+const LIST_CHART_WINDOW = 30
+
 /** Pill that <StatusPill> uses to render the cell. Connection is the
  *  primary lens — what the user actually cares about — so the row pill
  *  follows that. Revoked overrides because it's terminal. */
@@ -63,10 +80,12 @@ const CONN_FILTERS: { value: ConnState; label: string; pill: PillStatus }[] = [
   { value: "offline", label: "Offline", pill: "offline" },
 ]
 
+// "Revoked" intentionally omitted — revoking a device removes it from
+// the list, so the filter would never match anything. Keep the two
+// peer states the user can actually observe in the list.
 const PEER_FILTERS: { value: PeerState; label: string; pill: PillStatus }[] = [
   { value: "live", label: "Live", pill: "online" },
   { value: "paused", label: "Paused", pill: "paused" },
-  { value: "revoked", label: "Revoked", pill: "revoked" },
 ]
 
 const VIEW_MODE_KEY = "zv-devices-view-mode"
@@ -180,19 +199,70 @@ export function DevicesPage() {
     },
   })
 
-  // Drag-and-drop state: which device id is currently being dragged, and
-  // which row the pointer is hovering over (for the visual indicator).
-  // Both clear on dragend / drop. Kept as plain state — no library.
+  // Drag state: `localOrder` is the in-flight ordering while the user
+  // is dragging — Reorder.Group fires onReorder repeatedly with the
+  // new array; we mirror it here so the visible rows/cards re-render
+  // smoothly (each Reorder.Item handles the FLIP animation
+  // automatically). `dragId` is just the visual flag for the source
+  // row's "I'm being dragged" styling.
+  //
+  // The previous HTML5-drag + motion.layout pairing wasn't reliable
+  // (table rows don't play nicely with transform-based animations,
+  // and CSS-grid auto-flow can miss reorder events). motion's
+  // `<Reorder>` is purpose-built for this — pointer-event driven,
+  // built-in spring animations, single source of truth for order.
+  const [localOrder, setLocalOrder] = useState<PublicDevice[] | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
-  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
 
   const devices = devicesQ.data ?? []
 
+  /** When the user reorders the *filtered* list, splice the new order
+   *  back into the full device array — keeping any filtered-out items
+   *  pinned in their original slots. That way reorder-while-filtered
+   *  still does the obvious thing for the user (the two visible items
+   *  swap relative positions in the persistent list) without
+   *  disrupting the ordering of items that aren't on screen. */
+  const onReorderFiltered = (nextFiltered: PublicDevice[]) => {
+    const base = localOrder ?? devices
+    const visibleIds = new Set(nextFiltered.map((d) => d.id))
+    const merged: PublicDevice[] = []
+    let visibleIdx = 0
+    for (const item of base) {
+      if (visibleIds.has(item.id)) {
+        merged.push(nextFiltered[visibleIdx++])
+      } else {
+        merged.push(item)
+      }
+    }
+    setLocalOrder(merged)
+  }
+
+  /** Pointer release — commit if the order changed, otherwise clear. */
+  const handleDragRelease = () => {
+    const next = localOrder
+    setLocalOrder(null)
+    setDragId(null)
+    if (!next) return
+    const before = devices.map((d) => d.id)
+    const after = next.map((d) => d.id)
+    if (
+      after.length === before.length &&
+      after.every((id, i) => id === before[i])
+    ) {
+      return
+    }
+    reorderM.mutate(after)
+  }
+
   // Derive both axes once and cache so the table cells and filter counts
-  // agree without recomputing per render.
+  // agree without recomputing per render. `effectiveDevices` honours the
+  // in-flight Reorder ordering so the rendered list reflects the user's
+  // drag in real time without disturbing the React Query cache (which
+  // we only mutate on commit).
+  const effectiveDevices = localOrder ?? devices
   const decorated = useMemo(
-    () => devices.map((d) => ({ d, c: connState(d), p: peerState(d) })),
-    [devices],
+    () => effectiveDevices.map((d) => ({ d, c: connState(d), p: peerState(d) })),
+    [effectiveDevices],
   )
 
   const counts = useMemo(() => {
@@ -216,6 +286,10 @@ export function DevicesPage() {
     })
   }, [decorated, connFilter, peerFilter, query])
 
+  // `filtered` is already in `localOrder` order during drag (via
+  // `effectiveDevices` above), so it doubles as the render list.
+  const visibleRows = filtered
+
   const totalFilters = connFilter.size + peerFilter.size
   const toggleConn = (v: ConnState) =>
     setConnFilter((prev) => {
@@ -234,27 +308,8 @@ export function DevicesPage() {
     setPeerFilter(new Set())
   }
 
-  // Drop handler: build the next full ordering by moving `dragId` to
-  // `dropTargetId`'s position WITHIN the underlying `devices` array
-  // (not the filtered view). That way reorder-while-filtered still does
-  // the obvious thing for the user — the two visible rows swap relative
-  // positions in the persistent list. No-op if the filter is hiding
-  // either endpoint or the ids are the same.
-  const onDropOn = (targetId: string) => {
-    const src = dragId
-    setDragId(null)
-    setDropTargetId(null)
-    if (!src || src === targetId) return
-    const ids = devices.map((d) => d.id)
-    const fromIdx = ids.indexOf(src)
-    const toIdx = ids.indexOf(targetId)
-    if (fromIdx < 0 || toIdx < 0) return
-    const next = ids.slice()
-    next.splice(fromIdx, 1)
-    next.splice(toIdx, 0, src)
-    if (next.every((id, i) => id === ids[i])) return // unchanged
-    reorderM.mutate(next)
-  }
+  // (drop commit now happens in `handleDragRelease` above — fires when
+  // each Reorder.Item's pointer drag ends. No more HTML5-drag glue.)
 
   // Throughput summary scoped to the *currently filtered* device set,
   // and then narrowed again to devices that are actually `online` — an
@@ -424,31 +479,51 @@ export function DevicesPage() {
             />
           </div>
         )}
-        {devicesQ.data && devicesQ.data.length > 0 && filtered.length === 0 && (
+        {devicesQ.data && devicesQ.data.length > 0 && visibleRows.length === 0 && (
           <p className="text-muted-foreground p-4 font-mono text-sm">
             No devices match the current filter.
           </p>
         )}
-        {filtered.length > 0 && viewMode === "list" && (
-          <table className="zv-table zv-table-draggable">
-            <thead>
-              <tr>
-                <th className="w-6" aria-label="Drag handle" />
-                <th>Name</th>
-                <th>OS</th>
-                <th>VPN IP</th>
-                <th>Allowed IPs</th>
-                <th>DNS</th>
-                <th>Status</th>
-                <th className="zv-num">TX</th>
-                <th className="zv-num">RX</th>
-                <th>Last seen</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(({ d, c, p }) => {
+        {visibleRows.length > 0 && viewMode === "list" && (
+          <div className="zv-list-scroll">
+          <div className="zv-list">
+            <div className="zv-list-row zv-list-head">
+              <div className="zv-cell" aria-hidden />
+              <div className="zv-cell">Name</div>
+              <div className="zv-cell">OS</div>
+              <div className="zv-cell">VPN IP</div>
+              <div className="zv-cell">Allowed IPs</div>
+              <div className="zv-cell">DNS</div>
+              <div className="zv-cell">Status</div>
+              <div className="zv-cell">Activity</div>
+              <div className="zv-cell zv-num">TX</div>
+              <div className="zv-cell zv-num">RX</div>
+              <div className="zv-cell">Last seen</div>
+              <div className="zv-cell zv-cell-sticky-right" aria-hidden />
+            </div>
+            <Reorder.Group
+              as="div"
+              axis="y"
+              values={visibleRows.map((r) => r.d)}
+              onReorder={onReorderFiltered}
+              className="zv-list-body"
+              layoutScroll
+            >
+              {visibleRows.map(({ d, c, p }) => {
                 const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
+                // Tail of the live history for the row's sparkline. Same
+                // online-gate logic as DeviceCard: a device that hasn't
+                // handshook (or just dropped offline) gets empty arrays
+                // so the chart doesn't paint stale data.
+                const liveEntry = liveDevices[d.id]
+                const isOnlineForChart =
+                  d.last_handshake_at != null && c === "online"
+                const rowRx = isOnlineForChart
+                  ? (liveEntry?.rxHistory ?? []).slice(-LIST_CHART_WINDOW)
+                  : []
+                const rowTx = isOnlineForChart
+                  ? (liveEntry?.txHistory ?? []).slice(-LIST_CHART_WINDOW)
+                  : []
                 const isSplit =
                   d.allowed_ips_override !== null &&
                   d.allowed_ips_override !== undefined &&
@@ -458,107 +533,23 @@ export function DevicesPage() {
                     ? d.dns_override.join(", ")
                     : "server default"
                 const rowStatus = rowPill(c, p)
-                const isDragging = dragId === d.id
-                const isDropTarget = dropTargetId === d.id && dragId !== null && dragId !== d.id
                 return (
-                  <tr
+                  <SortableListRow
                     key={d.id}
-                    data-dragging={isDragging ? "1" : undefined}
-                    data-drop-target={isDropTarget ? "1" : undefined}
-                    // Double-click anywhere on the row opens detail. We let
-                    // the Name <Link> handle single-click navigation as
-                    // before; this is the "any cell" affordance.
+                    device={d}
+                    rowStatus={rowStatus}
+                    connState={c}
+                    peerState={p}
+                    isSplit={isSplit}
+                    dnsDisplay={dnsDisplay}
+                    rxHistory={rowRx}
+                    txHistory={rowTx}
+                    live={live}
+                    isDragging={dragId === d.id}
+                    onDragStart={() => setDragId(d.id)}
+                    onDragEnd={handleDragRelease}
                     onDoubleClick={() => navigate(`/app/devices/${d.id}`)}
-                    onDragOver={(e) => {
-                      // Standard HTML5 drop target wiring: cancelling the
-                      // dragover event marks the element as a valid drop
-                      // zone. We also track which row the pointer is over
-                      // for the visual indicator.
-                      if (!dragId || dragId === d.id) return
-                      e.preventDefault()
-                      e.dataTransfer.dropEffect = "move"
-                      if (dropTargetId !== d.id) setDropTargetId(d.id)
-                    }}
-                    onDragLeave={() => {
-                      if (dropTargetId === d.id) setDropTargetId(null)
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      onDropOn(d.id)
-                    }}
-                  >
-                    <td
-                      className="zv-drag-handle"
-                      draggable
-                      onDragStart={(e) => {
-                        setDragId(d.id)
-                        e.dataTransfer.effectAllowed = "move"
-                        // Firefox requires SOMETHING in dataTransfer to
-                        // initiate a drag; the value isn't used by us.
-                        e.dataTransfer.setData("text/plain", d.id)
-                      }}
-                      onDragEnd={() => {
-                        setDragId(null)
-                        setDropTargetId(null)
-                      }}
-                      title="Drag to reorder"
-                    >
-                      <IconGripVertical size={14} />
-                    </td>
-                    <td>
-                      <Link
-                        to={`/app/devices/${d.id}`}
-                        className="hover:text-foreground inline-flex items-center gap-2 font-medium"
-                      >
-                        <StatusPill status={rowStatus} dotOnly />
-                        {d.name}
-                        {isSplit && <span className="zv-kbd">split</span>}
-                      </Link>
-                    </td>
-                    <td className="text-muted-foreground">{d.os}</td>
-                    <td className="font-mono">{d.allocated_ip}</td>
-                    <td
-                      className="text-muted-foreground max-w-[180px] truncate font-mono"
-                      title={
-                        isSplit
-                          ? d.allowed_ips_override!.join(", ")
-                          : "0.0.0.0/0, ::/0"
-                      }
-                    >
-                      {isSplit
-                        ? d.allowed_ips_override!.join(", ")
-                        : "0.0.0.0/0, ::/0"}
-                    </td>
-                    <td
-                      className="text-muted-foreground max-w-[140px] truncate font-mono"
-                      title={dnsDisplay}
-                    >
-                      {dnsDisplay}
-                    </td>
-                    <td>
-                      <div className="inline-flex items-center gap-1.5">
-                        <StatusPill status={c} />
-                        {p !== "live" && <StatusPill status={p === "paused" ? "paused" : "revoked"} />}
-                      </div>
-                    </td>
-                    <td className="zv-num">
-                      {c === "online" ? (
-                        formatRate(live.txBps)
-                      ) : (
-                        <span className="text-muted-foreground/50">—</span>
-                      )}
-                    </td>
-                    <td className="zv-num">
-                      {c === "online" ? (
-                        formatRate(live.rxBps)
-                      ) : (
-                        <span className="text-muted-foreground/50">—</span>
-                      )}
-                    </td>
-                    <td className="text-muted-foreground font-mono text-xs">
-                      {formatLastSeen(d.last_handshake_at)}
-                    </td>
-                    <td className="zv-actions">
+                    actions={
                       <RowActions
                         device={d}
                         onPause={() => setPauseId(d.id)}
@@ -566,62 +557,43 @@ export function DevicesPage() {
                         onRevoke={() => setRevokeId(d.id)}
                         pending={pauseM.isPending || unpauseM.isPending}
                       />
-                    </td>
-                  </tr>
+                    }
+                  />
                 )
               })}
-            </tbody>
-          </table>
-        )}
-        {filtered.length > 0 && viewMode === "grid" && (
-          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filtered.map(({ d }) => {
-              const isDragging = dragId === d.id
-              const isDropTarget =
-                dropTargetId === d.id && dragId !== null && dragId !== d.id
-              return (
-                <DeviceCard
-                  key={d.id}
-                  device={d}
-                  draggable
-                  data-dragging={isDragging ? "1" : undefined}
-                  data-drop-target={isDropTarget ? "1" : undefined}
-                  onDoubleClick={() => navigate(`/app/devices/${d.id}`)}
-                  onDragStart={(e) => {
-                    setDragId(d.id)
-                    e.dataTransfer.effectAllowed = "move"
-                    e.dataTransfer.setData("text/plain", d.id)
-                  }}
-                  onDragEnd={() => {
-                    setDragId(null)
-                    setDropTargetId(null)
-                  }}
-                  onDragOver={(e) => {
-                    if (!dragId || dragId === d.id) return
-                    e.preventDefault()
-                    e.dataTransfer.dropEffect = "move"
-                    if (dropTargetId !== d.id) setDropTargetId(d.id)
-                  }}
-                  onDragLeave={() => {
-                    if (dropTargetId === d.id) setDropTargetId(null)
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    onDropOn(d.id)
-                  }}
-                  actions={
-                    <RowActions
-                      device={d}
-                      onPause={() => setPauseId(d.id)}
-                      onUnpause={() => setUnpauseId(d.id)}
-                      onRevoke={() => setRevokeId(d.id)}
-                      pending={pauseM.isPending || unpauseM.isPending}
-                    />
-                  }
-                />
-              )
-            })}
+            </Reorder.Group>
           </div>
+          </div>
+        )}
+        {visibleRows.length > 0 && viewMode === "grid" && (
+          <Reorder.Group
+            as="div"
+            axis="y"
+            values={visibleRows.map((r) => r.d)}
+            onReorder={onReorderFiltered}
+            className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+            layoutScroll
+          >
+            {visibleRows.map(({ d }) => (
+              <SortableGridCard
+                key={d.id}
+                device={d}
+                isDragging={dragId === d.id}
+                onDragStart={() => setDragId(d.id)}
+                onDragEnd={handleDragRelease}
+                onDoubleClick={() => navigate(`/app/devices/${d.id}`)}
+                actions={
+                  <RowActions
+                    device={d}
+                    onPause={() => setPauseId(d.id)}
+                    onUnpause={() => setUnpauseId(d.id)}
+                    onRevoke={() => setRevokeId(d.id)}
+                    pending={pauseM.isPending || unpauseM.isPending}
+                  />
+                }
+              />
+            ))}
+          </Reorder.Group>
         )}
       </Panel>
       </StaggerItem>
@@ -721,6 +693,216 @@ function ViewModeButton({
   )
 }
 
+/**
+ * One row in the list view, rendered as a `Reorder.Item` so the user
+ * can drag it to reorder. Drag is initiated only from the grip handle
+ * (via `useDragControls` + `dragListener={false}`) so clicking
+ * elsewhere on the row continues to work for navigation. Motion
+ * animates siblings out of the way as the pointer moves; release fires
+ * `onDragEnd` to commit.
+ */
+function SortableListRow({
+  device: d,
+  rowStatus,
+  connState: c,
+  peerState: p,
+  isSplit,
+  dnsDisplay,
+  rxHistory,
+  txHistory,
+  live,
+  isDragging,
+  onDragStart,
+  onDragEnd,
+  onDoubleClick,
+  actions,
+}: {
+  device: PublicDevice
+  rowStatus: PillStatus
+  connState: ConnState
+  peerState: PeerState
+  isSplit: boolean
+  dnsDisplay: string
+  rxHistory: number[]
+  txHistory: number[]
+  live: { rxBps: number; txBps: number }
+  isDragging: boolean
+  onDragStart: () => void
+  onDragEnd: () => void
+  onDoubleClick: () => void
+  actions: React.ReactNode
+}) {
+  const controls = useDragControls()
+  return (
+    <Reorder.Item
+      value={d}
+      as="div"
+      dragListener={false}
+      dragControls={controls}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDoubleClick={onDoubleClick}
+      data-dragging={isDragging ? "1" : undefined}
+      className="zv-list-row"
+      // While being dragged, lift the row above its siblings so the
+      // shadow + border highlight aren't clipped under the next row.
+      style={isDragging ? { zIndex: 2 } : undefined}
+    >
+      <div
+        className="zv-drag-cell"
+        // Pointer-down on the grip arms motion's drag controls. From
+        // here on, motion handles pointer-move / pointer-up internally
+        // — we just get the start/end callbacks via Reorder.Item.
+        onPointerDown={(e) => controls.start(e)}
+        title="Drag to reorder"
+      >
+        <IconGripVertical size={14} />
+      </div>
+      <div className="zv-cell">
+        <Link
+          to={`/app/devices/${d.id}`}
+          className="hover:text-foreground inline-flex items-center gap-2 font-medium"
+        >
+          <StatusPill status={rowStatus} dotOnly />
+          {d.name}
+        </Link>
+      </div>
+      <div className="zv-cell text-muted-foreground">{d.os}</div>
+      <div className="zv-cell font-mono">{d.allocated_ip}</div>
+      <div
+        className="zv-cell text-muted-foreground truncate font-mono"
+        title={isSplit ? d.allowed_ips_override!.join(", ") : "0.0.0.0/0, ::/0"}
+      >
+        {isSplit ? d.allowed_ips_override!.join(", ") : "0.0.0.0/0, ::/0"}
+      </div>
+      <div
+        className="zv-cell text-muted-foreground truncate font-mono"
+        title={dnsDisplay}
+      >
+        {dnsDisplay}
+      </div>
+      <div className="zv-cell">
+        <div className="inline-flex items-center gap-1.5">
+          <StatusPill status={c} />
+          {p !== "live" && (
+            <StatusPill status={p === "paused" ? "paused" : "revoked"} />
+          )}
+        </div>
+      </div>
+      <div className="zv-cell" style={{ padding: "4px 12px" }}>
+        <div className="w-[116px]">
+          <MiniAreaChart
+            rxHistory={rxHistory}
+            txHistory={txHistory}
+            height={28}
+          />
+        </div>
+      </div>
+      <div className="zv-cell zv-num">
+        {c === "online" ? (
+          formatRate(live.txBps)
+        ) : (
+          <span className="text-muted-foreground/50">—</span>
+        )}
+      </div>
+      <div className="zv-cell zv-num">
+        {c === "online" ? (
+          formatRate(live.rxBps)
+        ) : (
+          <span className="text-muted-foreground/50">—</span>
+        )}
+      </div>
+      <div className="zv-cell text-muted-foreground font-mono text-xs">
+        {formatLastSeen(d.last_handshake_at)}
+      </div>
+      <div className="zv-cell zv-cell-sticky-right">{actions}</div>
+    </Reorder.Item>
+  )
+}
+
+/**
+ * Grid-view card wrapped in a `Reorder.Item` with the same controls-
+ * via-grip pattern as the list row.
+ *
+ * Earlier iterations of this component layered extras on top
+ * (`drag` for 2D movement, custom spring transition, `whileDrag` scale,
+ * `dragElastic`, `dragMomentum={false}`). Each one seemed reasonable in
+ * isolation but they collectively fought motion's built-in layout
+ * animations — `whileDrag.scale` resizes the dragged element's bounding
+ * box every frame, which throws off the FLIP measurements siblings use
+ * to slide into the freed slot, producing the choppy "jumps instead of
+ * glides" the user reported. The list view doesn't add any of those
+ * and animates smoothly; mirroring its config does the same for the
+ * grid.
+ *
+ * Trade-off: the card slides along the group's `axis="y"` only while
+ * being dragged (no horizontal cursor-following). Reordering still
+ * works because the CSS-grid auto-flow re-places cards as the array
+ * shuffles — moving a card down past the row Y-center inserts it into
+ * the next row's first slot, etc. Matching list-view smoothness was
+ * the right call here.
+ */
+function SortableGridCard({
+  device: d,
+  isDragging,
+  onDragStart,
+  onDragEnd,
+  onDoubleClick,
+  actions,
+}: {
+  device: PublicDevice
+  isDragging: boolean
+  onDragStart: () => void
+  onDragEnd: () => void
+  onDoubleClick: () => void
+  actions: React.ReactNode
+}) {
+  const controls = useDragControls()
+  return (
+    <Reorder.Item
+      value={d}
+      as="div"
+      // Free 2D movement during drag — without this the card is locked
+      // to the parent group's axis (y), so it can't follow the cursor
+      // horizontally across the grid's columns. The reorder LOGIC still
+      // uses the group's Y-axis to decide when to swap items, so the
+      // committed order stays sensible — only the in-flight drag is
+      // freed up to feel natural.
+      drag
+      dragListener={false}
+      dragControls={controls}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      className="flex"
+      style={isDragging ? { zIndex: 2 } : undefined}
+    >
+      <DeviceCard
+        device={d}
+        className="w-full"
+        data-dragging={isDragging ? "1" : undefined}
+        onDoubleClick={onDoubleClick}
+        dragHandleProps={{
+          // Pointer-down on the card's grip arms motion's drag controls;
+          // dragListener={false} on the Reorder.Item means no other
+          // surface initiates a drag.
+          onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+            controls.start(e)
+          },
+        }}
+        actions={actions}
+      />
+    </Reorder.Item>
+  )
+}
+
+/**
+ * Per-device action menu — a single 3-dot trigger that opens a
+ * dropdown with the available actions for the device's current
+ * status. Replaces the inline pause/revoke icon buttons so the row's
+ * action area stays compact (one button wide instead of three) and
+ * leaves room for the right-sticky column. Used by both list and grid
+ * views via DeviceCard's `actions` slot.
+ */
 function RowActions({
   device,
   onPause,
@@ -734,28 +916,49 @@ function RowActions({
   onRevoke: () => void
   pending: boolean
 }) {
+  const canPause = device.status === "active"
+  const canResume = device.status === "paused"
+  const canRevoke = device.status !== "revoked"
   return (
-    <span className="inline-flex items-center justify-end gap-1">
-      {device.status === "active" && (
-        <IconBtn onClick={onPause} title="Pause">
-          <IconPlayerPause size={12} />
-        </IconBtn>
-      )}
-      {device.status === "paused" && (
-        <IconBtn onClick={onUnpause} title="Unpause">
-          <IconPlayerPlay size={12} />
-        </IconBtn>
-      )}
-      {device.status !== "revoked" && (
-        <IconBtn
-          onClick={onRevoke}
-          title={pending ? "Working…" : "Revoke"}
-          className="hover:text-destructive hover:border-destructive"
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Device actions"
+          // Stop click bubbling so the row's onDoubleClick doesn't trip
+          // when the user single-clicks the kebab.
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          className="text-muted-foreground hover:text-foreground border-border hover:border-foreground inline-flex size-7 items-center justify-center border transition-colors"
         >
-          ×
-        </IconBtn>
-      )}
-    </span>
+          <IconDotsVertical size={14} />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[10rem]">
+        {canPause && (
+          <DropdownMenuItem onSelect={onPause} disabled={pending}>
+            <IconPlayerPause />
+            Pause
+          </DropdownMenuItem>
+        )}
+        {canResume && (
+          <DropdownMenuItem onSelect={onUnpause} disabled={pending}>
+            <IconPlayerPlay />
+            Resume
+          </DropdownMenuItem>
+        )}
+        {canRevoke && (
+          <DropdownMenuItem
+            variant="destructive"
+            onSelect={onRevoke}
+            disabled={pending}
+          >
+            <IconTrash />
+            Revoke
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
