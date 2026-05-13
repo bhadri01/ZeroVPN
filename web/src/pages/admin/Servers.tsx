@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { IconKey, IconRouter } from "@tabler/icons-react"
+import { IconExternalLink, IconKey, IconRouter } from "@tabler/icons-react"
 import { useState } from "react"
+import { Link } from "react-router"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
@@ -104,7 +105,17 @@ function ServerEditor({ server }: { server: AdminServerRow }) {
         </span>
       }
       sub={`${server.region} · ${server.cidr}`}
-      right={<StatusPill status={server.is_active ? "active" : "offline"} />}
+      right={
+        <div className="flex items-center gap-2">
+          <Button asChild size="sm" variant="ghost">
+            <Link to={`/admin/servers/${server.id}`}>
+              <IconExternalLink className="size-3.5" />
+              Detail
+            </Link>
+          </Button>
+          <StatusPill status={server.is_active ? "active" : "offline"} />
+        </div>
+      }
       footer={
         <div className="flex w-full justify-between">
           <Button onClick={() => save.mutate()} disabled={save.isPending}>

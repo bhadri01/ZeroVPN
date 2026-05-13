@@ -206,6 +206,51 @@ These are minor polish items; the core v1 product is done.
 
 ---
 
+## Phase 2 — Full logging system
+
+**Policy:** capture, retain, and surface every operational event. The "no-log" posture is reversed. See `CHANGELOG.md` → "Policy reversal — full logging system (2026-05-13)" for rationale and the public-copy / compliance prerequisites.
+
+**Staging.** Stages A and B are toggles + small code changes against the existing surface; they can ship together. Stage C needs new container-level infrastructure (logging resolver, netfilter export) and is sized as its own milestone. Stage D is the compliance counterweight — it must ship alongside C, not after.
+
+### Stage A — Stop suppressing what we already capture
+
+- [ ] **Drop audit-log IP anonymization** — `crates/zerovpn-worker/src/retention.rs` nulls `audit_logs.ip_prefix` at 30 days; remove that pass.
+- [ ] **Widen IP storage from /24 prefix to full address** — every call site that builds an `IpNetwork` from the request IP for audit / failed_logins / sessions stores the full host address. Schema column type already accepts it (INET); only the prefix-truncation helper changes.
+- [ ] **Stop purging `failed_logins` at 30 days** — retention purger removes rows >30 d; delete the rule.
+- [ ] **Store user-agent strings in plaintext** — sessions + failed_logins store SHA-256 hashes today. Add `user_agent TEXT`, drop the hash column on its own migration, surface in admin tables.
+- [ ] **Capture WireGuard peer endpoint** — `wg_poller` parses `wg show <iface> dump` and explicitly skips the `endpoint` column (cols[1]). Capture it, persist as `devices.last_peer_endpoint INET` + a `peer_endpoint_history` append-only table for handshake-to-handshake changes.
+- [ ] **Make `bandwidth_samples` retention indefinite by default explicit** — remove the env-var fallback `ZEROVPN_SAMPLE_RETENTION_DAYS`; samples are always retained. (Operators who want bounded retention configure it under Stage D.)
+- [ ] **Landing copy + privacy policy** — `/` must stop saying "no logs". Privacy policy enumerates every log table + retention. Prerequisite for any of the above shipping to a live deployment.
+
+### Stage B — New schema, new admin surfaces
+
+- [ ] **Session log** — append-only `session_events` table: `user_id`, `event` ∈ `{login, logout, idle_timeout, suspicious_login, password_change, totp_enable, totp_disable, impersonation_start, impersonation_end}`, `ip`, `user_agent`, `created_at`. Surface as `pages/admin/Sessions.tsx`.
+- [ ] **Per-request access log** — middleware records `method`, `path`, `status`, `latency_ms`, `user_id`, `ip`, `user_agent`, `request_id` for every authenticated request. New `access_logs` table; partition monthly like `bandwidth_samples` (high volume).
+- [ ] **Per-user activity timeline** — `/admin/users/{id}` adds a unified timeline merging audit + session + access-log rows. New repo helper that fans out across the three tables.
+- [ ] **Admin search by IP / user-agent / endpoint** — backed by indexes on the new columns. Integrate with `pages/admin/Finder.tsx` so "find every account that logged in from 1.2.3.4" is one query.
+- [ ] **Connection log** — append-only `connection_events` table tracking online/offline transitions per device with peer endpoint, handshake time, session duration on disconnect. Drives a per-device "connection history" tab on the device-detail page.
+
+### Stage C — Network-level capture (new infrastructure)
+
+- [ ] **DNS query log** — replace the existing `dnsmasq` container with a logging resolver. Two options:
+  - **Unbound** with `qname-log` + `log-replies: yes` → tail logs into a `dns_queries` table or a Loki stream.
+  - **Custom Rust resolver** (`hickory-dns` / `trust-dns-server`) writing directly to Postgres. More work; tighter integration; preferred long-term.
+- [ ] **Destination IP log** — netfilter `NFLOG` target or `conntrack-tools` export in the WG container's netns; ship via `ulogd2` → Postgres (or Loki). Per-flow record: `peer_id` (resolved via peer src_ip), `dst_ip`, `dst_port`, `proto`, `bytes_in`, `bytes_out`, `started_at`, `ended_at`.
+- [ ] **Geo enrichment** — MaxMind GeoLite2 lookup on destination IPs at write time; surface as a heatmap / map on the admin overview.
+- [ ] **Admin per-device traffic explorer** — drill from a device into its DNS history + destination history, with date range + filters.
+
+### Stage D — Compliance counterweights (must ship with Stage C)
+
+- [ ] **Per-table retention windows in `app_settings`** — operator-tunable `retention_*` columns for each new table (raw samples, access logs, audit, sessions, DNS queries, dest IPs). Worker retention task reads from `app_settings` on each pass.
+- [ ] **Update `/me/data-export`** — already exists; extend to include every new table so the per-user JSON dump remains a complete picture.
+- [ ] **Per-user data-deletion workflow** — admin action that hard-deletes one user's rows across every log table in a single transaction (GDPR Art. 17 / CCPA right-to-erasure). Backed by a `users::purge_logs_for(user_id)` repo call.
+- [ ] **Lawful-intercept / jurisdiction disclaimer in runbook** — `docs/runbook.md` gets a "logging legal exposure" section enumerating: jurisdictions where DNS / destination logging triggers data-protection authority registration; jurisdictions requiring lawful-intercept licensing; recommended default retention windows by region.
+- [ ] **Audit who reads the logs** — admin actions that view logs (audit list, sessions list, DNS / destination explorer) emit their own `audit_logs` rows so "who looked at user X's history" is itself answerable.
+
+🚫 **Not in scope:** traffic payload / DPI. Requires breaking the tunnel cryptography (MITM CA, or operating outside the WG protocol) and in most jurisdictions a lawful-intercept license. Separate product decision; do not pull into Phase 2.
+
+---
+
 ## Deferred (v2)
 
 - Multi-region / multi-server orchestration

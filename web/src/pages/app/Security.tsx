@@ -1,9 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { IconCopy, IconDownload } from "@tabler/icons-react"
+import { IconCopy, IconDownload, IconLogout } from "@tabler/icons-react"
 import { motion } from "motion/react"
 import { useState } from "react"
 import { toast } from "sonner"
 
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { Kbd, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
@@ -17,6 +18,7 @@ import { Label } from "@/components/ui/label"
 import {
   ApiError,
   changePassword,
+  revokeOtherSessions,
   totpDisable,
   totpEnable,
   totpSetup,
@@ -234,7 +236,67 @@ export function SecuritySections() {
       <Panel title="Password" sub="argon2id · m=64MB · t=3 · p=4">
         <ChangePasswordForm />
       </Panel>
+
+      <Panel
+        title="Active sessions"
+        sub="Sign out of every other browser / device this account is open in"
+      >
+        <SignOutEverywherePanel />
+      </Panel>
     </div>
+  )
+}
+
+/**
+ * "Sign out everywhere else" panel. Calls the user-side
+ * `revoke-all-sessions` endpoint which bumps the password watermark on
+ * the server. Every other open session for this account fails the auth
+ * extractor's pw-version check on its very next request and is kicked
+ * back to /login. The current session stays alive — the server re-syncs
+ * our snapshot in the same call.
+ */
+function SignOutEverywherePanel() {
+  const [open, setOpen] = useState(false)
+  const m = useMutation({
+    mutationFn: revokeOtherSessions,
+    onSuccess: () => {
+      setOpen(false)
+      toast.success("All other sessions signed out")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+  return (
+    <>
+      <div className="flex flex-col gap-3">
+        <p className="text-muted-foreground text-xs">
+          Use this if you forgot to sign out somewhere, suspect a session
+          you don't recognise, or just rotated your password externally.
+          You stay signed in here.
+        </p>
+        <div>
+          <Button
+            variant="outline"
+            onClick={() => setOpen(true)}
+            disabled={m.isPending}
+          >
+            <IconLogout className="size-4" />
+            Sign out everywhere else
+          </Button>
+        </div>
+      </div>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Sign out of all other sessions?"
+        description="Every other open session for your account is invalidated immediately. This session stays active. The action is logged in the audit trail."
+        confirmLabel="Sign out everywhere"
+        destructive
+        pending={m.isPending}
+        onConfirm={() => m.mutate()}
+      />
+    </>
   )
 }
 

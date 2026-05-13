@@ -412,6 +412,48 @@ pub async fn change_password(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+/// "Sign out everywhere" — bumps the user's password-watermark which
+/// invalidates every session except the current one (we re-sync the
+/// snapshot in this session so the caller stays signed in). No password
+/// change happens; the hash is untouched. Used by the Security panel.
+#[utoipa::path(
+    post,
+    path = "/me/sessions/revoke-all",
+    tag = "Account",
+    responses(
+        (status = 200, description = "All other sessions invalidated; this session kept alive", body = StatusAck),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn revoke_other_sessions(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    session: Session,
+) -> ApiResult<impl IntoResponse> {
+    users::kill_all_sessions(&state.pool, user.id).await?;
+    if let Some(new_watermark) = users::find_password_changed_at(&state.pool, user.id).await? {
+        session
+            .insert(SESSION_KEY_PW_CHANGED_AT, new_watermark.unix_timestamp())
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "user.sessions_revoked",
+            target_type: Some("user"),
+            target_id: Some(user.id),
+            metadata: json!({}),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(user_id = %user.id, "user revoked all other sessions");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
 #[utoipa::path(
     delete,
     path = "/me/account",

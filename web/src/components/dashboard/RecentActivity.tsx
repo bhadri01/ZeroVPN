@@ -109,7 +109,7 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
 
   const auditQ = useQuery({
     queryKey: ["admin", "audit", "dashboard", limit],
-    queryFn: () => adminListAudit(limit, 0),
+    queryFn: () => adminListAudit({}, limit, 0),
     enabled: isAdmin,
     refetchInterval: 15_000,
   })

@@ -82,6 +82,11 @@ const FailedLoginsPage = lazy(() =>
 const ServersPage = lazy(() =>
   import("@/pages/admin/Servers").then((m) => ({ default: m.ServersPage })),
 )
+const ServerDetailPage = lazy(() =>
+  import("@/pages/admin/ServerDetail").then((m) => ({
+    default: m.ServerDetailPage,
+  })),
+)
 const AdminTopologyPage = lazy(() =>
   import("@/pages/admin/Topology").then((m) => ({
     default: m.AdminTopologyPage,
@@ -196,6 +201,14 @@ export const router = createBrowserRouter([
                 path: "/admin/servers",
                 handle: { breadcrumb: "Servers" },
                 element: <ServersPage />,
+              },
+              {
+                path: "/admin/servers/:id",
+                handle: {
+                  breadcrumb: "Detail",
+                  parents: [{ label: "Servers", to: "/admin/servers" }],
+                },
+                element: <ServerDetailPage />,
               },
               {
                 path: "/admin/topology",

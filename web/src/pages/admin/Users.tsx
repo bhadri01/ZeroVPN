@@ -4,6 +4,7 @@ import {
   IconDownload,
   IconPlus,
   IconSearch,
+  IconTrash,
   IconX,
 } from "@tabler/icons-react"
 import { useEffect, useMemo, useState } from "react"
@@ -46,6 +47,7 @@ import {
   type UserRole,
   type UserStatus,
   adminCreateUser,
+  adminDeleteUser,
   adminImpersonateUser,
   adminListUsers,
   adminSetUserStatus,
@@ -80,6 +82,12 @@ export function UsersPage() {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [pageSize, setPageSize] = useState(50)
   const [page, setPage] = useState(0)
+  // Bulk-selection state. Keeps ids only — re-derives the displayed
+  // checkbox state from the current page's items, so navigating pages
+  // preserves selection across visits.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkSuspendOpen, setBulkSuspendOpen] = useState(false)
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
   // Reset to page 0 whenever the search term, filters, or page size change —
   // a narrower filter (or wider page) can leave us pointing past the end of
   // the result set.
@@ -142,6 +150,82 @@ export function UsersPage() {
     totpFilter !== "all" ||
     !!search
 
+  // Bulk-action helpers. Always exclude self from selection so an admin
+  // can't accidentally include themselves in a bulk delete (the backend
+  // rejects per-call anyway, but we don't want misleading partial-success
+  // toasts).
+  const selectableIds = useMemo(
+    () => items.filter((u) => u.id !== self?.id).map((u) => u.id),
+    [items, self?.id],
+  )
+  const allOnPageSelected =
+    selectableIds.length > 0 &&
+    selectableIds.every((id) => selectedIds.has(id))
+  const someOnPageSelected =
+    selectableIds.some((id) => selectedIds.has(id)) && !allOnPageSelected
+  const togglePageSelection = (on: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (on) selectableIds.forEach((id) => next.add(id))
+      else selectableIds.forEach((id) => next.delete(id))
+      return next
+    })
+  }
+  const toggleRowSelection = (id: string, on: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+  const clearSelection = () => setSelectedIds(new Set())
+
+  // Bulk Suspend / Delete: fan out per-id with Promise.allSettled so a
+  // single failure doesn't abort the whole batch. Aggregate the result
+  // into one toast so the user sees "12 of 14 succeeded" rather than 14
+  // individual notifications.
+  const bulkSuspendM = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => adminSetUserStatus(id, "suspended")),
+      )
+      return results
+    },
+    onSuccess: (results, ids) => {
+      const ok = results.filter((r) => r.status === "fulfilled").length
+      void qc.invalidateQueries({ queryKey: ["admin", "users"] })
+      setBulkSuspendOpen(false)
+      clearSelection()
+      if (ok === ids.length) {
+        toast.success(`Suspended ${ok} user${ok === 1 ? "" : "s"}`)
+      } else {
+        toast.warning(
+          `Suspended ${ok} of ${ids.length} — the rest failed (likely already non-active or admin-protected)`,
+        )
+      }
+    },
+  })
+  const bulkDeleteM = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(ids.map((id) => adminDeleteUser(id)))
+      return results
+    },
+    onSuccess: (results, ids) => {
+      const ok = results.filter((r) => r.status === "fulfilled").length
+      void qc.invalidateQueries({ queryKey: ["admin", "users"] })
+      setBulkDeleteOpen(false)
+      clearSelection()
+      if (ok === ids.length) {
+        toast.success(`Deleted ${ok} user${ok === 1 ? "" : "s"}`)
+      } else {
+        toast.warning(
+          `Deleted ${ok} of ${ids.length} — the rest failed (likely the last admin or self)`,
+        )
+      }
+    },
+  })
+
   return (
     <PageStagger>
       <StaggerItem>
@@ -175,6 +259,40 @@ export function UsersPage() {
 
       <StaggerItem>
         <Panel flush>
+          {selectedIds.size > 0 ? (
+            // When at least one row is selected, the toolbar swaps to a
+            // bulk-action bar. Tinted background makes it obvious the
+            // primary actions in this view are batch operations now.
+            <div className="border-border bg-amber-500/5 flex flex-wrap items-center gap-2 border-b p-2">
+              <span className="text-foreground font-mono text-xs">
+                {selectedIds.size} selected
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setBulkSuspendOpen(true)}
+              >
+                Suspend selected
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setBulkDeleteOpen(true)}
+              >
+                <IconTrash className="size-3.5" />
+                Delete selected
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={clearSelection}
+                className="ml-auto h-8 text-xs"
+              >
+                <IconX className="size-3.5" />
+                Clear
+              </Button>
+            </div>
+          ) : null}
           <div className="border-border flex flex-wrap items-center gap-2 border-b p-2">
             <div className="relative w-64">
               <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
@@ -256,6 +374,20 @@ export function UsersPage() {
               <table className="zv-table">
                 <thead>
                   <tr>
+                    <th className="w-8 pl-3">
+                      <Checkbox
+                        aria-label="Select all on this page"
+                        checked={
+                          allOnPageSelected
+                            ? true
+                            : someOnPageSelected
+                              ? "indeterminate"
+                              : false
+                        }
+                        onCheckedChange={(v) => togglePageSelection(v === true)}
+                        disabled={selectableIds.length === 0}
+                      />
+                    </th>
                     <th>Email</th>
                     <th>Role</th>
                     <th>Status</th>
@@ -268,8 +400,23 @@ export function UsersPage() {
                 <tbody>
                   {items.map((u) => {
                     const isSelf = u.id === self?.id
+                    const isChecked = selectedIds.has(u.id)
                     return (
-                      <tr key={u.id}>
+                      <tr
+                        key={u.id}
+                        className={isChecked ? "bg-amber-500/5" : undefined}
+                      >
+                        <td className="w-8 pl-3">
+                          {!isSelf && (
+                            <Checkbox
+                              aria-label={`Select ${u.email}`}
+                              checked={isChecked}
+                              onCheckedChange={(v) =>
+                                toggleRowSelection(u.id, v === true)
+                              }
+                            />
+                          )}
+                        </td>
                         <td>
                           <Link
                             to={`/admin/users/${u.id}`}
@@ -357,7 +504,7 @@ export function UsersPage() {
                   {!usersQ.isLoading && items.length === 0 && (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         className="text-muted-foreground py-8 text-center font-mono text-sm"
                       >
                         No users match.
@@ -404,6 +551,28 @@ export function UsersPage() {
         onConfirm={() =>
           impersonateTarget && impersonateM.mutate(impersonateTarget.id)
         }
+      />
+
+      <ConfirmDialog
+        open={bulkSuspendOpen}
+        onOpenChange={setBulkSuspendOpen}
+        title={`Suspend ${selectedIds.size} selected user${selectedIds.size === 1 ? "" : "s"}?`}
+        description="Each will have their dashboard access revoked, sessions invalidated, and live VPN tunnels torn down. Reversible — Unsuspend per row."
+        confirmLabel={`Suspend ${selectedIds.size}`}
+        destructive
+        pending={bulkSuspendM.isPending}
+        onConfirm={() => bulkSuspendM.mutate(Array.from(selectedIds))}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        title={`Delete ${selectedIds.size} selected user${selectedIds.size === 1 ? "" : "s"}?`}
+        description="Soft-deletes each account: PII nulled, devices revoked, sessions killed. Audit history is preserved. The action cannot be undone from the UI."
+        confirmLabel={`Delete ${selectedIds.size}`}
+        destructive
+        pending={bulkDeleteM.isPending}
+        onConfirm={() => bulkDeleteM.mutate(Array.from(selectedIds))}
       />
 
       <InviteUserDialog

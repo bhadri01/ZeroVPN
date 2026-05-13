@@ -160,8 +160,8 @@ export function NetworkMonitorChart({
           width={56}
         />
         <Tooltip
-          labelFormatter={(label: number) =>
-            showXAxis ? formatTick(label) : ""
+          labelFormatter={(label) =>
+            showXAxis ? formatTick(Number(label) || 0) : ""
           }
           formatter={(v: unknown, name: unknown) =>
             [

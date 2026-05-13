@@ -31,6 +31,14 @@ pub struct UserPreferences {
     pub toast_position: String,
     pub toast_sound: bool,
     pub browser_notifications: bool,
+    /// Send an email when a new WG device is added to the account.
+    pub email_on_new_device: bool,
+    /// Send an email when monthly bandwidth crosses 80% of the cap.
+    pub email_on_quota_warning: bool,
+    /// Send an email for security-relevant events: new-IP sign-in,
+    /// password change, 2FA enabled/disabled, admin actions on the
+    /// account. Default ON — opt out reduces signal during incidents.
+    pub email_on_security_event: bool,
 }
 
 impl Default for UserPreferences {
@@ -44,6 +52,9 @@ impl Default for UserPreferences {
             toast_position: "bottom-right".into(),
             toast_sound: false,
             browser_notifications: false,
+            email_on_new_device: true,
+            email_on_quota_warning: true,
+            email_on_security_event: true,
         }
     }
 }
@@ -61,6 +72,9 @@ pub struct UserPreferencesPatch {
     pub toast_position: Option<String>,
     pub toast_sound: Option<bool>,
     pub browser_notifications: Option<bool>,
+    pub email_on_new_device: Option<bool>,
+    pub email_on_quota_warning: Option<bool>,
+    pub email_on_security_event: Option<bool>,
 }
 
 /// Fetch the user's preferences. Returns defaults (without persisting)
@@ -69,7 +83,8 @@ pub async fn get(pool: &PgPool, user_id: Uuid) -> sqlx::Result<UserPreferences> 
     let row: Option<UserPreferences> = sqlx::query_as(
         r#"SELECT units, date_format, time_format, reduced_motion,
                   default_landing, toast_position, toast_sound,
-                  browser_notifications
+                  browser_notifications, email_on_new_device,
+                  email_on_quota_warning, email_on_security_event
              FROM user_preferences
             WHERE user_id = $1"#,
     )
@@ -119,13 +134,24 @@ pub async fn upsert(
     if let Some(v) = patch.browser_notifications {
         merged.browser_notifications = v;
     }
+    if let Some(v) = patch.email_on_new_device {
+        merged.email_on_new_device = v;
+    }
+    if let Some(v) = patch.email_on_quota_warning {
+        merged.email_on_quota_warning = v;
+    }
+    if let Some(v) = patch.email_on_security_event {
+        merged.email_on_security_event = v;
+    }
 
     sqlx::query(
         r#"INSERT INTO user_preferences (
                 user_id, units, date_format, time_format,
                 reduced_motion, default_landing, toast_position,
-                toast_sound, browser_notifications, updated_at
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                toast_sound, browser_notifications,
+                email_on_new_device, email_on_quota_warning,
+                email_on_security_event, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
            ON CONFLICT (user_id) DO UPDATE SET
                 units = EXCLUDED.units,
                 date_format = EXCLUDED.date_format,
@@ -135,6 +161,9 @@ pub async fn upsert(
                 toast_position = EXCLUDED.toast_position,
                 toast_sound = EXCLUDED.toast_sound,
                 browser_notifications = EXCLUDED.browser_notifications,
+                email_on_new_device = EXCLUDED.email_on_new_device,
+                email_on_quota_warning = EXCLUDED.email_on_quota_warning,
+                email_on_security_event = EXCLUDED.email_on_security_event,
                 updated_at = NOW()"#,
     )
     .bind(user_id)
@@ -146,6 +175,9 @@ pub async fn upsert(
     .bind(&merged.toast_position)
     .bind(merged.toast_sound)
     .bind(merged.browser_notifications)
+    .bind(merged.email_on_new_device)
+    .bind(merged.email_on_quota_warning)
+    .bind(merged.email_on_security_event)
     .execute(pool)
     .await?;
     Ok(merged)

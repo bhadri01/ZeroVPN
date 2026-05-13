@@ -238,7 +238,7 @@ export function AddDeviceDialog({
   return (
     <SheetContent
       side="right"
-      className="flex w-full flex-col gap-0 p-0 sm:max-w-[560px]"
+      className="flex w-full flex-col gap-0 p-0 data-[side=right]:sm:max-w-[820px]"
     >
       <SheetHeader className="border-border border-b">
         <SheetTitle>

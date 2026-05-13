@@ -500,6 +500,35 @@ function NotificationsSection() {
         />
       </Panel>
 
+      <Panel
+        title="Email notifications"
+        sub="Transactional alerts sent to the email on file"
+      >
+        <div className="flex flex-col gap-4">
+          <PrefToggle
+            label="New device added"
+            hint="Email me whenever a new WireGuard device is registered to my account. Useful as a tripwire if someone enrolls a device without your knowledge."
+            checked={p.email_on_new_device}
+            onCheckedChange={(v) => m.mutate({ email_on_new_device: v })}
+            id="pref-email-new-device"
+          />
+          <PrefToggle
+            label="Approaching bandwidth quota"
+            hint="Email me when this month's traffic crosses 80% of my cap. Skipped when no cap is set."
+            checked={p.email_on_quota_warning}
+            onCheckedChange={(v) => m.mutate({ email_on_quota_warning: v })}
+            id="pref-email-quota"
+          />
+          <PrefToggle
+            label="Security events"
+            hint="Email me on sign-in from a new IP, password changes, 2FA enable/disable, and admin actions taken on my account. Default ON — opt out reduces signal during incidents."
+            checked={p.email_on_security_event}
+            onCheckedChange={(v) => m.mutate({ email_on_security_event: v })}
+            id="pref-email-security"
+          />
+        </div>
+      </Panel>
+
       <Panel title="Test" sub="Fires a sample notification with your current settings">
         <div className="flex flex-wrap gap-2">
           <Button

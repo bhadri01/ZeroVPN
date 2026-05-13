@@ -230,6 +230,10 @@ async fn main() -> Result<()> {
                     post(routes::me::change_password),
                 )
                 .route(
+                    "/me/sessions/revoke-all",
+                    post(routes::me::revoke_other_sessions),
+                )
+                .route(
                     "/me/preferences",
                     get(routes::me::get_preferences).put(routes::me::set_preferences),
                 )
@@ -261,6 +265,14 @@ async fn main() -> Result<()> {
                     post(routes::admin::admin_disable_2fa),
                 )
                 .route(
+                    "/admin/users/{id}/sessions/revoke-all",
+                    post(routes::admin::admin_revoke_sessions),
+                )
+                .route(
+                    "/admin/users/{id}/email",
+                    axum::routing::put(routes::admin::admin_set_email_route),
+                )
+                .route(
                     "/admin/users/{id}/bandwidth",
                     get(routes::admin::user_bandwidth),
                 )
@@ -279,7 +291,12 @@ async fn main() -> Result<()> {
                 .route("/admin/servers", get(routes::admin::list_servers))
                 .route(
                     "/admin/servers/{id}",
-                    axum::routing::patch(routes::admin::patch_server),
+                    get(routes::admin::server_detail)
+                        .patch(routes::admin::patch_server),
+                )
+                .route(
+                    "/admin/servers/{id}/bandwidth",
+                    get(routes::admin::server_bandwidth),
                 )
                 .route(
                     "/admin/servers/{id}/rotate-keys",

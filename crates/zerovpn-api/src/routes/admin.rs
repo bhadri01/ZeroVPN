@@ -430,6 +430,12 @@ pub async fn set_user_status(
     // close that gap.
     if body.status == UserStatus::Suspended && prior != UserStatus::Suspended {
         remove_user_peers(&state, target_id).await;
+        // Flush any open dashboard sessions: the auth extractor's
+        // status check already returns 403 on the next request, but
+        // bumping the pw watermark also kills the cookie's pw snapshot
+        // so it can't ride a stale-but-valid session through anywhere
+        // we *don't* gate on status (eg. prior to maintenance gating).
+        let _ = users::kill_all_sessions(&state.pool, target_id).await;
     } else if body.status == UserStatus::Active && prior == UserStatus::Suspended {
         restore_user_peers(&state, target_id).await;
     }
@@ -597,6 +603,114 @@ pub async fn admin_disable_2fa(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+// ---- Force-logout (revoke all sessions) ----------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/admin/users/{id}/sessions/revoke-all",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Target user UUID")),
+    responses(
+        (status = 200, description = "All open sessions for this user invalidated", body = StatusAck),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "User not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_revoke_sessions(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let target = users::find_by_id(&state.pool, target_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let n = users::kill_all_sessions(&state.pool, target.id).await?;
+    if n == 0 {
+        return Err(ApiError::NotFound);
+    }
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_sessions_revoked",
+            target_type: Some("user"),
+            target_id: Some(target.id),
+            metadata: json!({}),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %target.id, "admin revoked all sessions");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+// ---- Edit email ----------------------------------------------------------
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct EmailBody {
+    pub email: String,
+}
+
+#[utoipa::path(
+    put,
+    path = "/admin/users/{id}/email",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Target user UUID")),
+    request_body = EmailBody,
+    responses(
+        (status = 200, description = "Email updated", body = StatusAck),
+        (status = 400, description = "Validation failed (bad shape, taken, deleted user)"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "User not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_set_email_route(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+    Json(body): Json<EmailBody>,
+) -> ApiResult<impl IntoResponse> {
+    let new_email = body.email.trim().to_lowercase();
+    if !new_email.contains('@') || new_email.len() < 3 {
+        return Err(ApiError::Validation("invalid email shape".into()));
+    }
+    let target = users::find_by_id(&state.pool, target_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if target.status == UserStatus::Deleted {
+        return Err(ApiError::Validation("user is deleted".into()));
+    }
+    if target.email.to_lowercase() == new_email {
+        // No-op: same email after normalisation. Don't write or audit.
+        return Ok(Json(json!({ "status": "ok" })));
+    }
+    if let Some(other) = users::find_by_email(&state.pool, &new_email).await? {
+        if other.id != target_id {
+            return Err(ApiError::Validation("email already in use".into()));
+        }
+    }
+    let n = users::admin_set_email(&state.pool, target.id, &new_email).await?;
+    if n == 0 {
+        return Err(ApiError::NotFound);
+    }
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_email_changed",
+            target_type: Some("user"),
+            target_id: Some(target.id),
+            metadata: json!({ "from": target.email, "to": new_email }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %target.id, "admin changed email");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
 // ---- Delete user ----------------------------------------------------------
 
 #[utoipa::path(
@@ -647,6 +761,9 @@ pub async fn delete_user(
             }
         }
     }
+    // Kill any open dashboard sessions so a deleted user's cookie
+    // fails the watermark check on the very next API request.
+    let _ = users::kill_all_sessions(&state.pool, target.id).await;
     users::soft_delete(&state.pool, target.id).await?;
     audit::record(
         &state.pool,
@@ -914,6 +1031,21 @@ pub struct AuditQuery {
     /// Optional action filter, e.g. "device.created".
     #[serde(default)]
     pub action: Option<String>,
+    /// Restrict to entries authored by this user.
+    #[serde(default)]
+    pub actor_user_id: Option<Uuid>,
+    /// Restrict to entries about this target (any target_type).
+    #[serde(default)]
+    pub target_id: Option<Uuid>,
+    /// Restrict to entries with this target_type ("user", "device", "server", …).
+    #[serde(default)]
+    pub target_type: Option<String>,
+    /// RFC3339 lower bound (inclusive). Restricts to created_at ≥ since.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub since: Option<OffsetDateTime>,
+    /// RFC3339 upper bound (exclusive). Restricts to created_at < until.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub until: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
@@ -954,23 +1086,45 @@ pub async fn list_audit(
 ) -> ApiResult<impl IntoResponse> {
     let limit = q.limit.clamp(1, 500);
     let offset = q.offset.max(0);
+    // Single param-list shared between count + fetch so the WHERE
+    // clauses stay in sync. NULL on a filter param disables it.
     let (total,): (i64,) = sqlx::query_as(
         r#"SELECT COUNT(*)::BIGINT FROM audit_logs
-            WHERE ($1::TEXT IS NULL OR action = $1)"#,
+            WHERE ($1::TEXT IS NULL OR action        = $1)
+              AND ($2::UUID IS NULL OR actor_user_id = $2)
+              AND ($3::UUID IS NULL OR target_id     = $3)
+              AND ($4::TEXT IS NULL OR target_type   = $4)
+              AND ($5::TIMESTAMPTZ IS NULL OR created_at >= $5)
+              AND ($6::TIMESTAMPTZ IS NULL OR created_at <  $6)"#,
     )
     .bind(q.action.as_deref())
+    .bind(q.actor_user_id)
+    .bind(q.target_id)
+    .bind(q.target_type.as_deref())
+    .bind(q.since)
+    .bind(q.until)
     .fetch_one(&state.pool)
     .await?;
     let items: Vec<AuditRow> = sqlx::query_as(
         r#"SELECT id, actor_user_id, action, target_type, target_id, metadata, created_at
              FROM audit_logs
-            WHERE ($3::TEXT IS NULL OR action = $3)
+            WHERE ($3::TEXT IS NULL OR action        = $3)
+              AND ($4::UUID IS NULL OR actor_user_id = $4)
+              AND ($5::UUID IS NULL OR target_id     = $5)
+              AND ($6::TEXT IS NULL OR target_type   = $6)
+              AND ($7::TIMESTAMPTZ IS NULL OR created_at >= $7)
+              AND ($8::TIMESTAMPTZ IS NULL OR created_at <  $8)
             ORDER BY id DESC
             LIMIT $1 OFFSET $2"#,
     )
     .bind(limit)
     .bind(offset)
     .bind(q.action.as_deref())
+    .bind(q.actor_user_id)
+    .bind(q.target_id)
+    .bind(q.target_type.as_deref())
+    .bind(q.since)
+    .bind(q.until)
     .fetch_all(&state.pool)
     .await?;
     Ok(Json(AuditList { total, items }))
@@ -1016,12 +1170,22 @@ pub async fn list_audit_csv(
     let items: Vec<AuditRow> = sqlx::query_as(
         r#"SELECT id, actor_user_id, action, target_type, target_id, metadata, created_at
              FROM audit_logs
-            WHERE ($2::TEXT IS NULL OR action = $2)
+            WHERE ($2::TEXT IS NULL OR action        = $2)
+              AND ($3::UUID IS NULL OR actor_user_id = $3)
+              AND ($4::UUID IS NULL OR target_id     = $4)
+              AND ($5::TEXT IS NULL OR target_type   = $5)
+              AND ($6::TIMESTAMPTZ IS NULL OR created_at >= $6)
+              AND ($7::TIMESTAMPTZ IS NULL OR created_at <  $7)
             ORDER BY id DESC
             LIMIT $1"#,
     )
     .bind(limit)
     .bind(q.action.as_deref())
+    .bind(q.actor_user_id)
+    .bind(q.target_id)
+    .bind(q.target_type.as_deref())
+    .bind(q.since)
+    .bind(q.until)
     .fetch_all(&state.pool)
     .await?;
 
@@ -1455,6 +1619,163 @@ pub async fn rotate_server_keys(
         "wg0_conf_rewritten": conf_write_ok,
         "warning": "All peer .conf files reference the OLD server pubkey and must be re-downloaded. Restart the wg container to pick up the new private key.",
     })))
+}
+
+// ---- Server detail -------------------------------------------------------
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminServerDeviceRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub user_email: String,
+    pub name: String,
+    pub os: zerovpn_core::models::DeviceOs,
+    pub status: zerovpn_core::models::DeviceStatus,
+    pub allocated_ip: String,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_handshake_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminServerDetail {
+    pub server: AdminServer,
+    pub device_count_active: i64,
+    pub device_count_paused: i64,
+    pub device_count_total: i64,
+    pub devices: Vec<AdminServerDeviceRow>,
+}
+
+/// Bundled server detail for the admin server-detail page. Server core
+/// + per-status device counts + the list of devices on this server
+/// joined with each device's owning user email.
+#[utoipa::path(
+    get,
+    path = "/admin/servers/{id}",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Target server UUID")),
+    responses(
+        (status = 200, description = "Server detail bundle", body = AdminServerDetail),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "Server not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn server_detail(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let server = servers::find_by_id(&state.pool, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    // One inline query joins devices to users so we can show emails
+    // next to each device row without N round trips.
+    let device_rows: Vec<AdminServerDeviceRow> = sqlx::query_as::<_, (
+        Uuid,
+        Uuid,
+        String,
+        String,
+        zerovpn_core::models::DeviceOs,
+        zerovpn_core::models::DeviceStatus,
+        ipnetwork::IpNetwork,
+        Option<OffsetDateTime>,
+        OffsetDateTime,
+    )>(
+        r#"SELECT d.id, d.user_id, u.email::TEXT, d.name, d.os, d.status,
+                  d.allocated_ip, d.last_handshake_at, d.created_at
+             FROM devices d
+             JOIN users u ON u.id = d.user_id
+            WHERE d.server_id = $1 AND d.status <> 'revoked'
+            ORDER BY d.created_at DESC
+            LIMIT 200"#,
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?
+    .into_iter()
+    .map(|r| AdminServerDeviceRow {
+        id: r.0,
+        user_id: r.1,
+        user_email: r.2,
+        name: r.3,
+        os: r.4,
+        status: r.5,
+        allocated_ip: r.6.ip().to_string(),
+        last_handshake_at: r.7,
+        created_at: r.8,
+    })
+    .collect();
+
+    // Per-status counts via a single CASE-aggregating query — cheaper
+    // than two round trips and consistent with the user-detail row.
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        r#"SELECT
+              COUNT(*) FILTER (WHERE status = 'active')::BIGINT  AS active,
+              COUNT(*) FILTER (WHERE status = 'paused')::BIGINT  AS paused,
+              COUNT(*) FILTER (WHERE status <> 'revoked')::BIGINT AS total
+             FROM devices WHERE server_id = $1"#,
+    )
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(Json(AdminServerDetail {
+        server: AdminServer::from(server),
+        device_count_active: counts.0,
+        device_count_paused: counts.1,
+        device_count_total: counts.2,
+        devices: device_rows,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/servers/{id}/bandwidth",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Target server UUID"),
+        BandwidthRangeQuery,
+    ),
+    responses(
+        (status = 200, description = "Bucketed RX/TX history aggregated across the server's devices", body = AdminUserBandwidthResponse),
+        (status = 400, description = "Invalid range"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn server_bandwidth(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(id): Path<Uuid>,
+    Query(q): Query<BandwidthRangeQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let range = q.range.unwrap_or_else(|| "24h".into());
+    let (since, bucket) = match range.as_str() {
+        "24h" => (OffsetDateTime::now_utc() - time::Duration::hours(24), "hour"),
+        "7d" => (OffsetDateTime::now_utc() - time::Duration::days(7), "hour"),
+        "30d" => (OffsetDateTime::now_utc() - time::Duration::days(30), "day"),
+        other => {
+            return Err(ApiError::Validation(format!(
+                "range must be 24h | 7d | 30d (got {other})"
+            )));
+        }
+    };
+    let rows = bandwidth::server_totals(&state.pool, id, since, bucket).await?;
+    Ok(Json(AdminUserBandwidthResponse {
+        bucket: if bucket == "hour" { "hour" } else { "day" },
+        range,
+        buckets: rows
+            .into_iter()
+            .map(|b| AdminUserBandwidthBucket {
+                bucket_start: b.bucket_start,
+                rx_bytes: b.rx_bytes,
+                tx_bytes: b.tx_bytes,
+            })
+            .collect(),
+    }))
 }
 
 /// Admin-only: every non-revoked device across the deployment, used to

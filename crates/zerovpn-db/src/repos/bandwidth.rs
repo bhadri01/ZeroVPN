@@ -205,3 +205,32 @@ pub async fn user_totals(
     .fetch_all(pool)
     .await
 }
+
+/// Total aggregated for a server across every device hosted on it.
+/// `bandwidth_aggregates` is keyed on `device_id`, so we join through
+/// `devices` to filter by `server_id`. Same bucketing behaviour as
+/// `user_totals`.
+pub async fn server_totals(
+    pool: &PgPool,
+    server_id: Uuid,
+    since: OffsetDateTime,
+    bucket: &str,
+) -> sqlx::Result<Vec<BandwidthBucket>> {
+    sqlx::query_as::<_, BandwidthBucket>(
+        r#"SELECT a.bucket_start,
+                  COALESCE(SUM(a.rx_bytes), 0)::BIGINT AS rx_bytes,
+                  COALESCE(SUM(a.tx_bytes), 0)::BIGINT AS tx_bytes
+             FROM bandwidth_aggregates a
+             JOIN devices d ON d.id = a.device_id
+            WHERE d.server_id = $1
+              AND a.bucket = $2::bucket_kind
+              AND a.bucket_start >= $3
+            GROUP BY a.bucket_start
+            ORDER BY a.bucket_start ASC"#,
+    )
+    .bind(server_id)
+    .bind(bucket)
+    .bind(since)
+    .fetch_all(pool)
+    .await
+}

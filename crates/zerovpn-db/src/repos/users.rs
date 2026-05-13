@@ -82,6 +82,41 @@ pub async fn update_password(pool: &PgPool, id: Uuid, new_hash: &str) -> sqlx::R
     Ok(res.rows_affected())
 }
 
+/// Bump `password_changed_at` without touching the password hash. The
+/// watermark is what the auth extractor checks against the snapshot
+/// embedded in the session — bumping it invalidates every outstanding
+/// session for this user without us needing to crawl the opaque
+/// tower_sessions blob storage. Used for "sign out everywhere",
+/// admin-triggered force-logout, and as part of suspend / delete so
+/// the user's cookie dies the moment status changes.
+pub async fn kill_all_sessions(pool: &PgPool, id: Uuid) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        "UPDATE users SET password_changed_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Admin override: change a user's email. Returns 0 rows when the user
+/// doesn't exist or is deleted. Caller is responsible for normalising
+/// the input (trim + lowercase) and checking uniqueness up-front, since
+/// the underlying CITEXT column will surface a generic
+/// `unique_violation` otherwise.
+pub async fn admin_set_email(pool: &PgPool, id: Uuid, new_email: &str) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        r#"UPDATE users
+              SET email = $2::CITEXT
+            WHERE id = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(id)
+    .bind(new_email)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 pub async fn create(
     pool: &PgPool,
     email: &str,

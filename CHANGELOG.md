@@ -33,6 +33,21 @@ All notable changes to ZeroVPN are documented here. Format: [Keep a Changelog](h
 
 ## [Unreleased]
 
+### Policy reversal — full logging system (2026-05-13)
+
+**The "no-log VPN" posture is being abandoned. The system will now retain comprehensive operational logs, surfaced to admins.** This entry records the policy decision; the implementation is staged in `TODO.md` under "Phase 2 — Full logging system" and lands incrementally.
+
+**Background.** v1 was designed with restraint: no DNS logs, no destination-IP logs, no traffic payload; audit-log IPs stored as `/24` prefixes and anonymized at 30 days; `failed_logins` purged at 30 days; user-agent strings stored only as SHA-256 hashes; `wg show dump` parser explicitly skipped the peer `endpoint` column so the user's real public IP at the WG server was never persisted. Combined with the WireGuard transport — which gives the server no user-space view of DNS or destination IPs — this added up to a credible "no traffic logs, minimal account-activity logs, with anonymization on timers" claim.
+
+**The new policy:** capture, retain, and surface every operational event the system can observe — account activity, sessions, per-request access, WireGuard handshake metadata including peer endpoints, byte-count time series — without bounded TTLs by default. Network-level capture (DNS queries, destination IPs) requires new infrastructure (logging resolver, netfilter/conntrack export) and lands in a later stage. Traffic *payload* / DPI remains explicitly out of scope; capturing it requires breaking the tunnel cryptography and in most jurisdictions a lawful-intercept license.
+
+**Trade-offs, stated plainly.**
+- The "no-log VPN" framing is no longer accurate. Public copy (landing page, ToS, privacy policy, marketing) **must be updated before this work ships**. Continuing to advertise "no logs" while operating a full-logging system is a consumer-protection / advertising-fairness risk in most jurisdictions.
+- Operators deploying ZeroVPN in GDPR / CCPA / similar regimes must keep retention windows bounded and ship the per-user erasure workflow (Stage D); the default of indefinite retention is not legally safe everywhere.
+- DNS / destination-IP logging is recordkeeping with surveillance utility. Operators in jurisdictions where this triggers data-protection authority registration or wiretap-license requirements must review locally before turning Stage C on.
+
+**Scope, who-decides.** Stages A and B are server-operator decisions and can be toggled per deployment. Stages C and D are product-shape decisions and ship with explicit operator opt-in plus a runbook section on legal exposure by jurisdiction.
+
 ### Polish + correctness pass (2026-05-12)
 
 **Self-contained polish sweep against the existing v1 surface. No new features; tightens flows the user hit while exercising the app and corrects stale state in the working tree.**

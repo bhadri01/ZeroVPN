@@ -3,7 +3,7 @@ import {
   IconActivity,
   IconArrowDown,
   IconArrowUp,
-  IconHandshake,
+  IconBolt,
   IconInfoCircle,
   IconServer,
   IconUsers,
@@ -93,7 +93,6 @@ export function AdminOverviewPage() {
   const fleetTx = fleetBwQ.data?.tx_bytes ?? 0
   const maintOn = !!maintQ.data?.maintenance_mode
 
-  const servers = serversQ.data ?? []
   // Sum the worker-reported `onlineCount` across every server — devices
   // with a recent WireGuard handshake. Reflects real-time connection
   // pressure on the fleet, vs. the cumulative "Devices · fleet" KPI to
@@ -293,7 +292,7 @@ function ServerLiveCard({
         <LiveStat
           label="Hshakes/s"
           value={live?.handshakeCount ?? 0}
-          icon={<IconHandshake className="size-3.5" />}
+          icon={<IconBolt className="size-3.5" />}
           reduceMotion={reduceMotion}
         />
         <LiveStat

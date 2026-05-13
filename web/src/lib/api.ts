@@ -179,6 +179,13 @@ export interface UserPreferences {
   toast_position: ToastPositionPref
   toast_sound: boolean
   browser_notifications: boolean
+  /** Email when a new WG device is added to the account. */
+  email_on_new_device: boolean
+  /** Email when monthly bandwidth crosses 80% of the cap. */
+  email_on_quota_warning: boolean
+  /** Email for security-relevant events (new IP sign-in, password
+   *  change, 2FA enable/disable, admin actions on the account). */
+  email_on_security_event: boolean
 }
 
 export const getMyPreferences = () =>
@@ -254,6 +261,12 @@ export const changePassword = (
     method: "POST",
     body: JSON.stringify({ current_password, new_password }),
   })
+
+/** "Sign out everywhere" — invalidates every session for the current
+ *  user except the one that called this endpoint. The current session
+ *  stays alive (the server re-syncs the watermark snapshot in-place). */
+export const revokeOtherSessions = () =>
+  apiFetch<{ status: string }>("/me/sessions/revoke-all", { method: "POST" })
 
 /** Pre-flight check for a reset-password link. Lets the form surface
  *  an "expired" state before the user types a new password. `reason`
@@ -632,6 +645,23 @@ export const adminDeleteUser = (id: string) =>
     method: "DELETE",
   })
 
+/** Force-logout — invalidate every open session for this user. The
+ *  user is forced to sign in again on every device. Useful when a
+ *  user reports their account is acting strangely or after rotating
+ *  their password externally. */
+export const adminRevokeUserSessions = (id: string) =>
+  apiFetch<{ status: string }>(`/admin/users/${id}/sessions/revoke-all`, {
+    method: "POST",
+  })
+
+/** Admin override: change a user's email. Server normalises (trim +
+ *  lowercase) and rejects collisions before writing. */
+export const adminSetUserEmail = (id: string, email: string) =>
+  apiFetch<{ status: string }>(`/admin/users/${id}/email`, {
+    method: "PUT",
+    body: JSON.stringify({ email }),
+  })
+
 export interface AdminCreateUserBody {
   email: string
   password?: string
@@ -719,18 +749,47 @@ export interface AuditRow {
   created_at: string
 }
 
-export const adminListAudit = (limit = 100, offset = 0, action?: string) => {
-  const params = new URLSearchParams()
-  params.set("limit", String(limit))
-  params.set("offset", String(offset))
-  if (action) params.set("action", action)
-  return apiFetch<{ total: number; items: AuditRow[] }>(
-    `/admin/audit?${params.toString()}`,
-  )
+export interface AdminAuditFilters {
+  action?: string
+  actor_user_id?: string
+  target_id?: string
+  target_type?: string
+  /** RFC3339 lower bound (inclusive). */
+  since?: string
+  /** RFC3339 upper bound (exclusive). */
+  until?: string
 }
 
-export const adminAuditCsvUrl = (limit = 5000) =>
-  `/api/v1/admin/audit.csv?limit=${limit}`
+function adminAuditQs(
+  filters: AdminAuditFilters,
+  limit?: number,
+  offset?: number,
+): string {
+  const p = new URLSearchParams()
+  if (filters.action) p.set("action", filters.action)
+  if (filters.actor_user_id) p.set("actor_user_id", filters.actor_user_id)
+  if (filters.target_id) p.set("target_id", filters.target_id)
+  if (filters.target_type) p.set("target_type", filters.target_type)
+  if (filters.since) p.set("since", filters.since)
+  if (filters.until) p.set("until", filters.until)
+  if (limit !== undefined) p.set("limit", String(limit))
+  if (offset !== undefined) p.set("offset", String(offset))
+  return p.toString()
+}
+
+export const adminListAudit = (
+  filters: AdminAuditFilters = {},
+  limit = 100,
+  offset = 0,
+) =>
+  apiFetch<{ total: number; items: AuditRow[] }>(
+    `/admin/audit?${adminAuditQs(filters, limit, offset)}`,
+  )
+
+export const adminAuditCsvUrl = (
+  filters: AdminAuditFilters = {},
+  limit = 5000,
+) => `/api/v1/admin/audit.csv?${adminAuditQs(filters, limit)}`
 
 export interface FailedLoginRow {
   id: number
@@ -806,6 +865,39 @@ export const adminRotateServerKeys = (id: string) =>
     wg0_conf_rewritten: boolean
     warning: string
   }>(`/admin/servers/${id}/rotate-keys`, { method: "POST" })
+
+// ── Admin: server detail + bandwidth history ──────────────────────────
+
+export interface AdminServerDeviceRow {
+  id: string
+  user_id: string
+  user_email: string
+  name: string
+  os: DeviceOs
+  status: DeviceStatus
+  allocated_ip: string
+  last_handshake_at: string | null
+  created_at: string
+}
+
+export interface AdminServerDetail {
+  server: AdminServerRow
+  device_count_active: number
+  device_count_paused: number
+  device_count_total: number
+  devices: AdminServerDeviceRow[]
+}
+
+export const adminGetServerDetail = (id: string) =>
+  apiFetch<AdminServerDetail>(`/admin/servers/${id}`)
+
+export const adminServerBandwidth = (
+  id: string,
+  range: BandwidthRange = "24h",
+) =>
+  apiFetch<AdminUserBandwidthResponse>(
+    `/admin/servers/${id}/bandwidth?range=${range}`,
+  )
 
 /** Admin-only: every non-revoked device across the fleet, each row
  *  carrying its owning `user_id`. Powers the admin topology view. */

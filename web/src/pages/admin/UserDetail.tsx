@@ -4,6 +4,8 @@ import {
   IconDeviceDesktop,
   IconKey,
   IconLogin,
+  IconLogout,
+  IconMail,
   IconShieldLock,
   IconShieldOff,
   IconTrash,
@@ -52,7 +54,9 @@ import {
   adminDisableUser2FA,
   adminGetUserDetail,
   adminImpersonateUser,
+  adminRevokeUserSessions,
   adminSendPasswordReset,
+  adminSetUserEmail,
   adminSetUserQuota,
   adminSetUserRole,
   adminSetUserStatus,
@@ -91,6 +95,8 @@ export function UserDetailPage() {
   const [disable2faOpen, setDisable2faOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [roleOpen, setRoleOpen] = useState(false)
+  const [revokeSessionsOpen, setRevokeSessionsOpen] = useState(false)
+  const [editEmailOpen, setEditEmailOpen] = useState(false)
   const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
 
   const detailQ = useQuery({
@@ -154,6 +160,29 @@ export function UserDetailPage() {
       invalidateUser()
       setDisable2faOpen(false)
       toast.success("2FA disabled — user can re-enroll on next sign-in")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const revokeSessionsM = useMutation({
+    mutationFn: () => adminRevokeUserSessions(id),
+    onSuccess: () => {
+      setRevokeSessionsOpen(false)
+      toast.success("All sessions for this user invalidated")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const setEmailM = useMutation({
+    mutationFn: (email: string) => adminSetUserEmail(id, email),
+    onSuccess: () => {
+      invalidateUser()
+      setEditEmailOpen(false)
+      toast.success("Email updated")
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)
@@ -279,6 +308,12 @@ export function UserDetailPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[14rem]">
+                    <DropdownMenuLabel>Identity</DropdownMenuLabel>
+                    <DropdownMenuItem onSelect={() => setEditEmailOpen(true)}>
+                      <IconMail />
+                      Edit email
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
                     <DropdownMenuLabel>Recovery</DropdownMenuLabel>
                     <DropdownMenuItem onSelect={() => setResetOpen(true)}>
                       <IconKey />
@@ -290,6 +325,12 @@ export function UserDetailPage() {
                     >
                       <IconShieldOff />
                       Disable 2FA
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => setRevokeSessionsOpen(true)}
+                    >
+                      <IconLogout />
+                      Force-logout all sessions
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuLabel>Role</DropdownMenuLabel>
@@ -570,6 +611,27 @@ export function UserDetailPage() {
       />
 
       <ConfirmDialog
+        open={revokeSessionsOpen}
+        onOpenChange={setRevokeSessionsOpen}
+        title={`Force-logout ${u?.email ?? "user"}?`}
+        description="Invalidates every open session for this user. They'll need to sign in again on every device. The action is logged."
+        confirmLabel="Force logout"
+        destructive
+        pending={revokeSessionsM.isPending}
+        onConfirm={() => revokeSessionsM.mutate()}
+      />
+
+      {u && (
+        <EditEmailDialog
+          open={editEmailOpen}
+          onOpenChange={setEditEmailOpen}
+          currentEmail={u.email}
+          pending={setEmailM.isPending}
+          onSubmit={(email) => setEmailM.mutate(email)}
+        />
+      )}
+
+      <ConfirmDialog
         open={roleOpen}
         onOpenChange={setRoleOpen}
         title={
@@ -793,6 +855,76 @@ function toneForAction(action: string): PillTone {
   if (action.includes("password_reset")) return "warn"
   if (action.includes("2fa")) return "warn"
   return "neutral"
+}
+
+/**
+ * Inline dialog for the admin "Edit email" action. Validates client-side
+ * for shape + change + length, then defers to the server for uniqueness
+ * (which is checked atomically against the CITEXT column).
+ */
+function EditEmailDialog({
+  open,
+  onOpenChange,
+  currentEmail,
+  pending,
+  onSubmit,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  currentEmail: string
+  pending: boolean
+  onSubmit: (email: string) => void
+}) {
+  const [value, setValue] = useState(currentEmail)
+  useEffect(() => {
+    if (open) setValue(currentEmail)
+  }, [open, currentEmail])
+
+  const trimmed = value.trim().toLowerCase()
+  const sameAsCurrent = trimmed === currentEmail.toLowerCase()
+  const looksValid = trimmed.includes("@") && trimmed.length >= 3
+  const canSubmit = !pending && looksValid && !sameAsCurrent
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit email</DialogTitle>
+          <DialogDescription>
+            Updates the address of record for <code className="font-mono">{currentEmail}</code>.
+            The user keeps their devices, role, password, and 2FA. Their
+            existing sessions are not invalidated automatically — use
+            "Force-logout all sessions" if you want that.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="edit-email">New email</Label>
+          <Input
+            id="edit-email"
+            type="email"
+            inputMode="email"
+            autoComplete="off"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="user@example.com"
+          />
+          {sameAsCurrent && trimmed.length > 0 && (
+            <p className="text-muted-foreground text-[11px]">
+              Same as current — nothing to change.
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!canSubmit} onClick={() => onSubmit(trimmed)}>
+            {pending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 function ActivityIcon({ action }: { action: string }) {
