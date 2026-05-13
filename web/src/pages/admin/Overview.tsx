@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { IconInfoCircle } from "@tabler/icons-react"
-import { useMemo } from "react"
+import {
+  IconActivity,
+  IconArrowDown,
+  IconArrowUp,
+  IconHandshake,
+  IconInfoCircle,
+  IconServer,
+  IconUsers,
+} from "@tabler/icons-react"
+import { AnimatePresence, motion } from "motion/react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import {
@@ -21,8 +30,11 @@ import {
   adminSetMaintenance,
   adminStats,
 } from "@/lib/api"
+import { useReducedMotion } from "@/lib/motion"
 import { formatBps, formatBytes } from "@/lib/units"
 import { useLiveStats } from "@/stores/liveStats"
+
+const SERVER_LIVE_WINDOW_SEC = 300
 
 export function AdminOverviewPage() {
   const qc = useQueryClient()
@@ -82,7 +94,19 @@ export function AdminOverviewPage() {
   const maintOn = !!maintQ.data?.maintenance_mode
 
   const servers = serversQ.data ?? []
-  const liveHubs = servers.filter((s) => s.is_active).length
+  // Sum the worker-reported `onlineCount` across every server — devices
+  // with a recent WireGuard handshake. Reflects real-time connection
+  // pressure on the fleet, vs. the cumulative "Devices · fleet" KPI to
+  // its left.
+  const liveServers = useLiveStats((s) => s.servers)
+  const onlineNow = useMemo(
+    () =>
+      Object.values(liveServers).reduce(
+        (acc, srv) => acc + (srv?.onlineCount ?? 0),
+        0,
+      ),
+    [liveServers],
+  )
 
   return (
     <PageStagger>
@@ -156,13 +180,13 @@ export function AdminOverviewPage() {
             footL={`RX ${formatBytes(fleetRx)} · TX ${formatBytes(fleetTx)}`}
           />
           <Kpi
-            label="Hubs · backbone"
-            value={serversQ.isLoading ? "—" : liveHubs}
-            unit={servers.length > 0 ? `/ ${servers.length}` : undefined}
+            label="Online · now"
+            value={statsQ.isLoading ? "—" : onlineNow}
+            unit={totalDevices > 0 ? `/ ${totalDevices}` : undefined}
             footL={
               maintOn
                 ? "writes blocked · maintenance ON"
-                : `${liveHubs}/${servers.length} reachable`
+                : "live handshakes · fleet"
             }
             footR={maintOn ? "● maintenance" : undefined}
           />
@@ -171,17 +195,22 @@ export function AdminOverviewPage() {
 
       {(serversQ.data ?? []).length > 0 && (
         <StaggerItem>
-        <Panel
-          title="Server live"
-          sub="per-tick RX/TX + peer counts streamed over WS, hydrated from server_samples"
-          right={<LiveIndicator />}
-        >
-          <div className="grid gap-4 md:grid-cols-2">
-            {(serversQ.data ?? []).map((srv) => (
-              <ServerLiveCard key={srv.id} server={srv} />
-            ))}
-          </div>
-        </Panel>
+          <Panel
+            title="Server live"
+            sub="Last 5 minutes · streamed over WS · seeded from server_samples on mount"
+            right={<LiveIndicator />}
+            flush
+          >
+            <div className="flex flex-col">
+              {(serversQ.data ?? []).map((srv, i) => (
+                <ServerLiveCard
+                  key={srv.id}
+                  server={srv}
+                  divider={i > 0}
+                />
+              ))}
+            </div>
+          </Panel>
         </StaggerItem>
       )}
 
@@ -189,58 +218,223 @@ export function AdminOverviewPage() {
   )
 }
 
-function ServerLiveCard({ server }: { server: AdminServerRow }) {
+function ServerLiveCard({
+  server,
+  divider,
+}: {
+  server: AdminServerRow
+  divider: boolean
+}) {
   const live = useLiveStats((s) => s.servers[server.id])
+  const reduceMotion = useReducedMotion()
+
+  // Drive a "tick freshness" indicator off the latest server_sample.
+  // Re-renders every second so "updated 3s ago" stays current even when
+  // no new data is arriving (which is itself useful info — a stale value
+  // means the worker stopped emitting).
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const lastTs = live?.lastTs ?? 0
+  const ageSec = lastTs ? Math.max(0, Math.floor((now - lastTs) / 1000)) : null
+  const isFresh = ageSec !== null && ageSec <= 3
+  const isStale = ageSec !== null && ageSec > 30
+
   return (
-    <div className="border-border bg-card rounded-md border p-4">
-      <div className="flex items-baseline justify-between gap-3 pb-3">
-        <div className="flex flex-col">
-          <span className="text-foreground font-mono text-sm font-medium">
-            {server.name}
+    <div
+      className={`flex flex-col gap-4 p-5 ${divider ? "border-border border-t" : ""}`}
+    >
+      {/* Header — server identity + live freshness pill on the right */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="border-border bg-muted/40 flex size-8 shrink-0 items-center justify-center border">
+            <IconServer className="text-muted-foreground size-4" />
           </span>
-          <span className="text-muted-foreground font-mono text-[11px]">
-            {server.region} · {server.endpoint_host}:{server.endpoint_port}
+          <div className="flex flex-col min-w-0">
+            <span className="text-foreground truncate font-mono text-sm font-medium">
+              {server.name}
+            </span>
+            <span className="text-muted-foreground truncate font-mono text-[11px]">
+              {server.region} · {server.endpoint_host}:{server.endpoint_port}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <FreshnessPill
+            ageSec={ageSec}
+            isFresh={isFresh}
+            isStale={isStale}
+          />
+          <Pill tone={server.is_active ? "ok" : "warn"} dot={false}>
+            {server.is_active ? "active" : "disabled"}
+          </Pill>
+        </div>
+      </div>
+
+      {/* KPI strip — 5 metrics in a row. Each value pop-animates when it
+          changes so live updates are visually obvious instead of silently
+          swapping the number. */}
+      <div className="border-border grid grid-cols-2 border md:grid-cols-5">
+        <LiveStat
+          label="Peers"
+          value={live?.peerCount ?? 0}
+          icon={<IconUsers className="size-3.5" />}
+          reduceMotion={reduceMotion}
+        />
+        <LiveStat
+          label="Online"
+          value={live?.onlineCount ?? 0}
+          icon={<IconActivity className="size-3.5" />}
+          tone={live?.onlineCount ? "ok" : "neutral"}
+          reduceMotion={reduceMotion}
+        />
+        <LiveStat
+          label="Hshakes/s"
+          value={live?.handshakeCount ?? 0}
+          icon={<IconHandshake className="size-3.5" />}
+          reduceMotion={reduceMotion}
+        />
+        <LiveStat
+          label="Down"
+          value={formatBps(live?.rxBps ?? 0)}
+          icon={<IconArrowDown className="size-3.5 text-[var(--chart-1)]" />}
+          reduceMotion={reduceMotion}
+        />
+        <LiveStat
+          label="Up"
+          value={formatBps(live?.txBps ?? 0)}
+          icon={<IconArrowUp className="size-3.5 text-primary" />}
+          reduceMotion={reduceMotion}
+        />
+      </div>
+
+      {/* Big chart — pinned 5-min window, time labels along the X axis. */}
+      <div className="relative">
+        <NetworkMonitorChart
+          rxHistory={live?.rxHistory ?? []}
+          txHistory={live?.txHistory ?? []}
+          height={240}
+          windowSec={SERVER_LIVE_WINDOW_SEC}
+        />
+        {/* Live legend overlay — top-right of the chart. Two coloured
+            dots labelling RX and TX so users don't have to hover the
+            tooltip to read the series. */}
+        <div className="text-muted-foreground absolute right-2 top-1 flex items-center gap-3 font-mono text-[10px]">
+          <span className="inline-flex items-center gap-1">
+            <span
+              className="inline-block size-2"
+              style={{ background: "var(--chart-1)" }}
+            />
+            RX
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span
+              className="inline-block size-2"
+              style={{ background: "var(--primary)" }}
+            />
+            TX
           </span>
         </div>
-        <Pill tone={server.is_active ? "ok" : "warn"} dot={false}>
-          {server.is_active ? "active" : "disabled"}
-        </Pill>
-      </div>
-
-      <div className="grid grid-cols-3 gap-3 pb-3 font-mono text-[11px]">
-        <KpiInline label="Peers" value={live?.peerCount ?? 0} />
-        <KpiInline label="Online" value={live?.onlineCount ?? 0} />
-        <KpiInline label="Hshakes/s" value={live?.handshakeCount ?? 0} />
-      </div>
-
-      <NetworkMonitorChart
-        rxHistory={live?.rxHistory ?? []}
-        txHistory={live?.txHistory ?? []}
-        height={140}
-      />
-
-      <div className="text-muted-foreground flex items-center justify-between pt-2 font-mono text-[11px] tabular-nums">
-        <span>
-          <span className="text-status-online">↓</span>{" "}
-          {formatBps(live?.rxBps ?? 0)}
-        </span>
-        <span>
-          <span className="text-primary">↑</span>{" "}
-          {formatBps(live?.txBps ?? 0)}
-        </span>
       </div>
     </div>
   )
 }
 
-function KpiInline({ label, value }: { label: string; value: number | string }) {
+/**
+ * Inline KPI cell with a pop-in transition on value change. Wrapping
+ * the displayed value in `<AnimatePresence mode="popLayout">` swaps in
+ * each new number with a brief fade+rise so live updates are visually
+ * announced without being noisy. Honors prefers-reduced-motion.
+ */
+function LiveStat({
+  label,
+  value,
+  icon,
+  tone = "neutral",
+  reduceMotion,
+}: {
+  label: string
+  value: number | string
+  icon?: React.ReactNode
+  tone?: "ok" | "neutral"
+  reduceMotion: boolean | null
+}) {
   return (
-    <div className="flex flex-col">
-      <span className="text-muted-foreground uppercase tracking-wide text-[10px]">
+    <div className="border-border flex flex-col gap-1 border-r p-3 last:border-r-0 [&:nth-child(2n)]:border-r-0 md:[&:nth-child(2n)]:border-r md:last:border-r-0">
+      <span className="text-muted-foreground inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide">
+        {icon}
         {label}
       </span>
-      <span className="text-foreground text-sm">{value}</span>
+      <div className="overflow-hidden">
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.span
+            key={String(value)}
+            initial={
+              reduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }
+            }
+            animate={{ opacity: 1, y: 0 }}
+            exit={
+              reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }
+            }
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+            className={`block font-mono text-base tabular-nums ${tone === "ok" ? "text-status-online" : "text-foreground"}`}
+          >
+            {value}
+          </motion.span>
+        </AnimatePresence>
+      </div>
     </div>
+  )
+}
+
+/**
+ * Right-aligned freshness indicator. Pulses green for ≤3 s after a tick
+ * lands, fades to muted when stale, hidden until the first sample.
+ */
+function FreshnessPill({
+  ageSec,
+  isFresh,
+  isStale,
+}: {
+  ageSec: number | null
+  isFresh: boolean
+  isStale: boolean
+}) {
+  if (ageSec === null) {
+    return (
+      <span className="text-muted-foreground/70 inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide">
+        <span className="size-1.5 rounded-full bg-amber-500/60" />
+        waiting
+      </span>
+    )
+  }
+  const tone = isFresh
+    ? "text-emerald-600 dark:text-emerald-400"
+    : isStale
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-muted-foreground"
+  const dotTone = isFresh
+    ? "bg-emerald-500"
+    : isStale
+      ? "bg-amber-500"
+      : "bg-muted-foreground/60"
+  const label =
+    ageSec === 0
+      ? "now"
+      : ageSec < 60
+        ? `${ageSec}s ago`
+        : `${Math.round(ageSec / 60)}m ago`
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide ${tone}`}
+    >
+      <span
+        className={`size-1.5 rounded-full ${dotTone} ${isFresh ? "animate-pulse" : ""}`}
+      />
+      {label}
+    </span>
   )
 }
 

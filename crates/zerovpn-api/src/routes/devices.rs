@@ -27,7 +27,7 @@ use crate::{
 };
 
 const MAX_DEVICES_PER_USER: usize = 5;
-const PERSISTENT_KEEPALIVE: u16 = 25;
+pub const PERSISTENT_KEEPALIVE: u16 = 25;
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateBody {

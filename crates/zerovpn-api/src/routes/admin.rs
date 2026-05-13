@@ -23,9 +23,69 @@ use crate::{
         RequireAdmin, SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_REAL_PW_CHANGED_AT,
         SESSION_KEY_REAL_USER_ID, SESSION_KEY_USER_ID,
     },
-    routes::{devices::PublicDevice, dto::StatusAck, email_auth},
+    routes::{
+        devices::{PERSISTENT_KEEPALIVE, PublicDevice},
+        dto::StatusAck,
+        email_auth,
+    },
     state::AppState,
 };
+
+// ── WireGuard sync helpers ──────────────────────────────────────────────
+// Used whenever an account-level lifecycle change should ripple out to
+// the live WG interface — suspend/unsuspend/delete on a user. Each
+// helper is best-effort: we log peer-level failures but never abort the
+// account-level operation, so the DB always converges even if WG is
+// temporarily unreachable. The reconciler picks up any drift later.
+
+/// Drop every active peer that belongs to this user from the live WG
+/// interface. Use on suspend / delete to actually disconnect the user
+/// instead of just blocking their dashboard access.
+async fn remove_user_peers(state: &AppState, user_id: Uuid) {
+    let user_devices = match devices::list_for_user(&state.pool, user_id).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!(?e, %user_id, "remove_user_peers: list_for_user failed");
+            return;
+        }
+    };
+    for d in user_devices {
+        // Only `Active` devices have a peer registered on the WG box —
+        // `Paused` devices were already torn down at pause time.
+        if d.status != zerovpn_core::models::DeviceStatus::Active {
+            continue;
+        }
+        if let Err(e) = state.wg.remove_peer(&d.public_key).await {
+            warn!(?e, device_id = %d.id, "remove_user_peers: wg remove_peer failed");
+        }
+    }
+}
+
+/// Re-add every active peer that belongs to this user to the live WG
+/// interface. Use on unsuspend so previously-suspended users can
+/// reconnect immediately without rotating keys or re-downloading the
+/// .conf. Paused devices stay paused.
+async fn restore_user_peers(state: &AppState, user_id: Uuid) {
+    let user_devices = match devices::list_for_user(&state.pool, user_id).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!(?e, %user_id, "restore_user_peers: list_for_user failed");
+            return;
+        }
+    };
+    for d in user_devices {
+        if d.status != zerovpn_core::models::DeviceStatus::Active {
+            continue;
+        }
+        if let Err(e) = state
+            .wg
+            .add_peer(&d.public_key, d.allocated_ip.ip(), None, PERSISTENT_KEEPALIVE)
+            .await
+        {
+            warn!(?e, device_id = %d.id, "restore_user_peers: wg add_peer failed");
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, IntoParams)]
 pub struct ListQuery {
@@ -353,10 +413,27 @@ pub async fn set_user_status(
     if target_id == actor.id {
         return Err(ApiError::Validation("cannot change your own status".into()));
     }
+    // Snapshot the prior status so we know which side of the transition
+    // we're on — needed to decide whether to tear down or restore peers.
+    let prior = users::find_by_id(&state.pool, target_id)
+        .await?
+        .ok_or(ApiError::NotFound)?
+        .status;
     let n = users::admin_set_status(&state.pool, target_id, body.status).await?;
     if n == 0 {
         return Err(ApiError::NotFound);
     }
+
+    // Sync the live WG interface to the new status. Suspending a user
+    // only mattered to the dashboard before this — the tunnel itself
+    // stayed up because peers were never removed. These two helpers
+    // close that gap.
+    if body.status == UserStatus::Suspended && prior != UserStatus::Suspended {
+        remove_user_peers(&state, target_id).await;
+    } else if body.status == UserStatus::Active && prior == UserStatus::Suspended {
+        restore_user_peers(&state, target_id).await;
+    }
+
     audit::record(
         &state.pool,
         audit::AuditEntry {
@@ -364,7 +441,7 @@ pub async fn set_user_status(
             action: "admin.user_status_changed",
             target_type: Some("user"),
             target_id: Some(target_id),
-            metadata: json!({ "status": body.status }),
+            metadata: json!({ "status": body.status, "prior": prior }),
             ip_prefix: None,
         },
     )
@@ -552,6 +629,22 @@ pub async fn delete_user(
             return Err(ApiError::Validation(
                 "cannot delete the last remaining admin".into(),
             ));
+        }
+    }
+    // Tear down the live WG peers AND release IPs BEFORE soft-deleting.
+    // After soft_delete every device row is marked revoked, so iterating
+    // afterwards would find nothing to remove. Best-effort — failures
+    // log but don't block the deletion.
+    if let Ok(user_devices) = devices::list_for_user(&state.pool, target.id).await {
+        for d in user_devices {
+            if d.status == zerovpn_core::models::DeviceStatus::Active {
+                if let Err(e) = state.wg.remove_peer(&d.public_key).await {
+                    warn!(?e, device_id = %d.id, "delete_user: wg remove_peer failed");
+                }
+            }
+            if let Some(alloc) = state.allocators.get(d.server_id) {
+                let _ = alloc.release(d.allocated_ip.ip());
+            }
         }
     }
     users::soft_delete(&state.pool, target.id).await?;

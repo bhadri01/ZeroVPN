@@ -442,10 +442,16 @@ pub async fn delete_account(
     .await?;
     let _ = session.flush().await;
 
-    // Belt-and-suspenders: revoke any device IPs from the in-memory
-    // allocator so freshly-released slots are immediately reusable.
+    // Tear down the live WG peers AND release device IPs from the
+    // in-memory allocator. Both are best-effort: log on failure but
+    // never abort the deletion (DB is already updated).
     if let Ok(user_devices) = devices::list_for_user(&state.pool, user.id).await {
         for d in user_devices {
+            if d.status == zerovpn_core::models::DeviceStatus::Active {
+                if let Err(e) = state.wg.remove_peer(&d.public_key).await {
+                    tracing::warn!(?e, device_id = %d.id, "delete_account: wg remove_peer failed");
+                }
+            }
             if let Some(alloc) = state.allocators.get(d.server_id) {
                 let _ = alloc.release(d.allocated_ip.ip());
             }
