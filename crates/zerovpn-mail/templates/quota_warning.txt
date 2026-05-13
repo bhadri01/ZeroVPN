@@ -1,0 +1,26 @@
+ZEROVPN
+────────────────────────────────────────
+
+BANDWIDTH · QUOTA WARNING
+
+Approaching your monthly cap
+
+Heads-up: this month's bandwidth on your ZeroVPN
+account has crossed the warning threshold.
+
+  Used   : {{ used_human }}
+  Cap    : {{ cap_human }}
+  At     : {{ used_pct_label }}
+  Resets : {{ resets_at }}
+
+Once you hit the cap, traffic continues but the
+dashboard will start showing a warning. Reach out to
+your admin if you need a bump.
+
+—
+You're receiving this email because the "quota
+warning" notification preference is enabled on your
+account. You can turn it off in Settings →
+Notifications.
+
+ZeroVPN · self-hosted WireGuard

@@ -13,7 +13,7 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use zerovpn_core::models::{Server, UserRole, UserStatus};
 use zerovpn_db::repos::{
-    audit, bandwidth, devices, servers,
+    audit, bandwidth, devices, peer_endpoint_history, servers,
     users::{self, AdminUserFilters},
 };
 
@@ -290,6 +290,13 @@ pub struct AdminUserDevice {
     pub dns_names: Vec<String>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub last_handshake_at: Option<OffsetDateTime>,
+    /// Most recent `host:port` the peer connected from, as observed by
+    /// the WG poller. `None` until the device's first handshake.
+    pub last_peer_endpoint: Option<String>,
+    /// Wall-clock time the `last_peer_endpoint` was first observed.
+    /// Updated together with the endpoint on every change.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_peer_endpoint_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 }
@@ -335,8 +342,35 @@ pub async fn user_detail(
         .await?
         .ok_or(ApiError::NotFound)?;
 
-    let device_rows = devices::list_for_user(&state.pool, target_id).await?;
-    let devices = device_rows
+    // Admin device list. Includes the Phase 2 / Stage A peer-endpoint
+    // columns, which the core `Device` model doesn't carry — sidestepping
+    // a cascade of SELECT rewrites by pulling exactly what the admin UI
+    // needs as a one-off shape here.
+    #[derive(sqlx::FromRow)]
+    struct DeviceRow {
+        id: Uuid,
+        name: String,
+        os: zerovpn_core::models::DeviceOs,
+        status: zerovpn_core::models::DeviceStatus,
+        allocated_ip: ipnetwork::IpNetwork,
+        dns_names: Vec<String>,
+        last_handshake_at: Option<OffsetDateTime>,
+        last_peer_endpoint: Option<String>,
+        last_peer_endpoint_at: Option<OffsetDateTime>,
+        created_at: OffsetDateTime,
+    }
+    let device_rows: Vec<DeviceRow> = sqlx::query_as(
+        r#"SELECT id, name, os, status, allocated_ip, dns_names,
+                  last_handshake_at, last_peer_endpoint, last_peer_endpoint_at,
+                  created_at
+             FROM devices
+            WHERE user_id = $1 AND status <> 'revoked'
+            ORDER BY display_order NULLS LAST, created_at DESC"#,
+    )
+    .bind(target_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let devices: Vec<AdminUserDevice> = device_rows
         .into_iter()
         .map(|d| AdminUserDevice {
             id: d.id,
@@ -346,6 +380,8 @@ pub async fn user_detail(
             allocated_ip: d.allocated_ip.ip().to_string(),
             dns_names: d.dns_names,
             last_handshake_at: d.last_handshake_at,
+            last_peer_endpoint: d.last_peer_endpoint,
+            last_peer_endpoint_at: d.last_peer_endpoint_at,
             created_at: d.created_at,
         })
         .collect();
@@ -1834,6 +1870,31 @@ pub async fn list_devices(
     let rows = devices::list_all_active(&state.pool).await?;
     let out: Vec<PublicDevice> = rows.into_iter().map(Into::into).collect();
     Ok(Json(out))
+}
+
+/// Admin-only: WireGuard peer-endpoint history for a single device.
+/// Each row is one observation of a distinct `host:port` the device
+/// connected from, newest first. Capped at 200 rows.
+#[utoipa::path(
+    get,
+    path = "/admin/devices/{id}/endpoint-history",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    responses(
+        (status = 200, description = "Distinct WG peer endpoints for the device, newest first", body = Vec<peer_endpoint_history::EndpointRow>),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn device_endpoint_history(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let rows = peer_endpoint_history::list_for_device(&state.pool, device_id, 200).await?;
+    Ok(Json(rows))
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -359,7 +359,6 @@ pub async fn login(
         {
             Ok(Some(prev)) if prev != new_ip => {
                 if let Some(mailer) = &state.mailer {
-                    use askama::Template;
                     let when = OffsetDateTime::now_utc()
                         .format(&time::format_description::well_known::Rfc3339)
                         .unwrap_or_else(|_| "(unknown)".into());
@@ -367,19 +366,28 @@ pub async fn login(
                         "{}/app/settings#security",
                         state.public_url.trim_end_matches('/'),
                     );
-                    let body = zerovpn_mail::templates::SuspiciousLogin {
+                    let ip_str = new_ip.ip().to_string();
+                    let email = zerovpn_mail::templates::SuspiciousLogin {
                         email: &user_with_secrets.email,
                         when: &when,
                         security_link: &security_link,
-                    }
-                    .render()
-                    .unwrap_or_default();
+                        ip: Some(&ip_str),
+                        user_agent: req_ua.as_deref(),
+                    };
+                    // Render before the spawn so the future doesn't
+                    // capture any borrowed refs from this scope.
+                    use zerovpn_mail::templates::Email;
+                    let subject = email.subject().to_string();
+                    let text = email.render_text().unwrap_or_default();
+                    let html = email.render_html().unwrap_or_default();
                     if let Ok(to) = user_with_secrets.email.parse::<zerovpn_mail::Mailbox>()
                     {
                         let mailer = mailer.clone();
-                        let subj = "New sign-in to your ZeroVPN account";
                         tokio::spawn(async move {
-                            if let Err(e) = mailer.send(to, subj, body).await {
+                            if let Err(e) = mailer
+                                .send_rendered(to, subject, text, html)
+                                .await
+                            {
                                 warn!(?e, "suspicious-login email send failed");
                             }
                         });

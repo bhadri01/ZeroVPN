@@ -129,7 +129,7 @@ function Hero({
         variants={{ initial: {}, animate: { transition: stagger(0.06) } }}
       >
         <motion.div variants={cardVariants}>
-          <Eyebrow num="01">Self-hosted · WireGuard · No-logs</Eyebrow>
+          <Eyebrow num="01">Self-hosted · WireGuard · Full admin visibility</Eyebrow>
         </motion.div>
         <motion.h1
           variants={cardVariants}
@@ -147,9 +147,10 @@ function Hero({
           variants={cardVariants}
           className="text-muted-foreground mt-2 max-w-[46ch] text-[15px] leading-relaxed sm:mt-3 sm:text-base"
         >
-          A privacy-first WireGuard control plane you deploy in fifteen minutes.
+          A self-hosted WireGuard control plane you deploy in fifteen minutes.
           Manage devices, peers, and admin policy from one quiet, fast console.
-          Live telemetry. No traffic logs. No SaaS in the path.
+          Live telemetry. Full operational logs for admins. No third-party
+          SaaS in the data path.
         </motion.p>
         <motion.div
           variants={cardVariants}
@@ -370,18 +371,18 @@ function Personas() {
       blurb: "10–50 peers. Real users. Real auditors.",
       gets: [
         "Admin · suspend · quota · key-rotate",
-        "180-day audit log + CSV",
+        "Audit log + CSV (retained indefinitely)",
         "TOTP + recovery codes",
       ],
     },
     {
       n: "P/03",
-      label: "Privacy operator",
-      blurb: "You don't want anyone — even us — to see your traffic.",
+      label: "Compliance operator",
+      blurb: "You need to answer 'who did what, from where' on demand.",
       gets: [
-        "Zero traffic-content logging",
-        "KEK · AES-256-GCM at rest",
-        "No SaaS in the data path",
+        "Full sign-in + audit trail per user",
+        "WG peer endpoint history per device",
+        "KEK · AES-256-GCM at rest · self-hosted",
       ],
     },
   ]
@@ -630,8 +631,8 @@ function FeaturesBento() {
         />
         <BentoCard
           n="04.3"
-          h="Privacy by default"
-          b="No traffic-content logging. Argon2 + KEK-encrypted secrets at rest."
+          h="Self-hosted security"
+          b="No traffic-content inspection or DPI. Argon2 + KEK-encrypted secrets at rest."
         />
         <BentoCard
           n="04.4"
@@ -1218,7 +1219,7 @@ function Security() {
     {
       n: "09.4",
       h: "Brute-force shield",
-      b: "10/min/IP rate-limit, /24 prefix tracking, Failed Logins admin board.",
+      b: "5/15min/email rate-limit, full IP + User-Agent retained, Failed Logins admin board.",
     },
     {
       n: "09.5",
@@ -1227,8 +1228,8 @@ function Security() {
     },
     {
       n: "09.6",
-      h: "Audit · 180 days",
-      b: "Every admin action and key rotation logged. Exportable as CSV.",
+      h: "Full audit trail",
+      b: "Every account event, sign-in, key rotation, and WG endpoint change logged and retained indefinitely. Exportable as CSV.",
     },
   ]
   return (
@@ -1378,7 +1379,7 @@ function Compare() {
 function Roadmap() {
   const shipped = [
     "WireGuard + AmneziaWG provisioning",
-    "Tick-level telemetry · 180-day audit",
+    "Tick-level telemetry · full audit trail (no TTL)",
     "TOTP + recovery codes",
     "Live topology · drag-to-rearrange · per-user persist",
     "Admin: users · failed logins · maintenance mode",
@@ -1452,8 +1453,8 @@ function Roadmap() {
 function FAQ() {
   const faqs = [
     {
-      q: "Do you keep traffic logs?",
-      a: "No. ZeroVPN never inspects, mirrors, or stores the contents of your traffic. The worker collects WireGuard byte counters (per peer, per tick) so you see live rates — that's it. Nothing leaves your machine.",
+      q: "What does ZeroVPN log?",
+      a: "Operational metadata, retained indefinitely by default. That covers: account events (register, login, password change, 2FA), failed-login attempts with the client IP and User-Agent, every admin action, per-device WireGuard handshake times and byte counters, and the public IP each peer connects from (with full history of changes). Traffic content is not inspected — there's no DPI, no DNS-query logging, no destination-IP logging. Everything stays on your machine; there's no third-party SaaS in the data path. Operators can tune retention in app_settings; deployments in GDPR/CCPA jurisdictions should bound retention and ship the per-user erasure workflow.",
     },
     {
       q: "Do I need the WireGuard kernel module?",
@@ -1527,13 +1528,14 @@ function CTA() {
         Ready
       </Eyebrow>
       <h2 className="font-heading mt-4 text-4xl font-medium leading-[0.95] tracking-[-0.03em] sm:text-5xl lg:text-7xl">
-        Stop renting
+        Own your
         <br />
-        your privacy.
+        infrastructure.
       </h2>
       <p className="text-muted-foreground mx-auto mt-5 max-w-[56ch] text-sm leading-relaxed sm:mt-6 sm:text-base">
         Self-host in fifteen minutes. Open source, MIT-licensed. No accounts
-        upstream, no telemetry phoning home, no ceremony.
+        upstream, no telemetry phoning home — you hold the data and you set
+        the retention.
       </p>
       <div className="mt-6 flex flex-wrap items-center justify-center gap-3 sm:mt-8">
         <Button asChild size="lg">

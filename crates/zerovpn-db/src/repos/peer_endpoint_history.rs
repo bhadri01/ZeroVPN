@@ -1,4 +1,5 @@
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::PgPool;
@@ -25,7 +26,7 @@ pub async fn record(
     Ok(())
 }
 
-#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, ToSchema)]
 pub struct EndpointRow {
     pub id: i64,
     pub endpoint: String,

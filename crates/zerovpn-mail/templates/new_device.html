@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% import "_components.html" as ui %}
+
+{% block subject %}New device added to your ZeroVPN account{% endblock %}
+{% block preheader %}A WireGuard device was just registered to your account.{% endblock %}
+{% block eyebrow %}Account · Device added{% endblock %}
+{% block title %}New device added{% endblock %}
+
+{% block content %}
+  {% call ui::lead("A new WireGuard device has just been registered on your ZeroVPN account.") %}{% endcall %}
+
+  {% call ui::kv_list() %}
+    {{ ui::kv_row(k="Account", v=email) }}
+    {{ ui::kv_row(k="Device", v=device_name) }}
+    {% if device_os.is_some() %}{{ ui::kv_row(k="OS", v=device_os.unwrap()) }}{% endif %}
+    {{ ui::kv_row(k="When", v=when) }}
+  {% endcall %}
+
+  {% call ui::p("If you just added this device yourself, you can stop reading.") %}{% endcall %}
+
+  {% call ui::alert(tone="warn", body="<strong>If you didn't add this device</strong> — revoke it immediately, change your password, and review your active sessions. Anyone with the .conf file from a device can route traffic through your tunnel.") %}{% endcall %}
+
+  {% call ui::button(label="Review my devices", href=manage_link) %}{% endcall %}
+{% endblock %}
+
+{% block why %}You're receiving this email because the "new device" notification preference is enabled on your account. You can turn it off in Settings → Notifications.{% endblock %}

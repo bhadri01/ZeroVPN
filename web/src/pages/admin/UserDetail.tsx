@@ -48,12 +48,14 @@ import {
   type BandwidthBucket,
   type BandwidthRange,
   type DeviceStatus,
+  type EndpointHistoryRow,
   type UserRole,
   type UserStatus,
   adminDeleteUser,
   adminDisableUser2FA,
   adminGetUserDetail,
   adminImpersonateUser,
+  adminListDeviceEndpointHistory,
   adminRevokeUserSessions,
   adminSendPasswordReset,
   adminSetUserEmail,
@@ -98,6 +100,14 @@ export function UserDetailPage() {
   const [revokeSessionsOpen, setRevokeSessionsOpen] = useState(false)
   const [editEmailOpen, setEditEmailOpen] = useState(false)
   const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
+  // ID of the device whose endpoint-history dialog is open; null means
+  // closed. Phase 2 / Stage A — admins click the "history" cell on any
+  // device row to drill into every distinct WG endpoint that peer has
+  // ever connected from.
+  const [endpointDevice, setEndpointDevice] = useState<{
+    id: string
+    name: string
+  } | null>(null)
 
   const detailQ = useQuery({
     queryKey: ["admin", "user", id],
@@ -466,6 +476,7 @@ export function UserDetailPage() {
                         <th>IP</th>
                         <th>Status</th>
                         <th>Last handshake</th>
+                        <th>Last endpoint</th>
                         <th>Created</th>
                       </tr>
                     </thead>
@@ -493,6 +504,22 @@ export function UserDetailPage() {
                               value={d.last_handshake_at}
                               fallback="Never"
                             />
+                          </td>
+                          <td className="font-mono text-xs">
+                            {d.last_peer_endpoint ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEndpointDevice({ id: d.id, name: d.name })
+                                }
+                                className="hover:text-foreground text-muted-foreground underline-offset-2 hover:underline"
+                                title="View full endpoint history"
+                              >
+                                {d.last_peer_endpoint}
+                              </button>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
                           </td>
                           <td className="text-muted-foreground font-mono text-xs">
                             <RelativeTime value={d.created_at} fallback="—" />
@@ -672,6 +699,13 @@ export function UserDetailPage() {
           onSaved={invalidateUser}
         />
       )}
+
+      <EndpointHistoryDialog
+        device={endpointDevice}
+        onOpenChange={(open) => {
+          if (!open) setEndpointDevice(null)
+        }}
+      />
     </PageStagger>
   )
 }
@@ -946,4 +980,90 @@ function summarizeMetadata(metadata: unknown): string {
     if (parts.length >= 3) break
   }
   return parts.join(" · ")
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Phase 2 / Stage A — endpoint history dialog. Renders every distinct
+// `host:port` the WG poller has ever observed for the device, newest
+// first. Capped at 200 rows server-side; if a device sees more than
+// that the dialog shows a footnote.
+
+function EndpointHistoryDialog({
+  device,
+  onOpenChange,
+}: {
+  device: { id: string; name: string } | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const open = device != null
+  const q = useQuery({
+    queryKey: ["admin", "device", device?.id, "endpoint-history"],
+    queryFn: () => adminListDeviceEndpointHistory(device!.id),
+    enabled: open,
+    staleTime: 30_000,
+  })
+  const rows: EndpointHistoryRow[] = q.data ?? []
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>
+            Endpoint history{device ? ` · ${device.name}` : ""}
+          </DialogTitle>
+          <DialogDescription>
+            Every distinct WireGuard peer endpoint observed for this
+            device, newest first. Each row is the moment the endpoint
+            changed against the previous observation — repeated polls of
+            the same endpoint don't duplicate.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[420px] overflow-y-auto">
+          {q.isLoading && (
+            <div className="text-muted-foreground py-8 text-center font-mono text-xs">
+              Loading…
+            </div>
+          )}
+          {q.isError && (
+            <div className="text-destructive py-8 text-center font-mono text-xs">
+              Failed to load history.
+            </div>
+          )}
+          {q.data && rows.length === 0 && (
+            <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+              No endpoints captured yet. The device hasn't completed a
+              handshake since this feature shipped.
+            </div>
+          )}
+          {q.data && rows.length > 0 && (
+            <div className="zv-table-scroll">
+              <table className="zv-table">
+                <thead>
+                  <tr>
+                    <th>Endpoint</th>
+                    <th className="w-[200px]">First seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="font-mono text-xs">{r.endpoint}</td>
+                      <td className="text-muted-foreground font-mono text-xs">
+                        <RelativeTime value={r.observed_at} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        {rows.length === 200 && (
+          <p className="text-muted-foreground font-mono text-[11px]">
+            Showing the 200 most recent observations. Older entries exist
+            but aren't surfaced here yet.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
 }

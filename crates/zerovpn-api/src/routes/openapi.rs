@@ -83,6 +83,7 @@ use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, t
         admin::get_maintenance,
         admin::set_maintenance,
         admin::list_devices,
+        admin::device_endpoint_history,
         admin::list_servers,
         admin::patch_server,
         admin::rotate_server_keys,

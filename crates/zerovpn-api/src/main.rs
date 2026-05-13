@@ -288,6 +288,10 @@ async fn main() -> Result<()> {
                     axum::routing::put(routes::admin::set_user_quota),
                 )
                 .route("/admin/devices", get(routes::admin::list_devices))
+                .route(
+                    "/admin/devices/{id}/endpoint-history",
+                    get(routes::admin::device_endpoint_history),
+                )
                 .route("/admin/servers", get(routes::admin::list_servers))
                 .route(
                     "/admin/servers/{id}",

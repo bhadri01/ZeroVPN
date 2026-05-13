@@ -595,8 +595,21 @@ export interface AdminUserDevice {
   allocated_ip: string
   dns_names: string[]
   last_handshake_at: string | null
+  /** Most recent `host:port` the peer connected from (Phase 2 / Stage A). */
+  last_peer_endpoint: string | null
+  /** Wall-clock when the current `last_peer_endpoint` was first seen. */
+  last_peer_endpoint_at: string | null
   created_at: string
 }
+
+export interface EndpointHistoryRow {
+  id: number
+  endpoint: string
+  observed_at: string
+}
+
+export const adminListDeviceEndpointHistory = (deviceId: string) =>
+  apiFetch<EndpointHistoryRow[]>(`/admin/devices/${deviceId}/endpoint-history`)
 
 export interface AdminUserActivity {
   id: number

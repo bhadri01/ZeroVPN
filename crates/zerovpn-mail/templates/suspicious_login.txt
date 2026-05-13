@@ -1,0 +1,27 @@
+ZEROVPN
+────────────────────────────────────────
+
+SECURITY · NEW SIGN-IN
+
+New sign-in detected
+
+A successful sign-in to your ZeroVPN account was just
+observed from a network we haven't seen before.
+
+  Account  : {{ email }}
+  When     : {{ when }}
+{% if ip.is_some() %}  From IP  : {{ ip.unwrap() }}
+{% endif %}{% if user_agent.is_some() %}  Browser  : {{ user_agent.unwrap() }}
+{% endif %}
+If this was you, no action needed.
+
+If this wasn't you, change your password immediately
+and sign out of every other session:
+
+  {{ security_link }}
+
+—
+You're receiving this email because a sign-in from a
+new IP prefix was detected on your ZeroVPN account.
+
+ZeroVPN · self-hosted WireGuard

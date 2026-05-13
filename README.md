@@ -1,6 +1,6 @@
 # ZeroVPN
 
-Self-hosted WireGuard VPN management platform. Rust backend + React frontend, single `docker compose up -d` to run, designed to be lightweight (1 GB / 1 vCPU baseline) and privacy-first (no-logs).
+Self-hosted WireGuard VPN management platform. Rust backend + React frontend, single `docker compose up -d` to run, designed to be lightweight (1 GB / 1 vCPU baseline). Operators retain full operational logs (account events, sign-ins, per-device handshake metadata, WG peer endpoints) for admin visibility — no traffic content / DNS / destination logging. See [CHANGELOG.md](CHANGELOG.md) → "Policy reversal — full logging system" for the retention model.
 
 ## Status
 

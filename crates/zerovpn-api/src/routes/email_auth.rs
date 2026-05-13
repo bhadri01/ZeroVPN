@@ -96,14 +96,10 @@ pub async fn issue_verify_email(
     );
 
     if let Some(mailer) = &state.mailer {
-        use askama::Template;
-        let body = VerifyEmail { link: &link }
-            .render()
-            .map_err(|e| ApiError::Internal(format!("render: {e}")))?;
         let to: zerovpn_mail::Mailbox = email
             .parse()
             .map_err(|e| ApiError::Internal(format!("invalid to: {e}")))?;
-        if let Err(e) = mailer.send(to, "Verify your ZeroVPN email", body).await {
+        if let Err(e) = mailer.send_email(to, &VerifyEmail { link: &link }).await {
             warn!(?e, "verify email send failed");
         }
     } else {
@@ -140,15 +136,11 @@ pub async fn issue_password_reset(
     );
 
     if let Some(mailer) = &state.mailer {
-        use askama::Template;
-        let body = PasswordReset { link: &link }
-            .render()
-            .map_err(|e| ApiError::Internal(format!("render: {e}")))?;
         let to: zerovpn_mail::Mailbox = email
             .parse()
             .map_err(|e| ApiError::Internal(format!("invalid to: {e}")))?;
         if let Err(e) = mailer
-            .send(to, "Reset your ZeroVPN password", body)
+            .send_email(to, &PasswordReset { link: &link })
             .await
         {
             warn!(?e, "password reset email send failed");
