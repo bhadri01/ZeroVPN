@@ -112,6 +112,53 @@ pub async fn issue_verify_email(
     Ok(())
 }
 
+/// Mint a fresh password-reset token for the user, invalidate any earlier
+/// active reset tokens, and ship the link via SMTP (or log it in dev when
+/// no mailer is configured). Shared by the public forgot-password flow and
+/// the admin "send reset link" override on the user-detail page.
+pub async fn issue_password_reset(
+    state: &AppState,
+    user_id: uuid::Uuid,
+    email: &str,
+) -> ApiResult<()> {
+    verification_tokens::invalidate_active(&state.pool, user_id, TokenPurpose::PasswordReset)
+        .await?;
+    let (plaintext, hash) = fresh_token();
+    verification_tokens::create(
+        &state.pool,
+        user_id,
+        TokenPurpose::PasswordReset,
+        &hash,
+        RESET_TOKEN_TTL,
+    )
+    .await?;
+
+    let link = format!(
+        "{}/reset-password?token={}",
+        state.public_url.trim_end_matches('/'),
+        plaintext
+    );
+
+    if let Some(mailer) = &state.mailer {
+        use askama::Template;
+        let body = PasswordReset { link: &link }
+            .render()
+            .map_err(|e| ApiError::Internal(format!("render: {e}")))?;
+        let to: zerovpn_mail::Mailbox = email
+            .parse()
+            .map_err(|e| ApiError::Internal(format!("invalid to: {e}")))?;
+        if let Err(e) = mailer
+            .send(to, "Reset your ZeroVPN password", body)
+            .await
+        {
+            warn!(?e, "password reset email send failed");
+        }
+    } else {
+        info!(%user_id, link, "DEV: password-reset link (no SMTP configured)");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct VerifiedUser {
     pub id: uuid::Uuid,
@@ -237,42 +284,7 @@ pub async fn forgot_password(
     // in a state where receiving a reset link makes sense.
     if let Some(u) = user {
         if u.status == UserStatus::Active || u.status == UserStatus::PendingVerification {
-            verification_tokens::invalidate_active(
-                &state.pool,
-                u.id,
-                TokenPurpose::PasswordReset,
-            )
-            .await?;
-            let (plaintext, hash) = fresh_token();
-            verification_tokens::create(
-                &state.pool,
-                u.id,
-                TokenPurpose::PasswordReset,
-                &hash,
-                RESET_TOKEN_TTL,
-            )
-            .await?;
-
-            let link = format!(
-                "{}/reset-password?token={}",
-                state.public_url.trim_end_matches('/'),
-                plaintext
-            );
-            if let Some(mailer) = &state.mailer {
-                use askama::Template;
-                let mail_body = PasswordReset { link: &link }
-                    .render()
-                    .map_err(|e| ApiError::Internal(format!("render: {e}")))?;
-                let to: zerovpn_mail::Mailbox = u
-                    .email
-                    .parse()
-                    .map_err(|e| ApiError::Internal(format!("invalid to: {e}")))?;
-                if let Err(e) = mailer.send(to, "Reset your ZeroVPN password", mail_body).await {
-                    warn!(?e, "password reset email send failed");
-                }
-            } else {
-                info!(user_id = %u.id, link, "DEV: password-reset link (no SMTP configured)");
-            }
+            issue_password_reset(&state, u.id, &u.email).await?;
             // Audit the request itself (not just the eventual reset).
             // Useful when looking at "did someone try to take over this
             // account?" after the fact.

@@ -235,11 +235,34 @@ async fn main() -> Result<()> {
                 )
                 .route("/admin/stats", get(routes::admin::stats))
                 .route("/admin/bandwidth", get(routes::admin::fleet_bandwidth))
-                .route("/admin/users", get(routes::admin::list_users))
-                .route("/admin/users/{id}", get(routes::admin::user_detail))
+                .route(
+                    "/admin/users",
+                    get(routes::admin::list_users).post(routes::admin::create_user),
+                )
+                .route("/admin/users.csv", get(routes::admin::list_users_csv))
+                .route(
+                    "/admin/users/{id}",
+                    get(routes::admin::user_detail).delete(routes::admin::delete_user),
+                )
                 .route(
                     "/admin/users/{id}/status",
                     axum::routing::put(routes::admin::set_user_status),
+                )
+                .route(
+                    "/admin/users/{id}/role",
+                    axum::routing::put(routes::admin::set_user_role),
+                )
+                .route(
+                    "/admin/users/{id}/reset-password",
+                    post(routes::admin::admin_send_reset),
+                )
+                .route(
+                    "/admin/users/{id}/disable-2fa",
+                    post(routes::admin::admin_disable_2fa),
+                )
+                .route(
+                    "/admin/users/{id}/bandwidth",
+                    get(routes::admin::user_bandwidth),
                 )
                 .route("/admin/audit", get(routes::admin::list_audit))
                 .route("/admin/audit.csv", get(routes::admin::list_audit_csv))

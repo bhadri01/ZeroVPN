@@ -343,13 +343,24 @@ pub async fn admin_user_detail(
     .await
 }
 
+/// Filter knobs for the admin user list. All optional — `None` on a field
+/// disables that filter. The same filter set is shared by the JSON list
+/// endpoint and the CSV export so they always agree.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AdminUserFilters<'a> {
+    pub search: Option<&'a str>,
+    pub status: Option<UserStatus>,
+    pub role: Option<UserRole>,
+    pub totp_enabled: Option<bool>,
+}
+
 pub async fn admin_list(
     pool: &PgPool,
     limit: i64,
     offset: i64,
-    search: Option<&str>,
+    f: AdminUserFilters<'_>,
 ) -> sqlx::Result<Vec<AdminUserRow>> {
-    let pattern = search.map(|s| format!("%{}%", s.to_lowercase()));
+    let pattern = f.search.map(|s| format!("%{}%", s.to_lowercase()));
     sqlx::query_as::<_, AdminUserRow>(
         r#"SELECT u.id, u.email::TEXT AS email, u.role, u.status, u.totp_enabled,
                   u.created_at, u.last_login_at,
@@ -358,24 +369,36 @@ pub async fn admin_list(
              FROM users u
             WHERE u.deleted_at IS NULL
               AND ($3::TEXT IS NULL OR LOWER(u.email::TEXT) LIKE $3)
+              AND ($4::user_status IS NULL OR u.status = $4)
+              AND ($5::user_role   IS NULL OR u.role   = $5)
+              AND ($6::BOOLEAN     IS NULL OR u.totp_enabled = $6)
             ORDER BY u.created_at DESC
             LIMIT $1 OFFSET $2"#,
     )
     .bind(limit)
     .bind(offset)
     .bind(pattern)
+    .bind(f.status)
+    .bind(f.role)
+    .bind(f.totp_enabled)
     .fetch_all(pool)
     .await
 }
 
-pub async fn admin_count(pool: &PgPool, search: Option<&str>) -> sqlx::Result<i64> {
-    let pattern = search.map(|s| format!("%{}%", s.to_lowercase()));
+pub async fn admin_count(pool: &PgPool, f: AdminUserFilters<'_>) -> sqlx::Result<i64> {
+    let pattern = f.search.map(|s| format!("%{}%", s.to_lowercase()));
     let row: (i64,) = sqlx::query_as(
         r#"SELECT COUNT(*) FROM users
             WHERE deleted_at IS NULL
-              AND ($1::TEXT IS NULL OR LOWER(email::TEXT) LIKE $1)"#,
+              AND ($1::TEXT IS NULL OR LOWER(email::TEXT) LIKE $1)
+              AND ($2::user_status IS NULL OR status = $2)
+              AND ($3::user_role   IS NULL OR role   = $3)
+              AND ($4::BOOLEAN     IS NULL OR totp_enabled = $4)"#,
     )
     .bind(pattern)
+    .bind(f.status)
+    .bind(f.role)
+    .bind(f.totp_enabled)
     .fetch_one(pool)
     .await?;
     Ok(row.0)
@@ -426,6 +449,22 @@ pub async fn admin_set_status(
     )
     .bind(user_id)
     .bind(status)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// Admin override: change a user's role between admin and user.
+pub async fn admin_set_role(
+    pool: &PgPool,
+    user_id: Uuid,
+    role: UserRole,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        "UPDATE users SET role = $2 WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .bind(role)
     .execute(pool)
     .await?;
     Ok(res.rows_affected())

@@ -513,15 +513,44 @@ export interface AdminUser {
   device_count: number
 }
 
-export const adminListUsers = (q?: string, limit = 50, offset = 0) => {
-  const params = new URLSearchParams()
-  if (q) params.set("q", q)
-  params.set("limit", String(limit))
-  params.set("offset", String(offset))
-  return apiFetch<{ total: number; items: AdminUser[] }>(
-    `/admin/users?${params.toString()}`,
-  )
+export interface AdminUserListFilters {
+  q?: string
+  status?: UserStatus
+  role?: UserRole
+  totp_enabled?: boolean
 }
+
+function adminUserListQs(
+  filters: AdminUserListFilters,
+  limit?: number,
+  offset?: number,
+): string {
+  const params = new URLSearchParams()
+  if (filters.q) params.set("q", filters.q)
+  if (filters.status) params.set("status", filters.status)
+  if (filters.role) params.set("role", filters.role)
+  if (filters.totp_enabled !== undefined) {
+    params.set("totp_enabled", String(filters.totp_enabled))
+  }
+  if (limit !== undefined) params.set("limit", String(limit))
+  if (offset !== undefined) params.set("offset", String(offset))
+  return params.toString()
+}
+
+export const adminListUsers = (
+  filters: AdminUserListFilters = {},
+  limit = 50,
+  offset = 0,
+) =>
+  apiFetch<{ total: number; items: AdminUser[] }>(
+    `/admin/users?${adminUserListQs(filters, limit, offset)}`,
+  )
+
+/** Browser-friendly URL for the CSV export — paste into an `<a href>`
+ *  with `download` so the response triggers a save dialog. The query is
+ *  the same shape as `adminListUsers` so the export honours active filters. */
+export const adminUsersCsvUrl = (filters: AdminUserListFilters = {}) =>
+  `/api/v1/admin/users.csv?${adminUserListQs(filters)}`
 
 // ── User detail (admin) ──────────────────────────────────────────────
 // Bundles core user fields, quota state, the device list, and recent
@@ -571,6 +600,84 @@ export interface AdminUserDetailResponse {
 
 export const adminGetUserDetail = (id: string) =>
   apiFetch<AdminUserDetailResponse>(`/admin/users/${id}`)
+
+// ── Admin user overrides ────────────────────────────────────────────────
+
+export const adminSetUserRole = (id: string, role: UserRole) =>
+  apiFetch<{ status: string }>(`/admin/users/${id}/role`, {
+    method: "PUT",
+    body: JSON.stringify({ role }),
+  })
+
+/** Email a password-reset link to the user. Reuses the same token
+ *  machinery the public forgot-password flow uses, so the user follows
+ *  the normal reset UI to set a new password. */
+export const adminSendPasswordReset = (id: string) =>
+  apiFetch<{ status: string }>(`/admin/users/${id}/reset-password`, {
+    method: "POST",
+  })
+
+/** Wipe the user's TOTP secret + recovery codes. Used for support
+ *  recovery when a user has lost access to their authenticator. The user
+ *  can re-enroll on the next sign-in. */
+export const adminDisableUser2FA = (id: string) =>
+  apiFetch<{ status: string }>(`/admin/users/${id}/disable-2fa`, {
+    method: "POST",
+  })
+
+/** Soft-delete the user: PII nulled, devices revoked, sessions killed.
+ *  The row stays in the DB so audit history continues to resolve. */
+export const adminDeleteUser = (id: string) =>
+  apiFetch<{ status: string }>(`/admin/users/${id}`, {
+    method: "DELETE",
+  })
+
+export interface AdminCreateUserBody {
+  email: string
+  password?: string
+  role?: UserRole
+  /** Skip email verification gate so the user can sign in immediately. */
+  skip_verification?: boolean
+  /** When generating a password, email a setup link instead of returning
+   *  the plaintext to the admin. Defaults to true server-side. */
+  email_setup_link?: boolean
+}
+
+export interface AdminCreatedUser {
+  id: string
+  email: string
+  role: UserRole
+  status: UserStatus
+  /** Plaintext password — only present when the admin asked for a
+   *  generated password AND chose not to email a setup link. Surface
+   *  it once in the UI then drop it; never stored. */
+  generated_password?: string
+}
+
+export const adminCreateUser = (body: AdminCreateUserBody) =>
+  apiFetch<AdminCreatedUser>("/admin/users", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+
+// ── Admin user bandwidth history ────────────────────────────────────────
+
+export interface AdminUserBandwidthBucket {
+  bucket_start: string
+  rx_bytes: number
+  tx_bytes: number
+}
+
+export interface AdminUserBandwidthResponse {
+  bucket: "hour" | "day"
+  range: BandwidthRange
+  buckets: AdminUserBandwidthBucket[]
+}
+
+export const adminUserBandwidth = (id: string, range: BandwidthRange = "24h") =>
+  apiFetch<AdminUserBandwidthResponse>(
+    `/admin/users/${id}/bandwidth?range=${range}`,
+  )
 
 export interface AdminStats {
   total: number

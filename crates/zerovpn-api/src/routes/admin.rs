@@ -8,11 +8,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tower_sessions::Session;
-use tracing::info;
+use tracing::{info, warn};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 use zerovpn_core::models::{Server, UserRole, UserStatus};
-use zerovpn_db::repos::{audit, bandwidth, devices, servers, users};
+use zerovpn_db::repos::{
+    audit, bandwidth, devices, servers,
+    users::{self, AdminUserFilters},
+};
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -20,7 +23,7 @@ use crate::{
         RequireAdmin, SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_REAL_PW_CHANGED_AT,
         SESSION_KEY_REAL_USER_ID, SESSION_KEY_USER_ID,
     },
-    routes::{devices::PublicDevice, dto::StatusAck},
+    routes::{devices::PublicDevice, dto::StatusAck, email_auth},
     state::AppState,
 };
 
@@ -33,8 +36,28 @@ pub struct ListQuery {
     pub limit: i64,
     #[serde(default)]
     pub offset: i64,
+    /// Filter by account status. Omit to include every status.
+    #[serde(default)]
+    pub status: Option<UserStatus>,
+    /// Filter by role. Omit to include every role.
+    #[serde(default)]
+    pub role: Option<UserRole>,
+    /// Filter by 2FA enrollment. Omit to ignore.
+    #[serde(default)]
+    pub totp_enabled: Option<bool>,
 }
 fn default_limit() -> i64 { 50 }
+
+impl ListQuery {
+    fn filters(&self) -> AdminUserFilters<'_> {
+        AdminUserFilters {
+            search: self.q.as_deref(),
+            status: self.status,
+            role: self.role,
+            totp_enabled: self.totp_enabled,
+        }
+    }
+}
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AdminUser {
@@ -74,8 +97,9 @@ pub async fn list_users(
 ) -> ApiResult<impl IntoResponse> {
     let limit = q.limit.clamp(1, 200);
     let offset = q.offset.max(0);
-    let total = users::admin_count(&state.pool, q.q.as_deref()).await?;
-    let rows = users::admin_list(&state.pool, limit, offset, q.q.as_deref()).await?;
+    let f = q.filters();
+    let total = users::admin_count(&state.pool, f).await?;
+    let rows = users::admin_list(&state.pool, limit, offset, f).await?;
     let items = rows
         .into_iter()
         .map(|u| AdminUser {
@@ -90,6 +114,85 @@ pub async fn list_users(
         })
         .collect();
     Ok(Json(AdminUserList { total, items }))
+}
+
+/// CSV export of the filtered user list. Same filters as `list_users`,
+/// but returns the full result (capped at 10000 rows) so an admin can
+/// hand the file off for spreadsheet review.
+#[utoipa::path(
+    get,
+    path = "/admin/users.csv",
+    tag = "Admin",
+    params(ListQuery),
+    responses(
+        (status = 200, description = "CSV download", content_type = "text/csv"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn list_users_csv(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Query(q): Query<ListQuery>,
+) -> ApiResult<axum::response::Response> {
+    let f = q.filters();
+    let rows = users::admin_list(&state.pool, 10_000, 0, f).await?;
+
+    let mut buf = Vec::with_capacity(80 * rows.len());
+    {
+        let mut wtr = csv::Writer::from_writer(&mut buf);
+        wtr.write_record([
+            "id",
+            "email",
+            "role",
+            "status",
+            "totp_enabled",
+            "created_at",
+            "last_login_at",
+            "device_count",
+        ])
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        for u in rows {
+            // Enum serde already lowercases ("admin"/"user", "active"/...);
+            // unwrap to the inner string to avoid the Debug-format trick.
+            let role_s = serde_json::to_value(&u.role)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default();
+            let status_s = serde_json::to_value(&u.status)
+                .ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_default();
+            wtr.write_record([
+                u.id.to_string(),
+                u.email,
+                role_s,
+                status_s,
+                u.totp_enabled.to_string(),
+                u.created_at
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default(),
+                u.last_login_at
+                    .and_then(|t| t.format(&time::format_description::well_known::Rfc3339).ok())
+                    .unwrap_or_default(),
+                u.device_count.to_string(),
+            ])
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        }
+        wtr.flush().map_err(|e| ApiError::Internal(e.to_string()))?;
+    }
+
+    use axum::http::header;
+    let resp = axum::response::Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/csv; charset=utf-8")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"users.csv\"",
+        )
+        .body(axum::body::Body::from(buf))
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(resp)
 }
 
 // ---- User detail --------------------------------------------------------
@@ -268,6 +371,443 @@ pub async fn set_user_status(
     .await?;
     info!(actor = %actor.id, target = %target_id, status = ?body.status, "admin set user status");
     Ok(Json(json!({ "status": "ok" })))
+}
+
+// ---- Role change ----------------------------------------------------------
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RoleBody {
+    pub role: UserRole,
+}
+
+#[utoipa::path(
+    put,
+    path = "/admin/users/{id}/role",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Target user UUID")),
+    request_body = RoleBody,
+    responses(
+        (status = 200, description = "Role updated", body = StatusAck),
+        (status = 400, description = "Cannot demote yourself / cannot demote the last admin"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "User not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn set_user_role(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+    Json(body): Json<RoleBody>,
+) -> ApiResult<impl IntoResponse> {
+    if target_id == actor.id {
+        return Err(ApiError::Validation("cannot change your own role".into()));
+    }
+    // Don't strand the deployment without an admin: the last active admin
+    // can't be demoted. Bootstrap can always re-promote via direct DB
+    // access if everyone leaves.
+    if body.role == UserRole::User {
+        let target = users::find_by_id(&state.pool, target_id)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+        if target.role == UserRole::Admin {
+            let admins = users::count_active_admins(&state.pool).await?;
+            if admins <= 1 {
+                return Err(ApiError::Validation(
+                    "cannot demote the last remaining admin".into(),
+                ));
+            }
+        }
+    }
+    let n = users::admin_set_role(&state.pool, target_id, body.role).await?;
+    if n == 0 {
+        return Err(ApiError::NotFound);
+    }
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_role_changed",
+            target_type: Some("user"),
+            target_id: Some(target_id),
+            metadata: json!({ "role": body.role }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %target_id, role = ?body.role, "admin set user role");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+// ---- Trigger password reset ----------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/admin/users/{id}/reset-password",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Target user UUID")),
+    responses(
+        (status = 200, description = "Reset link emailed (or logged in dev)", body = StatusAck),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "User not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_send_reset(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let target = users::find_by_id(&state.pool, target_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if target.status == UserStatus::Deleted {
+        return Err(ApiError::Validation("user is deleted".into()));
+    }
+    email_auth::issue_password_reset(&state, target.id, &target.email).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_password_reset_sent",
+            target_type: Some("user"),
+            target_id: Some(target.id),
+            metadata: json!({}),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %target.id, "admin issued password-reset link");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+// ---- Disable 2FA ----------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/admin/users/{id}/disable-2fa",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Target user UUID")),
+    responses(
+        (status = 200, description = "TOTP cleared and recovery codes wiped", body = StatusAck),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "User not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_disable_2fa(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let target = users::find_by_id(&state.pool, target_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    users::disable_totp(&state.pool, target.id).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_2fa_disabled",
+            target_type: Some("user"),
+            target_id: Some(target.id),
+            metadata: json!({}),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %target.id, "admin cleared TOTP");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+// ---- Delete user ----------------------------------------------------------
+
+#[utoipa::path(
+    delete,
+    path = "/admin/users/{id}",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Target user UUID")),
+    responses(
+        (status = 200, description = "User soft-deleted: PII nulled, devices revoked, sessions killed", body = StatusAck),
+        (status = 400, description = "Cannot delete yourself / last admin"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "User not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn delete_user(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    if target_id == actor.id {
+        return Err(ApiError::Validation("cannot delete yourself".into()));
+    }
+    let target = users::find_by_id(&state.pool, target_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if target.role == UserRole::Admin {
+        let admins = users::count_active_admins(&state.pool).await?;
+        if admins <= 1 {
+            return Err(ApiError::Validation(
+                "cannot delete the last remaining admin".into(),
+            ));
+        }
+    }
+    users::soft_delete(&state.pool, target.id).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_deleted",
+            target_type: Some("user"),
+            target_id: Some(target.id),
+            metadata: json!({}),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %target.id, "admin deleted user");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+// ---- Create / invite user ------------------------------------------------
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateUserBody {
+    pub email: String,
+    /// Optional initial password. When omitted, a random 24-char password
+    /// is generated server-side and the response carries it back exactly
+    /// once so the admin can deliver it out-of-band; the user is then
+    /// flagged `must_change_password` so they're forced to rotate on
+    /// first sign-in.
+    #[serde(default)]
+    pub password: Option<String>,
+    /// Default `user`. Set to `admin` to create another administrator.
+    #[serde(default = "default_role")]
+    pub role: UserRole,
+    /// When true, skip the email-verification gate so the user can sign
+    /// in immediately. Defaults to false (we mint a verify-email link).
+    #[serde(default)]
+    pub skip_verification: bool,
+    /// When true (default), email a password-reset link instead of
+    /// returning the generated password. Ignored when `password` is set.
+    #[serde(default = "default_true")]
+    pub email_setup_link: bool,
+}
+
+fn default_role() -> UserRole {
+    UserRole::User
+}
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CreatedUserResponse {
+    pub id: Uuid,
+    pub email: String,
+    pub role: UserRole,
+    pub status: UserStatus,
+    /// Plaintext password — only present when the admin asked us to
+    /// generate one AND chose not to email a setup link. Never logged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_password: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/users",
+    tag = "Admin",
+    request_body = CreateUserBody,
+    responses(
+        (status = 200, description = "User created", body = CreatedUserResponse),
+        (status = 400, description = "Validation error / email already taken"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn create_user(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Json(body): Json<CreateUserBody>,
+) -> ApiResult<impl IntoResponse> {
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') {
+        return Err(ApiError::Validation("email is required and must contain @".into()));
+    }
+    if let Some(p) = body.password.as_deref() {
+        if p.len() < 12 {
+            return Err(ApiError::Validation(
+                "password must be at least 12 characters".into(),
+            ));
+        }
+    }
+    if users::find_by_email(&state.pool, &email).await?.is_some() {
+        return Err(ApiError::Validation("email already in use".into()));
+    }
+
+    let (password_plain, generated) = match body.password.as_deref() {
+        Some(p) => (p.to_string(), false),
+        None => (generate_random_password(24), true),
+    };
+    let password_hash = zerovpn_auth::password::hash(&password_plain)?;
+
+    let initial_status = if body.skip_verification {
+        UserStatus::Active
+    } else {
+        UserStatus::PendingVerification
+    };
+    let id = users::create(
+        &state.pool,
+        &email,
+        &password_hash,
+        body.role,
+        initial_status,
+    )
+    .await?;
+
+    // Force a rotation on first login when we generated the password.
+    if generated {
+        sqlx::query(
+            "UPDATE users SET must_change_password = TRUE WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+    }
+
+    // Mark email as verified up-front when the admin chose to skip the
+    // verify gate — otherwise the dashboard's gating still trips.
+    if body.skip_verification {
+        sqlx::query(
+            "UPDATE users SET email_verified_at = NOW() WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+    } else if let Err(e) = email_auth::issue_verify_email(&state, id, &email).await {
+        warn!(?e, %id, "create_user: verify-email send failed");
+    }
+
+    // If the admin generated a password and asked us to email a setup
+    // link, ship a password-reset email and don't return the plaintext.
+    let return_password = if generated && body.email_setup_link {
+        if let Err(e) = email_auth::issue_password_reset(&state, id, &email).await {
+            warn!(?e, %id, "create_user: setup-link send failed");
+        }
+        None
+    } else if generated {
+        Some(password_plain)
+    } else {
+        None
+    };
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_created",
+            target_type: Some("user"),
+            target_id: Some(id),
+            metadata: json!({
+                "role": body.role,
+                "skip_verification": body.skip_verification,
+                "generated_password": generated,
+            }),
+            ip_prefix: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %id, role = ?body.role, "admin created user");
+
+    Ok(Json(CreatedUserResponse {
+        id,
+        email,
+        role: body.role,
+        status: initial_status,
+        generated_password: return_password,
+    }))
+}
+
+/// Cryptographically random alphanumeric password. Uses the OS RNG via
+/// rand::thread_rng so each invocation produces independent bytes.
+fn generate_random_password(len: usize) -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] =
+        b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let mut rng = rand::thread_rng();
+    (0..len)
+        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+        .collect()
+}
+
+// ---- User bandwidth history ----------------------------------------------
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct BandwidthRangeQuery {
+    /// "24h" | "7d" | "30d". Defaults to "24h".
+    #[serde(default)]
+    pub range: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminUserBandwidthBucket {
+    #[serde(with = "time::serde::rfc3339")]
+    pub bucket_start: OffsetDateTime,
+    pub rx_bytes: i64,
+    pub tx_bytes: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AdminUserBandwidthResponse {
+    pub bucket: &'static str,
+    pub range: String,
+    pub buckets: Vec<AdminUserBandwidthBucket>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/users/{id}/bandwidth",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Target user UUID"), BandwidthRangeQuery),
+    responses(
+        (status = 200, description = "Bucketed RX/TX history aggregated across the user's devices", body = AdminUserBandwidthResponse),
+        (status = 400, description = "Invalid range"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn user_bandwidth(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+    Query(q): Query<BandwidthRangeQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let range = q.range.unwrap_or_else(|| "24h".into());
+    let (since, bucket) = match range.as_str() {
+        "24h" => (OffsetDateTime::now_utc() - time::Duration::hours(24), "hour"),
+        "7d" => (OffsetDateTime::now_utc() - time::Duration::days(7), "hour"),
+        "30d" => (OffsetDateTime::now_utc() - time::Duration::days(30), "day"),
+        other => {
+            return Err(ApiError::Validation(format!(
+                "range must be 24h | 7d | 30d (got {other})"
+            )));
+        }
+    };
+    let rows = bandwidth::user_totals(&state.pool, target_id, since, bucket).await?;
+    Ok(Json(AdminUserBandwidthResponse {
+        bucket: if bucket == "hour" { "hour" } else { "day" },
+        range,
+        buckets: rows
+            .into_iter()
+            .map(|b| AdminUserBandwidthBucket {
+                bucket_start: b.bucket_start,
+                rx_bytes: b.rx_bytes,
+                tx_bytes: b.tx_bytes,
+            })
+            .collect(),
+    }))
 }
 
 // ---- Audit log ------------------------------------------------------------

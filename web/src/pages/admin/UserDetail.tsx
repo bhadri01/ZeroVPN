@@ -1,14 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  IconChevronDown,
   IconDeviceDesktop,
+  IconKey,
   IconLogin,
   IconShieldLock,
+  IconShieldOff,
+  IconTrash,
+  IconUserShield,
   IconUserX,
 } from "@tabler/icons-react"
 import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 
+import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { Identicon } from "@/components/Identicon"
 import { PageStagger, StaggerItem } from "@/components/motion"
@@ -24,17 +30,33 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   ApiError,
+  type BandwidthBucket,
+  type BandwidthRange,
   type DeviceStatus,
+  type UserRole,
   type UserStatus,
+  adminDeleteUser,
+  adminDisableUser2FA,
   adminGetUserDetail,
   adminImpersonateUser,
+  adminSendPasswordReset,
   adminSetUserQuota,
+  adminSetUserRole,
   adminSetUserStatus,
+  adminUserBandwidth,
   me as fetchMe,
 } from "@/lib/api"
 import { formatBytes } from "@/lib/units"
@@ -65,6 +87,11 @@ export function UserDetailPage() {
   const [suspendOpen, setSuspendOpen] = useState(false)
   const [impersonateOpen, setImpersonateOpen] = useState(false)
   const [quotaOpen, setQuotaOpen] = useState(false)
+  const [resetOpen, setResetOpen] = useState(false)
+  const [disable2faOpen, setDisable2faOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [roleOpen, setRoleOpen] = useState(false)
+  const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
 
   const detailQ = useQuery({
     queryKey: ["admin", "user", id],
@@ -72,16 +99,74 @@ export function UserDetailPage() {
     enabled: !!id,
   })
 
+  const bwQ = useQuery({
+    queryKey: ["admin", "user", id, "bandwidth", bwRange],
+    queryFn: () => adminUserBandwidth(id, bwRange),
+    enabled: !!id,
+  })
+
   const u = detailQ.data?.user
   const isSelf = u?.id === self?.id
+
+  const invalidateUser = () => {
+    void qc.invalidateQueries({ queryKey: ["admin", "user", id] })
+    void qc.invalidateQueries({ queryKey: ["admin", "users"] })
+  }
 
   const setStatusM = useMutation({
     mutationFn: (status: UserStatus) => adminSetUserStatus(id, status),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["admin", "user", id] })
-      void qc.invalidateQueries({ queryKey: ["admin", "users"] })
+      invalidateUser()
       setSuspendOpen(false)
       toast.success("User status updated")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const setRoleM = useMutation({
+    mutationFn: (role: UserRole) => adminSetUserRole(id, role),
+    onSuccess: (_, role) => {
+      invalidateUser()
+      setRoleOpen(false)
+      toast.success(`Role set to ${role}`)
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const sendResetM = useMutation({
+    mutationFn: () => adminSendPasswordReset(id),
+    onSuccess: () => {
+      setResetOpen(false)
+      toast.success("Password-reset link sent")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const disable2faM = useMutation({
+    mutationFn: () => adminDisableUser2FA(id),
+    onSuccess: () => {
+      invalidateUser()
+      setDisable2faOpen(false)
+      toast.success("2FA disabled — user can re-enroll on next sign-in")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const deleteM = useMutation({
+    mutationFn: () => adminDeleteUser(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["admin", "users"] })
+      setDeleteOpen(false)
+      toast.success("User deleted")
+      void navigate("/admin/users")
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)
@@ -186,6 +271,44 @@ export function UserDetailPage() {
                     Unsuspend
                   </Button>
                 ) : null}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" variant="outline">
+                      Actions
+                      <IconChevronDown className="size-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[14rem]">
+                    <DropdownMenuLabel>Recovery</DropdownMenuLabel>
+                    <DropdownMenuItem onSelect={() => setResetOpen(true)}>
+                      <IconKey />
+                      Send password-reset email
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => setDisable2faOpen(true)}
+                      disabled={!u.totp_enabled}
+                    >
+                      <IconShieldOff />
+                      Disable 2FA
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Role</DropdownMenuLabel>
+                    <DropdownMenuItem onSelect={() => setRoleOpen(true)}>
+                      <IconUserShield />
+                      {u.role === "admin"
+                        ? "Demote to user"
+                        : "Promote to admin"}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={() => setDeleteOpen(true)}
+                    >
+                      <IconTrash />
+                      Delete user…
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </>
             ) : null
           }
@@ -265,6 +388,25 @@ export function UserDetailPage() {
                 />
               </Panel>
             </div>
+          </StaggerItem>
+
+          <StaggerItem>
+            <Panel
+              title="Bandwidth history"
+              sub={`Aggregated across all of this user's devices · ${bwRange}`}
+              right={
+                <RangePicker value={bwRange} onChange={setBwRange} />
+              }
+            >
+              {bwQ.isLoading ? (
+                <Skeleton className="h-[220px] rounded-none" />
+              ) : (
+                <BandwidthChart
+                  buckets={(bwQ.data?.buckets ?? []) as BandwidthBucket[]}
+                  height={220}
+                />
+              )}
+            </Panel>
           </StaggerItem>
 
           <StaggerItem>
@@ -406,16 +548,66 @@ export function UserDetailPage() {
         onConfirm={() => impersonateM.mutate()}
       />
 
+      <ConfirmDialog
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+        title={`Email a password-reset link to ${u?.email ?? "user"}?`}
+        description="Sends the same reset email the user would get from the public 'Forgot password' flow. Existing reset links for this user are invalidated."
+        confirmLabel="Send link"
+        pending={sendResetM.isPending}
+        onConfirm={() => sendResetM.mutate()}
+      />
+
+      <ConfirmDialog
+        open={disable2faOpen}
+        onOpenChange={setDisable2faOpen}
+        title={`Disable 2FA for ${u?.email ?? "user"}?`}
+        description="Wipes the user's TOTP secret and recovery codes. Use this when a user has lost their authenticator. They can re-enroll 2FA from Settings → Security after they sign in."
+        confirmLabel="Disable 2FA"
+        destructive
+        pending={disable2faM.isPending}
+        onConfirm={() => disable2faM.mutate()}
+      />
+
+      <ConfirmDialog
+        open={roleOpen}
+        onOpenChange={setRoleOpen}
+        title={
+          u?.role === "admin"
+            ? `Demote ${u?.email ?? "user"} to user?`
+            : `Promote ${u?.email ?? "user"} to admin?`
+        }
+        description={
+          u?.role === "admin"
+            ? "Removes admin privileges. They keep their account and devices."
+            : "Grants full administrative access — including the ability to manage other users, servers, and impersonation."
+        }
+        confirmLabel={u?.role === "admin" ? "Demote" : "Promote"}
+        destructive={u?.role === "admin"}
+        pending={setRoleM.isPending}
+        onConfirm={() =>
+          setRoleM.mutate(u?.role === "admin" ? "user" : "admin")
+        }
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete ${u?.email ?? "user"}?`}
+        description="Soft-deletes the account: PII is nulled, every device is revoked, and active sessions are killed. The audit history stays intact. This cannot be undone from the UI."
+        confirmLabel="Delete"
+        destructive
+        pending={deleteM.isPending}
+        onConfirm={() => deleteM.mutate()}
+      />
+
       {u && (
         <QuotaDialog
           open={quotaOpen}
           onOpenChange={setQuotaOpen}
           userId={u.id}
           currentCap={u.monthly_byte_cap}
-          onSaved={() => {
-            void qc.invalidateQueries({ queryKey: ["admin", "user", id] })
-            void qc.invalidateQueries({ queryKey: ["admin", "users"] })
-          }}
+          onSaved={invalidateUser}
         />
       )}
     </PageStagger>
@@ -436,6 +628,30 @@ function KvList({ items }: { items: [string, React.ReactNode][] }) {
         </div>
       ))}
     </dl>
+  )
+}
+
+function RangePicker({
+  value,
+  onChange,
+}: {
+  value: BandwidthRange
+  onChange: (r: BandwidthRange) => void
+}) {
+  const opts: BandwidthRange[] = ["24h", "7d", "30d"]
+  return (
+    <div className="border-border inline-flex border">
+      {opts.map((r) => (
+        <button
+          key={r}
+          type="button"
+          onClick={() => onChange(r)}
+          className={`px-2 py-0.5 font-mono text-[11px] transition-colors ${value === r ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+        >
+          {r}
+        </button>
+      ))}
+    </div>
   )
 }
 
@@ -573,6 +789,9 @@ function toneForAction(action: string): PillTone {
   if (action.includes("suspend") || action.includes("delete")) return "err"
   if (action.includes("status")) return "info"
   if (action.includes("quota")) return "info"
+  if (action.includes("role")) return "info"
+  if (action.includes("password_reset")) return "warn"
+  if (action.includes("2fa")) return "warn"
   return "neutral"
 }
 
@@ -580,7 +799,7 @@ function ActivityIcon({ action }: { action: string }) {
   const cls = "text-muted-foreground/60 mr-1.5 inline size-3.5 -translate-y-px"
   if (action.includes("login") || action.includes("ip")) return <IconLogin className={cls} />
   if (action.includes("impersonate")) return <IconUserX className={cls} />
-  if (action.includes("password") || action.includes("totp")) return <IconShieldLock className={cls} />
+  if (action.includes("password") || action.includes("totp") || action.includes("2fa")) return <IconShieldLock className={cls} />
   return null
 }
 
