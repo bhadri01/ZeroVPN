@@ -318,3 +318,9 @@ pub async fn list_active_with_dns(pool: &PgPool) -> sqlx::Result<Vec<(Uuid, IpAd
 }
 
 // FromRow on Device is derived in zerovpn-core::models.
+pub async fn get_by_id(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<Device>> {
+    sqlx::query_as("SELECT * FROM devices WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+}

@@ -1179,9 +1179,24 @@ pub struct AuditList {
 )]
 pub async fn list_audit(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    headers: axum::http::HeaderMap,
     Query(q): Query<AuditQuery>,
 ) -> ApiResult<impl IntoResponse> {
+    let _ = zerovpn_db::repos::audit::record_with_ua(
+        &state.pool,
+        zerovpn_db::repos::audit::AuditEntry {
+            action: "admin_viewed_logs",
+            actor_user_id: Some(admin.id),
+            target_type: Some("system"),
+            target_id: None,
+            metadata: serde_json::json!({"path": "list_audit"}),
+ip: crate::routes::auth::client_ip(&headers),
+        },
+        crate::routes::auth::client_user_agent(&headers).as_deref(),
+    )
+    .await;
+
     let limit = q.limit.clamp(1, 500);
     let offset = q.offset.max(0);
     // Single param-list shared between count + fetch so the WHERE
@@ -2297,9 +2312,24 @@ pub struct AccessLogList {
 )]
 pub async fn list_access_logs(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    headers: axum::http::HeaderMap,
     Query(q): Query<AccessLogsQuery>,
 ) -> ApiResult<impl IntoResponse> {
+    let _ = zerovpn_db::repos::audit::record_with_ua(
+        &state.pool,
+        zerovpn_db::repos::audit::AuditEntry {
+            action: "admin_viewed_logs",
+            actor_user_id: Some(admin.id),
+            target_type: Some("system"),
+            target_id: None,
+            metadata: serde_json::json!({"path": "list_access_logs"}),
+ip: crate::routes::auth::client_ip(&headers),
+        },
+        crate::routes::auth::client_user_agent(&headers).as_deref(),
+    )
+    .await;
+
     let f = access_logs::Filters {
         user_id: q.user_id,
         method: q.method.as_deref(),
@@ -2413,9 +2443,24 @@ fn detect_kind(q: &str) -> &'static str {
 )]
 pub async fn finder(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
+    headers: axum::http::HeaderMap,
     Query(query): Query<FinderQuery>,
 ) -> ApiResult<impl IntoResponse> {
+    let _ = zerovpn_db::repos::audit::record_with_ua(
+        &state.pool,
+        zerovpn_db::repos::audit::AuditEntry {
+            action: "admin_viewed_logs",
+            actor_user_id: Some(admin.id),
+            target_type: Some("system"),
+            target_id: None,
+            metadata: serde_json::json!({"path": "finder"}),
+ip: crate::routes::auth::client_ip(&headers),
+        },
+        crate::routes::auth::client_user_agent(&headers).as_deref(),
+    )
+    .await;
+
     let q = query.q.unwrap_or_default();
     let q_trim = q.trim().to_string();
     if q_trim.is_empty() {
@@ -2954,3 +2999,4 @@ pub async fn stop_impersonation(
     info!(admin = %real_user_id, "admin stopped impersonation");
 
     Ok(Json(json!({ "status": "ok" })))
+}
