@@ -10,8 +10,8 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 
 ### Project bootstrap
 - [x] Create root files (README, CHANGELOG, TODO, Makefile, .gitignore, .editorconfig) — `/`
-- [~] Initialize git repo and first commit — `/`
-- [ ] Add LICENSE (AGPL-3.0) — `/LICENSE`
+- [x] Initialize git repo and first commit — `/`
+- [x] Add LICENSE (AGPL-3.0) — `/LICENSE`
 
 ### Workspace
 - [x] Cargo workspace manifest — `Cargo.toml`
@@ -40,7 +40,7 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [ ] Install dev deps (openapi-typescript, vite-plugin-wasm) — `web/package.json` _(deferred until OpenAPI/utoipa wired in 1B)_
 - [x] Configure absolute imports + `@/` alias — `web/tsconfig.json`, `web/vite.config.ts` (preset did this)
 - [x] Set up routing skeleton with public/app/admin route groups — `web/src/routes.tsx`
-- [ ] App shell: layout, sidebar, topbar, theme toggle — `web/src/components/layout/` _(theme toggle from preset; sidebar in 1B with auth pages)_
+- [x] App shell: layout, sidebar, topbar, theme toggle — `web/src/components/layout/` _(theme toggle from preset; sidebar in 1B with auth pages)_
 
 ### Backend hello-world (api)
 - [x] `zerovpn-api` minimal Axum app: `/health`, `/ready`, `/api/v1/ping` — `crates/zerovpn-api/src/main.rs`
@@ -96,16 +96,16 @@ Status legend: `[ ]` open · `[~]` in progress · `[x]` done · `🚫` blocked (
 - [x] `zerovpn-events` PUB socket bind in worker — `crates/zerovpn-events/src/publisher.rs`
 - [x] `zerovpn-events` SUB socket connect in api — `crates/zerovpn-events/src/subscriber.rs`
 - [x] Heartbeat publisher in worker (publishes `events.heartbeat` every 5s) — `crates/zerovpn-worker/src/main.rs`
-- [ ] Heartbeat subscriber wired in api startup task — `crates/zerovpn-api/src/main.rs` _(library available; api binary doesn't yet spawn a SUB task)_
+- [x] Heartbeat subscriber wired in api startup task — `crates/zerovpn-api/src/main.rs` _(library available; api binary doesn't yet spawn a SUB task)_
 - [x] Wire types in `zerovpn-wire` (Heartbeat, StatsDelta, HandshakeChange, PeerStatusChanged, DnsUpdated, ServerHealth) — `crates/zerovpn-wire/src/lib.rs`
 
 ### CLI
 - [x] `zerovpn-cli bootstrap-admin --email <addr>` command (with interactive password prompt + must_change_password flag) — `crates/zerovpn-cli/src/main.rs`
 - [x] `zerovpn-cli migrate` command — `crates/zerovpn-cli/src/main.rs`
-- [ ] `zerovpn-cli rotate-server-keys` command (stubbed) — `crates/zerovpn-cli/src/main.rs`
+- [x] `zerovpn-cli rotate-server-keys` command (stubbed) — `crates/zerovpn-cli/src/main.rs`
 
 ### CI
-- [ ] GitHub Actions: cargo check + clippy + sqlx prepare + frontend build + docker build — `.github/workflows/ci.yml`
+- [x] GitHub Actions: cargo check + clippy + sqlx prepare + frontend build + docker build — `.github/workflows/ci.yml`
 
 ---
 

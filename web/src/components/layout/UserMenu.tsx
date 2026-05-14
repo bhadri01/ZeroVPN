@@ -34,6 +34,8 @@ export function UserMenu() {
   const setUser = useAuth((s) => s.setUser)
   const navigate = useNavigate()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [stopImpersonationConfirmOpen, setStopImpersonationConfirmOpen] =
+    useState(false)
   const [signingOut, setSigningOut] = useState(false)
   const [stoppingImpersonation, setStoppingImpersonation] = useState(false)
   // Suppress the avatar's hover tooltip while the dropdown is open so
@@ -107,7 +109,8 @@ export function UserMenu() {
           <DropdownMenuItem
             onSelect={(e) => {
               e.preventDefault()
-              void handleStopImpersonation()
+              setMenuOpen(false)
+              setStopImpersonationConfirmOpen(true)
             }}
             disabled={stoppingImpersonation}
             className="text-amber-700 dark:text-amber-400 focus:text-amber-700 dark:focus:text-amber-400"
@@ -160,6 +163,17 @@ export function UserMenu() {
       destructive
       pending={signingOut}
       onConfirm={() => void handleLogout()}
+    />
+
+    <ConfirmDialog
+      open={stopImpersonationConfirmOpen}
+      onOpenChange={setStopImpersonationConfirmOpen}
+      title="Exit impersonation?"
+      description="You'll return to your admin session and leave this user's view."
+      confirmLabel="Exit impersonation"
+      cancelLabel="Keep impersonating"
+      pending={stoppingImpersonation}
+      onConfirm={() => void handleStopImpersonation()}
     />
     </>
   )

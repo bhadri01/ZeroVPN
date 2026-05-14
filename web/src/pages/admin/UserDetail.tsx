@@ -383,7 +383,7 @@ export function UserDetailPage() {
       {u && (
         <>
           <StaggerItem>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2">
               <Panel title="Account">
                 <KvList
                   items={[
@@ -578,13 +578,13 @@ export function UserDetailPage() {
                   detailQ.data.devices.map((d) => [d.id, d.name]),
                 )
                 return (
-                  <div className="zv-table-scroll">
-                    <table className="zv-table">
+                  <div className="zv-table-scroll min-w-0 max-w-full">
+                    <table className="zv-table table-fixed">
                       <thead>
                         <tr>
                           <th className="w-[150px]">When</th>
                           <th className="w-[100px]">Kind</th>
-                          <th>Event</th>
+                          <th className="w-[180px]">Event</th>
                           <th className="w-[140px]">IP</th>
                           <th>Detail</th>
                         </tr>
@@ -1134,11 +1134,13 @@ function TimelineRow({
             <span className="text-muted-foreground">—</span>
           )}
         </td>
-        <td className="text-muted-foreground font-mono text-[11px]">
-          {targetLabel && (
-            <span className="text-foreground mr-2">→ {targetLabel}</span>
-          )}
-          {summarizeMetadata(item.metadata)}
+        <td className="min-w-0 text-muted-foreground font-mono text-[11px]">
+          <span className="block max-w-full truncate" title={summarizeMetadata(item.metadata)}>
+            {targetLabel && (
+              <span className="text-foreground mr-2">→ {targetLabel}</span>
+            )}
+            {summarizeMetadata(item.metadata)}
+          </span>
         </td>
       </tr>
     )
@@ -1164,14 +1166,15 @@ function TimelineRow({
             <span className="text-muted-foreground">—</span>
           )}
         </td>
-        <td
-          className="text-muted-foreground font-mono text-[11px]"
-          title={item.user_agent ?? undefined}
-        >
-          {summarizeMetadata(item.metadata)}
-          {item.user_agent && (
-            <span className="ml-2 truncate">{item.user_agent}</span>
-          )}
+        <td className="min-w-0 text-muted-foreground font-mono text-[11px]" title={item.user_agent ?? undefined}>
+          <span className="block max-w-full truncate">
+            {summarizeMetadata(item.metadata)}
+            {item.user_agent && (
+              <span className="ml-2 inline-block max-w-full truncate align-bottom">
+                {item.user_agent}
+              </span>
+            )}
+          </span>
         </td>
       </tr>
     )
@@ -1204,9 +1207,9 @@ function TimelineRow({
           {open ? "active" : `closed after ${duration}`}
         </span>
       </td>
-      <td className="font-mono text-xs">
+      <td className="min-w-0 font-mono text-xs" title={endpoint ?? undefined}>
         {endpoint ? (
-          endpoint
+          <span className="block max-w-full truncate">{endpoint}</span>
         ) : (
           <span className="text-muted-foreground">—</span>
         )}

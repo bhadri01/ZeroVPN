@@ -309,6 +309,7 @@
   gap: 16px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
 .zv-page-head h1 {
   margin: 0;
@@ -584,7 +585,10 @@
    instead of pushing the page footer off-screen. `--zv-table-height`
    is the default; callers can override per-table via inline style. */
 .zv-table-scroll {
+  min-width: 0;
   max-height: var(--zv-table-height, 60vh);
+  max-width: 100%;
+  overflow-x: auto;
   overflow-y: auto;
 }
 

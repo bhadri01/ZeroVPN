@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { Link, useMatches, useNavigate } from "react-router"
 import { toast } from "sonner"
 
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { UserMenu } from "@/components/layout/UserMenu"
 import { ModeToggle } from "@/components/mode-toggle"
 import { Kbd, LiveDot } from "@/components/swiss"
@@ -64,6 +65,8 @@ export function TopBar({
   const setUser = useAuth((s) => s.setUser)
   const navigate = useNavigate()
   const [stopping, setStopping] = useState(false)
+  const [stopImpersonationConfirmOpen, setStopImpersonationConfirmOpen] =
+    useState(false)
 
   const handleStopImpersonation = async () => {
     setStopping(true)
@@ -97,7 +100,7 @@ export function TopBar({
           <button
             type="button"
             disabled={stopping}
-            onClick={() => void handleStopImpersonation()}
+            onClick={() => setStopImpersonationConfirmOpen(true)}
             className="ml-auto inline-flex items-center gap-1 border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-700 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
           >
             {stopping ? "Stopping…" : "Exit impersonation →"}
@@ -145,6 +148,17 @@ export function TopBar({
           <UserMenu />
         </div>
       </div>
+
+      <ConfirmDialog
+        open={stopImpersonationConfirmOpen}
+        onOpenChange={setStopImpersonationConfirmOpen}
+        title="Exit impersonation?"
+        description="You'll return to your admin session and leave this user's view."
+        confirmLabel="Exit impersonation"
+        cancelLabel="Keep impersonating"
+        pending={stopping}
+        onConfirm={() => void handleStopImpersonation()}
+      />
     </header>
   )
 }
