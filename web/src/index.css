@@ -325,6 +325,22 @@
   flex-direction: column;
   min-width: 0;
 }
+
+/* Dragging card / panel lift. Mirrors the list-row treatment: keep the
+   element fully visible (no opacity dim — that read as "gone, not
+   moving") and stack a primary border + drop shadow so the cursor's
+   target is unmistakable while siblings animate around it. The
+   panel's slot in the grid is naturally vacated by motion's transform,
+   and CSS-grid auto-flow + Reorder.Item's built-in layout animation
+   slides neighbours into the gap. */
+.zv-panel[data-dragging="1"] {
+  cursor: grabbing;
+  background: var(--card);
+  box-shadow:
+    0 0 0 1px var(--primary),
+    0 16px 30px -10px color-mix(in oklch, var(--primary) 22%, transparent),
+    0 4px 8px -2px color-mix(in oklch, var(--foreground) 12%, transparent);
+}
 .zv-panel-head {
   display: flex;
   align-items: center;

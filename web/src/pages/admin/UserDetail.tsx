@@ -3,10 +3,8 @@ import {
   IconChevronDown,
   IconDeviceDesktop,
   IconKey,
-  IconLogin,
   IconLogout,
   IconMail,
-  IconShieldLock,
   IconShieldOff,
   IconTrash,
   IconUserShield,
@@ -992,14 +990,6 @@ function EditEmailDialog({
       </DialogContent>
     </Dialog>
   )
-}
-
-function ActivityIcon({ action }: { action: string }) {
-  const cls = "text-muted-foreground/60 mr-1.5 inline size-3.5 -translate-y-px"
-  if (action.includes("login") || action.includes("ip")) return <IconLogin className={cls} />
-  if (action.includes("impersonate")) return <IconUserX className={cls} />
-  if (action.includes("password") || action.includes("totp") || action.includes("2fa")) return <IconShieldLock className={cls} />
-  return null
 }
 
 function summarizeMetadata(metadata: unknown): string {

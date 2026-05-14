@@ -12,9 +12,9 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react"
-import { Reorder, useDragControls } from "motion/react"
+import { motion, Reorder, useDragControls } from "motion/react"
 import { Link, useNavigate } from "react-router"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
@@ -199,20 +199,29 @@ export function DevicesPage() {
     },
   })
 
-  // Drag state: `localOrder` is the in-flight ordering while the user
-  // is dragging — Reorder.Group fires onReorder repeatedly with the
-  // new array; we mirror it here so the visible rows/cards re-render
-  // smoothly (each Reorder.Item handles the FLIP animation
-  // automatically). `dragId` is just the visual flag for the source
-  // row's "I'm being dragged" styling.
+  // Drag state. Two different drag mechanisms in play:
   //
-  // The previous HTML5-drag + motion.layout pairing wasn't reliable
-  // (table rows don't play nicely with transform-based animations,
-  // and CSS-grid auto-flow can miss reorder events). motion's
-  // `<Reorder>` is purpose-built for this — pointer-event driven,
-  // built-in spring animations, single source of truth for order.
+  // LIST view  — uses motion's `<Reorder>` (1D, perfect fit). The
+  //   `localOrder` mirror is updated continuously via `onReorder` while
+  //   the user drags, so siblings smoothly slide up/down via FLIP.
+  //   Commit happens on release in `handleDragRelease`.
+  //
+  // GRID view  — uses plain `motion.div` per card with custom drop
+  //   detection. Reorder.Group's 1D model on a 2D CSS grid produced a
+  //   cascade where every card in the row drifted whenever the dragged
+  //   card's array index changed. The fix: don't touch the values
+  //   array during drag. The dragged card transforms freely to follow
+  //   the cursor, its grid slot stays visually empty (because the
+  //   element transformed away), siblings hold position. `dropIndex`
+  //   tracks which card is currently under the cursor for the highlight
+  //   + commit target. Commit fires on release via `commitGridDrop`.
   const [localOrder, setLocalOrder] = useState<PublicDevice[] | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
+  const [dropIndex, setDropIndex] = useState<number | null>(null)
+  // Refs to each grid card's outer element. Drop detection iterates
+  // these and tests cursor against bounding rects. Cleared on unmount
+  // via the ref callback's `null` path.
+  const gridCardRefs = useRef<Map<string, HTMLElement>>(new Map())
 
   const devices = devicesQ.data ?? []
 

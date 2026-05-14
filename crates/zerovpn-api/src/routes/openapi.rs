@@ -89,6 +89,7 @@ use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, t
         admin::device_connection_history,
         admin::list_session_events,
         admin::list_access_logs,
+        admin::finder,
         admin::list_servers,
         admin::patch_server,
         admin::rotate_server_keys,

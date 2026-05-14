@@ -121,11 +121,11 @@ export function DeviceCard({
       {...divProps}
       className={cn(
         "zv-panel group/card relative flex cursor-pointer flex-col transition-colors",
-        // Drag-state visuals — kick in when callers set
-        // data-dragging="1" / data-drop-target="1" on the root.
-        // While being dragged the cursor switches to grabbing on the
-        // whole card so it doesn't visually contradict the operation.
-        "data-[dragging=1]:cursor-grabbing data-[dragging=1]:opacity-40",
+        // Drop-target highlight (when a sibling drag is hovering this
+        // card). The data-dragging="1" lift styling is handled in CSS
+        // (`.zv-panel[data-dragging="1"]` rule in index.css) so the
+        // multi-shadow is readable instead of an arbitrary Tailwind
+        // string the size of an essay.
         "data-[drop-target=1]:border-primary data-[drop-target=1]:shadow-[inset_0_0_0_1px_var(--primary)]",
         className,
       )}

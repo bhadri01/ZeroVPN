@@ -88,11 +88,16 @@ pub async fn list_recent(
     let limit = limit.clamp(1, 500);
     let offset = offset.max(0);
     sqlx::query_as::<_, SessionEventRow>(
+        // Note `ip = $5::INET` — without the explicit cast on BOTH
+        // usages of $5, Postgres binds the parameter as TEXT (sqlx's
+        // mapping for `Option<&str>`) and the prepare step fails with
+        // `operator does not exist: inet = text`, even though the
+        // `$5::INET IS NULL` guard would short-circuit at runtime.
         r#"SELECT id, user_id, event, ip, user_agent, metadata, created_at
              FROM session_events
             WHERE ($3::UUID                 IS NULL OR user_id = $3)
               AND ($4::session_event_kind   IS NULL OR event   = $4)
-              AND ($5::INET                 IS NULL OR ip      = $5)
+              AND ($5::INET                 IS NULL OR ip      = $5::INET)
               AND ($6::TIMESTAMPTZ          IS NULL OR created_at >= $6)
               AND ($7::TIMESTAMPTZ          IS NULL OR created_at <  $7)
             ORDER BY id DESC
@@ -114,7 +119,7 @@ pub async fn count_recent(pool: &PgPool, f: Filters<'_>) -> sqlx::Result<i64> {
         r#"SELECT COUNT(*)::BIGINT FROM session_events
             WHERE ($1::UUID                 IS NULL OR user_id = $1)
               AND ($2::session_event_kind   IS NULL OR event   = $2)
-              AND ($3::INET                 IS NULL OR ip      = $3)
+              AND ($3::INET                 IS NULL OR ip      = $3::INET)
               AND ($4::TIMESTAMPTZ          IS NULL OR created_at >= $4)
               AND ($5::TIMESTAMPTZ          IS NULL OR created_at <  $5)"#,
     )

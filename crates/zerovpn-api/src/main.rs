@@ -287,6 +287,7 @@ async fn main() -> Result<()> {
                     "/admin/access-logs",
                     get(routes::admin::list_access_logs),
                 )
+                .route("/admin/finder", get(routes::admin::finder))
                 .route(
                     "/admin/maintenance",
                     get(routes::admin::get_maintenance).put(routes::admin::set_maintenance),

@@ -1,364 +1,360 @@
 import { useQuery } from "@tanstack/react-query"
 import {
+  IconChevronRight,
+  IconClipboardList,
   IconDeviceDesktop,
-  IconRegex,
+  IconLogin2,
+  IconNetwork,
+  IconRoute,
   IconSearch,
   IconUserSearch,
   IconX,
 } from "@tabler/icons-react"
-import { useMemo, useState } from "react"
-import { toast } from "sonner"
+import { useEffect, useState } from "react"
+import { Link } from "react-router"
 
-import { DeviceCard } from "@/components/DeviceCard"
-import { EmptyState } from "@/components/EmptyState"
-import { FilterDropdown } from "@/components/FilterDropdown"
-import { AnimatedList, FadeIn, PageStagger, StaggerItem } from "@/components/motion"
-import { Eyebrow, PageHead, Panel } from "@/components/swiss"
-import { type Status as PillStatus } from "@/components/StatusPill"
+import { PageStagger, StaggerItem } from "@/components/motion"
+import { Kbd, PageHead, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { WithTooltip } from "@/components/ui/with-tooltip"
-import { listDevices } from "@/lib/api"
 import {
-  connState,
-  peerState,
-  type ConnState,
-  type PeerState,
-} from "@/lib/deviceState"
-
-const IPV4_RX = /^(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})$/
-
-const CONN_FILTERS: { value: ConnState; label: string; pill: PillStatus }[] = [
-  { value: "online", label: "Online", pill: "online" },
-  { value: "offline", label: "Offline", pill: "offline" },
-]
-const PEER_FILTERS: { value: PeerState; label: string; pill: PillStatus }[] = [
-  { value: "live", label: "Live", pill: "online" },
-  { value: "paused", label: "Paused", pill: "paused" },
-  { value: "revoked", label: "Revoked", pill: "revoked" },
-]
+  type FinderResponse,
+  type FinderUserMatch,
+  type FinderDeviceMatch,
+  adminFinder,
+} from "@/lib/api"
 
 /**
- * Peer Finder — look devices up by their assigned IPv4 address or by a
- * regex pattern against the IP. Plus connection + peer-state filter
- * pills so the result set narrows further without re-typing the search.
+ * Admin Finder — paste an IP, a WG `host:port` endpoint, an email, a
+ * device name, or a User-Agent fragment. The backend detects what you
+ * gave it, runs targeted COUNT queries across every relevant log
+ * table, and returns a small set of direct matches (users / devices)
+ * plus per-table counts that deep-link into the filtered pages.
  *
- * Scope: limited to the current user's own devices (the `listDevices()`
- * endpoint only returns those). Matching is client-side filtering
- * against `allocated_ip`. If we ever add an admin-wide search endpoint,
- * swap the data source — the UI shape doesn't change.
+ * Phase 2 / Stage B — last item in the per-user logging stack.
  */
 export function FinderPage() {
-  const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
-  const [queryInput, setQueryInput] = useState("")
-  const [useRegex, setUseRegex] = useState(false)
-  // Searches are explicit (Enter / button click) rather than as-you-type
-  // so the result grid only flips when the user commits — keeps the
-  // interaction predictable when typing a list or a slow regex.
-  const [committed, setCommitted] = useState<
-    | { kind: "ips"; ips: string[] }
-    | { kind: "regex"; source: string }
-    | null
-  >(null)
+  const [input, setInput] = useState("")
+  const [committed, setCommitted] = useState("")
 
-  // Filter pills (same axes as the Devices page): connection state and
-  // peer state. Empty set = no constraint on that axis.
-  const [connFilter, setConnFilter] = useState<Set<ConnState>>(new Set())
-  const [peerFilter, setPeerFilter] = useState<Set<PeerState>>(new Set())
+  // Empty committed = no fetch. Page renders a help card instead.
+  const q = useQuery({
+    queryKey: ["admin", "finder", committed],
+    queryFn: () => adminFinder(committed),
+    enabled: committed.length > 0,
+    placeholderData: (prev) => prev,
+  })
 
-  const devices = devicesQ.data ?? []
-
-  // Validate the input on every keystroke so we can disable the button +
-  // surface a hint without waiting for submit. Regex mode validates by
-  // try/catch on the constructor; non-regex mode parses comma-separated
-  // exact IPv4s.
-  const parsed = useMemo(() => {
-    const raw = queryInput.trim()
-    if (raw === "") return { kind: "empty" as const }
-    if (useRegex) {
-      try {
-        // Compile case-insensitive — IPs don't carry case but it's friendly
-        // for any future hostname/label search expansions.
-        new RegExp(raw, "i")
-        return { kind: "regex" as const, source: raw }
-      } catch (e) {
-        return {
-          kind: "invalid-regex" as const,
-          error: e instanceof Error ? e.message : String(e),
-        }
-      }
-    }
-    const ips = raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-    const invalid = ips.filter((ip) => !IPV4_RX.test(ip))
-    return { kind: "ips" as const, ips, invalid }
-  }, [queryInput, useRegex])
-
-  const canSubmit =
-    (parsed.kind === "ips" && parsed.ips.length > 0 && parsed.invalid.length === 0) ||
-    parsed.kind === "regex"
-
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (parsed.kind === "ips" && parsed.invalid.length > 0) {
-      toast.error("One or more entries aren't valid IPv4 addresses")
+  // Submit-on-Enter or button click; explicit so a slow query / typo
+  // doesn't fire on every keystroke.
+  const submit = () => {
+    const v = input.trim()
+    if (v.length === 0) {
+      setCommitted("")
       return
     }
-    if (parsed.kind === "invalid-regex") {
-      toast.error("Invalid regex: " + parsed.error)
-      return
-    }
-    if (!canSubmit) {
-      toast.error("Enter at least one valid IPv4 address or a regex pattern")
-      return
-    }
-    if (parsed.kind === "regex") {
-      setCommitted({ kind: "regex", source: parsed.source })
-    } else if (parsed.kind === "ips") {
-      setCommitted({ kind: "ips", ips: parsed.ips })
-    }
+    setCommitted(v)
   }
 
-  // Devices matching just the search predicate, ignoring filter pills.
-  // Used both as the starting set for `matches` (after filters) and for
-  // the `counts` shown next to each filter option in the dropdowns.
-  const searchMatched = useMemo(() => {
-    if (!committed) return null
-    if (committed.kind === "ips") {
-      const want = new Set(committed.ips)
-      return devices.filter((d) => want.has(d.allocated_ip))
-    }
-    const rx = new RegExp(committed.source, "i")
-    return devices.filter((d) => rx.test(d.allocated_ip))
-  }, [committed, devices])
-
-  // Per-filter-bucket counts within the search-matched set so the
-  // dropdown rows can show "Online · 3 / Offline · 5". Keyed by the
-  // option value (string) so it composes cleanly with `FilterDropdown`'s
-  // `counts: Record<string, number>` API.
-  const counts = useMemo(() => {
-    const c = { online: 0, offline: 0, live: 0, paused: 0, revoked: 0 }
-    if (!searchMatched) return c
-    for (const d of searchMatched) {
-      c[connState(d)] += 1
-      c[peerState(d)] += 1
-    }
-    return c
-  }, [searchMatched])
-
-  // Final result set: search-matched devices, narrowed by the pills.
-  const matches = useMemo(() => {
-    if (!searchMatched) return null
-    return searchMatched.filter((d) => {
-      if (connFilter.size > 0 && !connFilter.has(connState(d))) return false
-      if (peerFilter.size > 0 && !peerFilter.has(peerState(d))) return false
-      return true
-    })
-  }, [searchMatched, connFilter, peerFilter])
-
-  const totalFilters = connFilter.size + peerFilter.size
-  const toggleConn = (v: ConnState) =>
-    setConnFilter((prev) => {
-      const next = new Set(prev)
-      if (next.has(v)) next.delete(v)
-      else next.add(v)
-      return next
-    })
-  const togglePeer = (v: PeerState) =>
-    setPeerFilter((prev) => {
-      const next = new Set(prev)
-      if (next.has(v)) next.delete(v)
-      else next.add(v)
-      return next
-    })
-  const clearFilters = () => {
-    setConnFilter(new Set())
-    setPeerFilter(new Set())
+  // Clear the input + the committed query together so the help card
+  // comes back.
+  const clear = () => {
+    setInput("")
+    setCommitted("")
   }
 
-  const placeholder = useRegex
-    ? "^10\\.10\\.0\\..*  ·  192\\.168\\.[01]\\..*"
-    : "10.10.0.5, 10.10.0.12, …"
+  // Keep input synced with committed when the URL changes externally —
+  // not used yet, but cheap to wire so future "shareable result URLs"
+  // (?q=…) just need the search-params plumbing.
+  useEffect(() => {
+    if (committed && committed !== input) setInput(committed)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [committed])
 
   return (
     <PageStagger>
       <StaggerItem>
-        <PageHead eyebrow="Workspace · 03" title="Finder" />
+        <PageHead
+          eyebrow="Admin · Finder"
+          title="Cross-source search"
+          sub="IP · endpoint · email · device name · User-Agent — admins click a count to pivot into the matching log page with the filter pre-applied"
+        />
       </StaggerItem>
 
       <StaggerItem>
-      <Panel
-        title="Search by IP"
-        sub={
-          useRegex
-            ? "Regex pattern (case-insensitive) tested against each device's allocated_ip"
-            : "Comma-separated IPv4 addresses (exact match against allocated_ip)"
-        }
-      >
-        <form onSubmit={onSubmit} className="flex flex-col gap-2 sm:flex-row">
-          <div className="flex-1">
-            <div className="relative">
-              <IconSearch
-                className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2"
-                aria-hidden
-              />
+        <Panel flush>
+          <div className="border-border flex items-center gap-2 border-b p-2">
+            <div className="relative flex-1">
+              <IconSearch className="text-muted-foreground absolute left-3 top-1/2 size-4 -translate-y-1/2" />
               <Input
-                value={queryInput}
-                onChange={(e) => setQueryInput(e.target.value)}
-                placeholder={placeholder}
-                className="pl-8 pr-9 font-mono"
-                aria-invalid={
-                  parsed.kind === "ips"
-                    ? parsed.invalid.length > 0
-                    : parsed.kind === "invalid-regex"
-                }
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submit()
+                }}
+                placeholder="203.0.113.42 · 203.0.113.42:51820 · curl/8 · alice@example.com · laptop-pro"
+                className="h-9 pl-9 font-mono text-sm"
                 autoFocus
               />
-              {queryInput && (
-                <WithTooltip label="Clear search">
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-foreground absolute right-2 top-1/2 -translate-y-1/2"
-                    onClick={() => setQueryInput("")}
-                    aria-label="Clear"
-                  >
-                    <IconX size={14} />
-                  </button>
-                </WithTooltip>
-              )}
             </div>
-            {parsed.kind === "ips" && parsed.invalid.length > 0 && (
-              <p className="text-destructive mt-1 font-mono text-[11px]">
-                Invalid IPv4: {parsed.invalid.join(", ")}
-              </p>
+            {input && (
+              <Button size="sm" variant="ghost" onClick={clear} title="Clear">
+                <IconX className="size-3.5" />
+              </Button>
             )}
-            {parsed.kind === "invalid-regex" && (
-              <p className="text-destructive mt-1 font-mono text-[11px]">
-                Invalid regex: {parsed.error}
-              </p>
-            )}
+            <Button size="sm" onClick={submit} disabled={input.trim().length === 0}>
+              Search
+            </Button>
           </div>
-          <Button
-            type="button"
-            variant={useRegex ? "default" : "outline"}
-            onClick={() => setUseRegex((v) => !v)}
-            aria-pressed={useRegex}
-            title="Toggle regex mode"
-            className="font-mono"
-          >
-            <IconRegex className="size-4" />
-            <span className="ml-1 text-xs">.*</span>
-          </Button>
-          <Button type="submit" disabled={!canSubmit || devicesQ.isLoading}>
-            <IconSearch className="size-4" />
-            Search
-          </Button>
-        </form>
 
-        {/* Filter dropdowns — same multi-select pattern the Devices page
-            uses. Each dropdown opens a checkbox list, clicking a row
-            toggles selection without closing. `counts` are computed
-            against the current search-matched set so the user sees how
-            many devices would survive each toggle. */}
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <FilterDropdown<ConnState>
-            label="Connection"
-            options={CONN_FILTERS}
-            selected={connFilter}
-            onToggle={toggleConn}
-            onClear={() => setConnFilter(new Set())}
-            counts={counts}
-          />
-          <FilterDropdown<PeerState>
-            label="Peer"
-            options={PEER_FILTERS}
-            selected={peerFilter}
-            onToggle={togglePeer}
-            onClear={() => setPeerFilter(new Set())}
-            counts={counts}
-          />
-          {totalFilters > 0 && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="text-muted-foreground hover:text-foreground font-mono text-[11px] underline-offset-2 hover:underline"
-            >
-              clear all
-            </button>
+          {committed === "" && <FinderHelp />}
+          {committed !== "" && q.isLoading && !q.data && (
+            <div className="flex flex-col gap-2 p-4">
+              <Skeleton className="h-8 rounded-none" />
+              <Skeleton className="h-8 rounded-none" />
+              <Skeleton className="h-8 rounded-none" />
+            </div>
           )}
-        </div>
-      </Panel>
-      </StaggerItem>
-
-      {devicesQ.isLoading && (
-        <StaggerItem>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-52 rounded-none" />
-            ))}
-          </div>
-        </StaggerItem>
-      )}
-
-      {!devicesQ.isLoading && committed === null && (
-        <StaggerItem>
-          <Panel flush>
-            <div className="p-4">
-              <EmptyState
-                icon={IconUserSearch}
-                title="No search yet"
-                description="Enter one or more IPv4 addresses (or flip the .* toggle for regex) to look up the matching devices."
-              />
+          {committed !== "" && q.isError && (
+            <div className="text-destructive p-6 font-mono text-sm">
+              Search failed:{" "}
+              {q.error instanceof Error ? q.error.message : "unknown error"}
             </div>
-          </Panel>
-        </StaggerItem>
-      )}
-
-      {!devicesQ.isLoading &&
-        committed &&
-        matches &&
-        matches.length === 0 && (
-          <FadeIn>
-            <Panel flush>
-              <div className="p-4">
-                <EmptyState
-                  icon={IconDeviceDesktop}
-                  title="No peers match"
-                  description={
-                    committed.kind === "ips"
-                      ? `Searched ${committed.ips.length} IP${committed.ips.length === 1 ? "" : "s"} — none matched after filters. Loosen the connection / peer filters or check the addresses.`
-                      : `Regex /${committed.source}/ matched nothing after filters. Loosen the connection / peer filters or try a broader pattern.`
-                  }
-                />
-              </div>
-            </Panel>
-          </FadeIn>
-        )}
-
-      {matches && matches.length > 0 && (
-        <StaggerItem>
-          <div className="space-y-2">
-            <Eyebrow>
-              {matches.length} match{matches.length === 1 ? "" : "es"}
-              {committed?.kind === "ips" && ` · searched ${committed.ips.length}`}
-              {committed?.kind === "regex" && ` · regex /${committed.source}/`}
-              {totalFilters > 0 && ` · ${totalFilters} filter${totalFilters === 1 ? "" : "s"}`}
-            </Eyebrow>
-            {/* AnimatedList gives each result card its own enter/exit
-                so changing search or toggling filters slides items in
-                and out instead of flashing. */}
-            <AnimatedList className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {matches.map((d) => (
-                <DeviceCard key={d.id} device={d} />
-              ))}
-            </AnimatedList>
-          </div>
-        </StaggerItem>
-      )}
+          )}
+          {committed !== "" && q.data && <FinderResults data={q.data} />}
+        </Panel>
+      </StaggerItem>
     </PageStagger>
   )
 }
 
+function FinderHelp() {
+  return (
+    <div className="text-muted-foreground space-y-2 p-6 font-mono text-[12px] leading-relaxed">
+      <p className="text-foreground">Examples:</p>
+      <ul className="space-y-1.5">
+        <li>
+          <Kbd>203.0.113.42</Kbd> — every audit / failed-login / session /
+          access-log row that touched that IP, plus any device that connected
+          from it.
+        </li>
+        <li>
+          <Kbd>203.0.113.42:51820</Kbd> — exact WG `host:port` lookup against
+          the peer endpoint history.
+        </li>
+        <li>
+          <Kbd>alice@example.com</Kbd> — substring email match. Returns up to
+          10 users.
+        </li>
+        <li>
+          <Kbd>laptop-pro</Kbd> — substring device name match.
+        </li>
+        <li>
+          <Kbd>curl/8</Kbd> · <Kbd>python-requests</Kbd> — User-Agent
+          substring across audit / failed-login / session / access-log
+          tables.
+        </li>
+      </ul>
+    </div>
+  )
+}
+
+function FinderResults({ data }: { data: FinderResponse }) {
+  const { kind, query, counts, users, devices } = data
+  const anyCount =
+    counts.audit_logs +
+      counts.failed_logins +
+      counts.session_events +
+      counts.access_logs +
+      counts.peer_endpoint_history +
+      counts.connection_sessions >
+    0
+  const anyMatch = users.length + devices.length > 0
+  return (
+    <div className="flex flex-col gap-4 p-4">
+      <div className="flex items-center gap-2 font-mono text-[11px]">
+        <span className="text-muted-foreground">Detected as</span>
+        <Pill tone="info" dot={false}>
+          {kind}
+        </Pill>
+        <span className="text-muted-foreground">for</span>
+        <span className="text-foreground">{query}</span>
+      </div>
+
+      {!anyCount && !anyMatch && (
+        <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+          Nothing matched. Try a partial value (email substring, UA
+          fragment) or a different shape (full <code>host:port</code> vs.
+          bare IP).
+        </div>
+      )}
+
+      {anyCount && (
+        <div>
+          <h3 className="zv-eyebrow mb-2">Log counts</h3>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <CountCard
+              icon={IconClipboardList}
+              label="Audit"
+              count={counts.audit_logs}
+              link={linkForAudit(kind, query)}
+            />
+            <CountCard
+              icon={IconLogin2}
+              label="Sessions"
+              count={counts.session_events}
+              link={linkForSessionEvents(kind, query)}
+            />
+            <CountCard
+              icon={IconRoute}
+              label="Access logs"
+              count={counts.access_logs}
+              link={linkForAccessLogs(kind, query)}
+            />
+            <CountCard
+              icon={IconUserSearch}
+              label="Failed logins"
+              count={counts.failed_logins}
+              link="/admin/failed-logins"
+            />
+            <CountCard
+              icon={IconNetwork}
+              label="Peer endpoints"
+              count={counts.peer_endpoint_history}
+              link={null}
+            />
+            <CountCard
+              icon={IconNetwork}
+              label="Connections"
+              count={counts.connection_sessions}
+              link={null}
+            />
+          </div>
+        </div>
+      )}
+
+      {users.length > 0 && (
+        <div>
+          <h3 className="zv-eyebrow mb-2">User matches</h3>
+          <div className="border-border divide-border flex flex-col divide-y border">
+            {users.map((u) => (
+              <UserMatchRow key={u.id} u={u} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {devices.length > 0 && (
+        <div>
+          <h3 className="zv-eyebrow mb-2">Device matches</h3>
+          <div className="border-border divide-border flex flex-col divide-y border">
+            {devices.map((d) => (
+              <DeviceMatchRow key={d.id} d={d} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CountCard({
+  icon: Icon,
+  label,
+  count,
+  link,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  count: number
+  link: string | null
+}) {
+  const inner = (
+    <div className="border-border bg-card hover:border-foreground/40 group flex h-full flex-col gap-1 border p-3 transition">
+      <div className="text-muted-foreground flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em]">
+        <span className="flex items-center gap-1.5">
+          <Icon className="size-3.5" />
+          {label}
+        </span>
+        {link && (
+          <IconChevronRight className="text-muted-foreground group-hover:text-foreground size-3.5" />
+        )}
+      </div>
+      <div className="text-foreground font-heading text-2xl tabular-nums">
+        {count.toLocaleString()}
+      </div>
+    </div>
+  )
+  if (link && count > 0) {
+    return (
+      <Link to={link} title={`Open ${label} filtered to this query`}>
+        {inner}
+      </Link>
+    )
+  }
+  return inner
+}
+
+function UserMatchRow({ u }: { u: FinderUserMatch }) {
+  return (
+    <Link
+      to={`/admin/users/${u.id}`}
+      className="hover:bg-muted/40 flex items-center justify-between gap-3 px-3 py-2 transition"
+    >
+      <div className="flex flex-col gap-0.5">
+        <span className="font-mono text-sm">{u.email}</span>
+        <span className="text-muted-foreground font-mono text-[10px]">
+          {u.id.slice(0, 8)} · matched on {u.matched_on}
+        </span>
+      </div>
+      <IconChevronRight className="text-muted-foreground size-4" />
+    </Link>
+  )
+}
+
+function DeviceMatchRow({ d }: { d: FinderDeviceMatch }) {
+  return (
+    <Link
+      to={`/admin/devices/${d.id}`}
+      className="hover:bg-muted/40 flex items-center justify-between gap-3 px-3 py-2 transition"
+    >
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="inline-flex items-center gap-2 font-mono text-sm">
+          <IconDeviceDesktop className="text-muted-foreground size-3.5" />
+          {d.name}
+          <span className="text-muted-foreground text-xs">
+            · {d.allocated_ip}
+          </span>
+        </span>
+        <span className="text-muted-foreground truncate font-mono text-[10px]">
+          {d.last_peer_endpoint
+            ? `last endpoint ${d.last_peer_endpoint} · `
+            : ""}
+          matched on {d.matched_on}
+        </span>
+      </div>
+      <IconChevronRight className="text-muted-foreground size-4" />
+    </Link>
+  )
+}
+
+// Deep-link builders. The target pages already accept `ip` / `path` /
+// `user_agent` query params (see Audit + Sessions + AccessLogs).
+function linkForAudit(kind: string, q: string): string | null {
+  if (kind === "ip") return `/admin/audit?ip=${encodeURIComponent(q)}`
+  // Audit page doesn't accept a UA filter yet; surface the count as a
+  // hint and let the admin pivot manually. Returning null here makes
+  // the CountCard a non-clickable info tile.
+  return null
+}
+
+function linkForSessionEvents(kind: string, q: string): string | null {
+  if (kind === "ip") return `/admin/sessions?ip=${encodeURIComponent(q)}`
+  return null
+}
+
+function linkForAccessLogs(kind: string, q: string): string | null {
+  if (kind === "ip") return `/admin/access-logs?ip=${encodeURIComponent(q)}`
+  return null
+}

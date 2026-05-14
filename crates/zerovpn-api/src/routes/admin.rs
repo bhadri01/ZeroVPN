@@ -2315,6 +2315,415 @@ pub async fn list_access_logs(
     Ok(Json(AccessLogList { total, items }))
 }
 
+// ---- Finder (Phase 2 / Stage B) ------------------------------------------
+//
+// Cross-source admin search. Given a free-form query the endpoint
+// detects the most likely shape (IPv4/IPv6 host address, `host:port`
+// WG endpoint, or freetext) and runs targeted COUNT queries against
+// every log table that could match plus a small list of direct
+// user/device matches. The frontend renders the counts as
+// click-through cards that deep-link into the existing filtered
+// admin pages.
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct FinderQuery {
+    #[serde(default)]
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct FinderUserMatch {
+    pub id: Uuid,
+    pub email: String,
+    /// `"email"` (matched the email substring) or `"last_login_ip"`
+    /// (their `users.last_login_ip` equals the query).
+    pub matched_on: &'static str,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct FinderDeviceMatch {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub name: String,
+    pub allocated_ip: String,
+    pub last_peer_endpoint: Option<String>,
+    /// `"name"` (substring), `"allocated_ip"` (exact), or
+    /// `"last_peer_endpoint"` (`host:port` prefix).
+    pub matched_on: &'static str,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct FinderCounts {
+    pub audit_logs: i64,
+    pub failed_logins: i64,
+    pub session_events: i64,
+    pub access_logs: i64,
+    /// `peer_endpoint_history` rows whose endpoint starts with the
+    /// query (so admins can pivot from "this IP" to "every device that
+    /// ever connected from that IP").
+    pub peer_endpoint_history: i64,
+    /// `connection_sessions` matching the query on either start- or
+    /// end-side endpoint.
+    pub connection_sessions: i64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct FinderResponse {
+    /// Echoed back so the page can render "Results for X" without
+    /// trusting the URL bar.
+    pub query: String,
+    /// Detected query kind. `"ip"` for a bare host address, `"endpoint"`
+    /// for `host:port`, `"text"` otherwise. The frontend uses this to
+    /// decide which result groups to show prominently.
+    pub kind: &'static str,
+    pub counts: FinderCounts,
+    pub users: Vec<FinderUserMatch>,
+    pub devices: Vec<FinderDeviceMatch>,
+}
+
+fn detect_kind(q: &str) -> &'static str {
+    // `host:port` — bracketed v6 or `1.2.3.4:51820`. Heuristic: ends
+    // with `:digits` and the front parses as an address.
+    if let Some(colon) = q.rfind(':') {
+        let (host, port) = q.split_at(colon);
+        let port = &port[1..];
+        if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            if host.parse::<std::net::IpAddr>().is_ok() {
+                return "endpoint";
+            }
+        }
+    }
+    if q.parse::<std::net::IpAddr>().is_ok() {
+        return "ip";
+    }
+    "text"
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/finder",
+    tag = "Admin",
+    params(FinderQuery),
+    responses(
+        (status = 200, description = "Cross-source admin search results", body = FinderResponse),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn finder(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Query(query): Query<FinderQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let q = query.q.unwrap_or_default();
+    let q_trim = q.trim().to_string();
+    if q_trim.is_empty() {
+        return Ok(Json(FinderResponse {
+            query: q,
+            kind: "text",
+            counts: FinderCounts {
+                audit_logs: 0,
+                failed_logins: 0,
+                session_events: 0,
+                access_logs: 0,
+                peer_endpoint_history: 0,
+                connection_sessions: 0,
+            },
+            users: vec![],
+            devices: vec![],
+        }));
+    }
+    let kind = detect_kind(&q_trim);
+
+    // Build the LIKE pattern for freetext substring matches once.
+    let like_pat = format!("%{q_trim}%");
+    // Endpoint prefix for `peer_endpoint_history.endpoint LIKE 'IP:%'`
+    // when an admin pastes a bare IP (so we surface every device that
+    // connected from that IP regardless of source port).
+    let endpoint_prefix_pat = if kind == "ip" {
+        Some(format!("{q_trim}:%"))
+    } else {
+        None
+    };
+    // INET cast — only meaningful when the input is a host address.
+    let inet_q: Option<ipnetwork::IpNetwork> = if kind == "ip" {
+        q_trim.parse::<std::net::IpAddr>().ok().map(Into::into)
+    } else {
+        None
+    };
+
+    // ── Count queries ────────────────────────────────────────────────
+    // Each counts rows that match the query in its most useful shape:
+    //   ip       → exact IP match on the table's `ip` column
+    //   endpoint → exact match on the table's endpoint column(s)
+    //   text     → substring on `user_agent`
+    let pool = &state.pool;
+
+    let audit_count: i64 = match kind {
+        "ip" => {
+            let (n,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*)::BIGINT FROM audit_logs WHERE ip = $1")
+                    .bind(inet_q)
+                    .fetch_one(pool)
+                    .await?;
+            n
+        }
+        "text" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM audit_logs WHERE user_agent ILIKE $1",
+            )
+            .bind(&like_pat)
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        _ => 0,
+    };
+
+    let failed_logins_count: i64 = match kind {
+        "ip" => {
+            let (n,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*)::BIGINT FROM failed_logins WHERE ip = $1")
+                    .bind(inet_q)
+                    .fetch_one(pool)
+                    .await?;
+            n
+        }
+        "text" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM failed_logins WHERE user_agent ILIKE $1",
+            )
+            .bind(&like_pat)
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        _ => 0,
+    };
+
+    let session_events_count: i64 = match kind {
+        "ip" => {
+            let (n,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*)::BIGINT FROM session_events WHERE ip = $1")
+                    .bind(inet_q)
+                    .fetch_one(pool)
+                    .await?;
+            n
+        }
+        "text" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM session_events WHERE user_agent ILIKE $1",
+            )
+            .bind(&like_pat)
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        _ => 0,
+    };
+
+    let access_logs_count: i64 = match kind {
+        "ip" => {
+            let (n,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*)::BIGINT FROM access_logs WHERE ip = $1")
+                    .bind(inet_q)
+                    .fetch_one(pool)
+                    .await?;
+            n
+        }
+        "text" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM access_logs WHERE user_agent ILIKE $1",
+            )
+            .bind(&like_pat)
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        _ => 0,
+    };
+
+    let peer_endpoint_history_count: i64 = match kind {
+        "endpoint" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM peer_endpoint_history WHERE endpoint = $1",
+            )
+            .bind(&q_trim)
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        "ip" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM peer_endpoint_history WHERE endpoint LIKE $1",
+            )
+            .bind(endpoint_prefix_pat.as_deref().unwrap_or(""))
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        _ => 0,
+    };
+
+    let connection_sessions_count: i64 = match kind {
+        "endpoint" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM connection_sessions
+                  WHERE peer_endpoint_at_start = $1
+                     OR peer_endpoint_at_end   = $1",
+            )
+            .bind(&q_trim)
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        "ip" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM connection_sessions
+                  WHERE peer_endpoint_at_start LIKE $1
+                     OR peer_endpoint_at_end   LIKE $1",
+            )
+            .bind(endpoint_prefix_pat.as_deref().unwrap_or(""))
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        _ => 0,
+    };
+
+    // ── Direct matches ───────────────────────────────────────────────
+    let mut users: Vec<FinderUserMatch> = Vec::new();
+    let mut devices: Vec<FinderDeviceMatch> = Vec::new();
+
+    // User by last_login_ip (when ip-kind) or by email substring (text-kind).
+    // Tuple-style query_as so the local row shape doesn't need a
+    // `#[derive(FromRow)]` (which doesn't work in function scope).
+    match kind {
+        "ip" => {
+            let rows: Vec<(Uuid, String)> = sqlx::query_as(
+                r#"SELECT id, email::TEXT AS email FROM users
+                    WHERE last_login_ip = $1
+                    ORDER BY last_login_at DESC NULLS LAST
+                    LIMIT 10"#,
+            )
+            .bind(inet_q)
+            .fetch_all(pool)
+            .await?;
+            for (id, email) in rows {
+                users.push(FinderUserMatch {
+                    id,
+                    email,
+                    matched_on: "last_login_ip",
+                });
+            }
+        }
+        "text" => {
+            let rows: Vec<(Uuid, String)> = sqlx::query_as(
+                r#"SELECT id, email::TEXT AS email FROM users
+                    WHERE email::TEXT ILIKE $1
+                    ORDER BY created_at DESC
+                    LIMIT 10"#,
+            )
+            .bind(&like_pat)
+            .fetch_all(pool)
+            .await?;
+            for (id, email) in rows {
+                users.push(FinderUserMatch {
+                    id,
+                    email,
+                    matched_on: "email",
+                });
+            }
+        }
+        _ => {}
+    }
+
+    // Devices — same tuple-style shape: (id, user_id, name, allocated_ip, last_peer_endpoint).
+    {
+        type DeviceTuple = (Uuid, Uuid, String, ipnetwork::IpNetwork, Option<String>);
+        let rows: Vec<DeviceTuple> = match kind {
+            "ip" => {
+                // allocated_ip exact match OR last_peer_endpoint starts
+                // with `ip:`. Union both axes.
+                sqlx::query_as(
+                    r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
+                         FROM devices
+                        WHERE status <> 'revoked'
+                          AND (allocated_ip = $1
+                               OR last_peer_endpoint LIKE $2)
+                        ORDER BY created_at DESC
+                        LIMIT 10"#,
+                )
+                .bind(inet_q)
+                .bind(endpoint_prefix_pat.as_deref().unwrap_or(""))
+                .fetch_all(pool)
+                .await?
+            }
+            "endpoint" => sqlx::query_as(
+                r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
+                     FROM devices
+                    WHERE status <> 'revoked' AND last_peer_endpoint = $1
+                    ORDER BY created_at DESC
+                    LIMIT 10"#,
+            )
+            .bind(&q_trim)
+            .fetch_all(pool)
+            .await?,
+            _ => sqlx::query_as(
+                r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
+                     FROM devices
+                    WHERE status <> 'revoked' AND name ILIKE $1
+                    ORDER BY created_at DESC
+                    LIMIT 10"#,
+            )
+            .bind(&like_pat)
+            .fetch_all(pool)
+            .await?,
+        };
+        let bare_ip = q_trim.clone();
+        for (id, user_id, name, allocated_ip, last_peer_endpoint) in rows {
+            let matched_on: &'static str = match kind {
+                "endpoint" => "last_peer_endpoint",
+                "ip" => {
+                    if last_peer_endpoint
+                        .as_deref()
+                        .is_some_and(|e| e.starts_with(&format!("{bare_ip}:")))
+                    {
+                        "last_peer_endpoint"
+                    } else {
+                        "allocated_ip"
+                    }
+                }
+                _ => "name",
+            };
+            devices.push(FinderDeviceMatch {
+                id,
+                user_id,
+                name,
+                allocated_ip: allocated_ip.ip().to_string(),
+                last_peer_endpoint,
+                matched_on,
+            });
+        }
+    }
+
+    Ok(Json(FinderResponse {
+        query: q,
+        kind,
+        counts: FinderCounts {
+            audit_logs: audit_count,
+            failed_logins: failed_logins_count,
+            session_events: session_events_count,
+            access_logs: access_logs_count,
+            peer_endpoint_history: peer_endpoint_history_count,
+            connection_sessions: connection_sessions_count,
+        },
+        users,
+        devices,
+    }))
+}
+
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AdminStatsResponse {
     pub total: i64,

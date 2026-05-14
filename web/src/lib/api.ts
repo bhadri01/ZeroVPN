@@ -1037,6 +1037,45 @@ export const adminListAccessLogs = (
     `/admin/access-logs?${adminAccessLogsQs(filters, limit, offset)}`,
   )
 
+// ── Finder (Phase 2 / Stage B) ──────────────────────────────────────────
+
+export interface FinderCounts {
+  audit_logs: number
+  failed_logins: number
+  session_events: number
+  access_logs: number
+  peer_endpoint_history: number
+  connection_sessions: number
+}
+
+export interface FinderUserMatch {
+  id: string
+  email: string
+  matched_on: "email" | "last_login_ip"
+}
+
+export interface FinderDeviceMatch {
+  id: string
+  user_id: string
+  name: string
+  allocated_ip: string
+  last_peer_endpoint: string | null
+  matched_on: "name" | "allocated_ip" | "last_peer_endpoint"
+}
+
+export interface FinderResponse {
+  query: string
+  /** Detected query kind. `"ip"` for a bare host address, `"endpoint"`
+   *  for `host:port`, `"text"` otherwise. */
+  kind: "ip" | "endpoint" | "text"
+  counts: FinderCounts
+  users: FinderUserMatch[]
+  devices: FinderDeviceMatch[]
+}
+
+export const adminFinder = (q: string) =>
+  apiFetch<FinderResponse>(`/admin/finder?q=${encodeURIComponent(q)}`)
+
 export interface MaintenanceState {
   maintenance_mode: boolean
   maintenance_message: string | null

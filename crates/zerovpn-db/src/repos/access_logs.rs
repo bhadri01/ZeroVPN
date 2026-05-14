@@ -91,6 +91,9 @@ pub async fn list_recent(
     // characters that would mangle a string concat.
     let path_pat = f.path_prefix.map(|p| format!("{p}%"));
     sqlx::query_as::<_, AccessLogRow>(
+        // `ip = $8::INET` — see session_events.rs for the rationale;
+        // sqlx binds `Option<&str>` as TEXT and Postgres rejects
+        // `INET = TEXT` at prepare time without the explicit cast.
         r#"SELECT id, created_at, user_id, method, path, status, latency_ms,
                   ip, user_agent, request_id
              FROM access_logs
@@ -99,7 +102,7 @@ pub async fn list_recent(
               AND ($5::TEXT        IS NULL OR path LIKE $5)
               AND ($6::SMALLINT    IS NULL OR status >= $6)
               AND ($7::SMALLINT    IS NULL OR status <= $7)
-              AND ($8::INET        IS NULL OR ip      = $8)
+              AND ($8::INET        IS NULL OR ip      = $8::INET)
               AND ($9::TIMESTAMPTZ IS NULL OR created_at >= $9)
               AND ($10::TIMESTAMPTZ IS NULL OR created_at <  $10)
             ORDER BY created_at DESC, id DESC
@@ -128,7 +131,7 @@ pub async fn count_recent(pool: &PgPool, f: Filters<'_>) -> sqlx::Result<i64> {
               AND ($3::TEXT        IS NULL OR path LIKE $3)
               AND ($4::SMALLINT    IS NULL OR status >= $4)
               AND ($5::SMALLINT    IS NULL OR status <= $5)
-              AND ($6::INET        IS NULL OR ip      = $6)
+              AND ($6::INET        IS NULL OR ip      = $6::INET)
               AND ($7::TIMESTAMPTZ IS NULL OR created_at >= $7)
               AND ($8::TIMESTAMPTZ IS NULL OR created_at <  $8)"#,
     )
