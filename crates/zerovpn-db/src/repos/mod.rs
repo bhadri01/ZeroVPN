@@ -12,3 +12,4 @@ pub mod topology_positions;
 pub mod user_prefs;
 pub mod users;
 pub mod verification_tokens;
+pub mod destination_ips;

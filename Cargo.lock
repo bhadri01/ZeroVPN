@@ -2331,6 +2331,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "maxminddb"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6087e5d8ea14861bb7c7f573afbc7be3798d3ef0fae87ec4fd9a4de9a127c3c"
+dependencies = [
+ "ipnetwork",
+ "log",
+ "memchr",
+ "serde",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6008,7 +6020,9 @@ dependencies = [
  "compact_str",
  "figment",
  "ipnetwork",
+ "maxminddb",
  "serde",
+ "serde_json",
  "sqlx",
  "thiserror 2.0.18",
  "time",
@@ -6135,6 +6149,7 @@ dependencies = [
  "dotenvy",
  "rand 0.8.6",
  "reqwest",
+ "serde",
  "serde_json",
  "sqlx",
  "sysinfo",

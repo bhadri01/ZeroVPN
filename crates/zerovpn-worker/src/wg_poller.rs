@@ -2,8 +2,8 @@
 //!
 //! When `ZEROVPN_WG__BACKEND=shell` AND the `wg` binary is in PATH, this
 //! task polls `wg show <iface> dump` every `ZEROVPN_STATS_INTERVAL_SECS`
-//! and emits `Event::StatsDelta` per peer. Otherwise it falls through to
-//! the simulator behavior so the dev demo still works.
+//! and emits `Event::StatsDelta` per peer. If the backend isn't enabled,
+//! the worker simply doesn't emit live bandwidth events.
 //!
 //! `wg show <iface> dump` columns (per peer):
 //!   public_key  preshared_key  endpoint  allowed_ips  latest_handshake  rx_bytes  tx_bytes  persistent_keepalive

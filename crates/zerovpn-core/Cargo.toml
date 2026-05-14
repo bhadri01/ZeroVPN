@@ -22,3 +22,7 @@ sqlx = { workspace = true }
 # Derive ToSchema on the public domain types so the API crate can fold
 # them straight into the OpenAPI document. Compile-time only.
 utoipa = { workspace = true }
+
+# GeoIP
+maxminddb = { workspace = true }
+serde_json = { workspace = true }

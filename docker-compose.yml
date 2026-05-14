@@ -94,6 +94,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    ports:
+      - "9898:9898"  # destination_ingest TCP endpoint
+    environment:
+      ZEROVPN_INGEST__DEST_BIND: 0.0.0.0:9898
     read_only: true
     tmpfs:
       - /tmp:size=64m
@@ -188,37 +192,41 @@ services:
     mem_limit: 64m
 
   dnsmasq:
-    image: jpillora/dnsmasq:latest
+    image: coredns/coredns:latest
     platform: linux/amd64
     <<: [*default-restart, *default-logging]
     cap_add:
-      - NET_ADMIN
+      - NET_BIND_SERVICE
     volumes:
       - dnsmasq_conf:/etc/dnsmasq.d
+      - ./deploy/Corefile:/etc/coredns/Corefile:ro
     networks:
       - backend
     mem_limit: 32m
-    # The jpillora image runs dnsmasq with default opts; we provide our own
-    # additional hosts file via the mounted volume. dnsmasq picks up changes
-    # to addn-hosts on SIGHUP. For 1A we just point it at our own dir.
-    environment:
-      HTTP_USER: zero
-      HTTP_PASS: zero  # admin UI password (we don't expose this externally)
-    entrypoint: ["/bin/sh", "-c"]
-    # Touch the peers file so dnsmasq doesn't warn on first boot, then exec
-    # dnsmasq with our config. The worker overwrites zerovpn-peers.conf
-    # whenever a device's DNS names change, and SIGHUPs dnsmasq.
     command:
-      - >
-        mkdir -p /etc/dnsmasq.d &&
-        touch /etc/dnsmasq.d/zerovpn-peers.conf &&
-        exec dnsmasq
-        --keep-in-foreground
-        --log-facility=-
-        --addn-hosts=/etc/dnsmasq.d/zerovpn-peers.conf
-        --no-resolv
-        --server=1.1.1.1
-        --server=1.0.0.1
+      - -conf
+      - /etc/coredns/Corefile
+    # CoreDNS reads the same hosts file volume, logs each query to stdout,
+    # and reloads the hosts file periodically so DNS-name updates keep working.
+
+  nflog-exporter:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.nflog-exporter
+    profiles: ["ingest"]
+    <<: [*default-restart, *default-logging]
+    networks:
+      - backend
+    depends_on:
+      - worker
+    environment:
+      INGEST_ENDPOINT: worker:9898
+    # For now, this runs the exporter in a placeholder mode.
+    # In production, it would read from an NFLOG socket/FIFO.
+    # Run with: docker compose --profile ingest up -d
+    stdin_open: true
+    tty: false
+    mem_limit: 32m
 
 volumes:
   caddy_data:
@@ -231,3 +239,5 @@ networks:
   web:
   backend:
     internal: false
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"

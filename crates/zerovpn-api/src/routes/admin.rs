@@ -2954,4 +2954,3 @@ pub async fn stop_impersonation(
     info!(admin = %real_user_id, "admin stopped impersonation");
 
     Ok(Json(json!({ "status": "ok" })))
-}

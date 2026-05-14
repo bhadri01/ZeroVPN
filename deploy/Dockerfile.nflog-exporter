@@ -1,0 +1,9 @@
+FROM python:3.12-alpine
+
+WORKDIR /app
+
+COPY scripts/ulogd-exporter.py /app/exporter.py
+
+RUN chmod +x /app/exporter.py
+
+ENTRYPOINT ["python3", "/app/exporter.py"]

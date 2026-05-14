@@ -1,20 +1,22 @@
-use std::{collections::HashMap, env, time::Duration};
+use std::time::Duration;
+use std::env;
 
 use anyhow::{Context, Result};
-use rand::{Rng, RngCore};
-use tokio::{signal, sync::mpsc};
+use tokio::signal;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+
+
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use uuid::Uuid;
-use zerovpn_db::{PgPool, repos::{connection_sessions, devices}};
+use zerovpn_db::repos::connection_sessions;
 use zerovpn_events::Publisher;
 use zerovpn_wire::Event;
 
 mod aggregator;
 mod retention;
 mod server_health;
-mod stats_sim;
 mod wg_poller;
+mod destination_ingest;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -74,8 +76,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Stats simulation task — queries active devices every 30s and emits a
-    // StatsDelta for each. Real WG poller replaces this in a later phase.
     if wg_poller::enabled() {
         let pool = pool.clone();
         let tx = tx.clone();
@@ -83,11 +83,19 @@ async fn main() -> Result<()> {
             wg_poller::run(pool, tx).await;
         });
     } else {
-        let pool = pool.clone();
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            stats_sim::run(pool, tx).await;
-        });
+        info!("WG stats disabled: no synthetic chart feed will be emitted until the real WG backend is enabled");
+    }
+
+    // Destination ingest: accept JSON flow events and persist them.
+    if let Ok(bind) = std::env::var("ZEROVPN_INGEST__DEST_BIND") {
+        if !bind.is_empty() {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                if let Err(e) = destination_ingest::run(pool, &bind).await {
+                    tracing::error!(?e, "destination ingest failed");
+                }
+            });
+        }
     }
 
     // Bandwidth aggregator task — rolls up closed hours every 5 minutes
@@ -168,14 +176,3 @@ async fn shutdown_signal() {
     }
 }
 
-#[allow(dead_code)]
-fn _unused_helpers(_: &Uuid, _: &mut HashMap<(), ()>, _: &mut dyn RngCore) {
-    let _ = rand::thread_rng().gen_range(0..1);
-}
-
-// `devices` import is used only inside stats_sim; this avoid-unused trick
-// keeps the workspace compile clean if the module is feature-gated later.
-#[allow(unused_imports)]
-use devices as _devices_unused;
-#[allow(unused_imports)]
-use PgPool as _pgpool_unused;

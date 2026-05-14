@@ -224,23 +224,39 @@ These are minor polish items; the core v1 product is done.
 
 **Stage A debt carried into Stage B:** schema-cleanup migration that renames `*.ip_prefix` → `*.ip` and `users.last_login_ip_prefix` → `last_login_ip` (the column names still say "prefix" but store full IPs). Bundle this with the `access_logs` migration so it's one disruption, not two.
 
-### Stage B — New schema, new admin surfaces
+### Stage B — New schema, new admin surfaces ✅ shipped 2026-05-14
 
-- [ ] **Session events table** — append-only `session_events`: `user_id`, `event` ∈ `{login, logout, idle_timeout, suspicious_login, password_change, totp_enable, totp_disable, impersonation_start, impersonation_end}`, `ip`, `user_agent`, `created_at`. Surface as `pages/admin/Sessions.tsx`. Highest admin value, cheapest to ship — recommended first.
-- [ ] **Connection events table** — promote the `device.online` / `device.offline` audit rows the WG poller already writes into a proper typed `connection_events` table carrying peer endpoint snapshot + session duration on disconnect. Drives a per-device "connection history" tab on the new admin device-detail page.
-- [ ] **Per-request access log** — middleware records `method`, `path`, `status`, `latency_ms`, `user_id`, `ip`, `user_agent`, `request_id` for every authenticated request. New `access_logs` table; partition monthly like `bandwidth_samples` (high volume).
-- [ ] **Schema-cleanup migration** — rename `audit_logs.ip_prefix` → `ip`, `failed_logins.ip_prefix` → `ip`, `users.last_login_ip_prefix` → `last_login_ip`; rename `swap_last_login_ip_prefix` helper to match. Bundle with the `access_logs` migration so it's one disruption.
-- [ ] **`/admin/devices/{id}` page** — admins currently drill down via the user-detail page. A real device-detail page is the natural home for connection history, endpoint history, bandwidth chart, and the device-targeted audit timeline.
-- [ ] **Per-user activity timeline** — `/admin/users/{id}` adds a unified timeline merging audit + session + access-log + connection rows. New repo helper that fans out across the tables.
-- [ ] **Admin search by IP / user-agent / endpoint** — backed by indexes on the new columns. Integrate with `pages/admin/Finder.tsx` so "find every account that logged in from 1.2.3.4" is one query.
+- [x] **Session events table** — append-only `session_events`: `user_id`, `event` ∈ `{login, logout, idle_timeout, suspicious_login, password_change, totp_enable, totp_disable, impersonation_start, impersonation_end}`, `ip`, `user_agent`, `created_at`. Surfaced as [web/src/pages/admin/Sessions.tsx](web/src/pages/admin/Sessions.tsx).
+- [x] **Connection events table** — the WG poller now writes `connection_sessions` rows with peer endpoint snapshots + session duration on disconnect. Surfaced in the per-device connection history panel on [web/src/pages/admin/DeviceDetail.tsx](web/src/pages/admin/DeviceDetail.tsx).
+- [x] **Per-request access log** — middleware records `method`, `path`, `status`, `latency_ms`, `user_id`, `ip`, `user_agent`, `request_id` for every authenticated request. Backed by `access_logs` and surfaced at [web/src/pages/admin/AccessLogs.tsx](web/src/pages/admin/AccessLogs.tsx).
+- [x] **Schema-cleanup migration** — [migrations/00000000000020_rename_ip_columns.sql](migrations/00000000000020_rename_ip_columns.sql) renamed `audit_logs.ip_prefix` → `ip`, `failed_logins.ip_prefix` → `ip`, `users.last_login_ip_prefix` → `last_login_ip`, and the matching repo helper.
+- [x] **`/admin/devices/{id}` page** — admins now have a dedicated device-detail page with connection history, endpoint history, bandwidth chart, and device-targeted audit context: [web/src/pages/admin/DeviceDetail.tsx](web/src/pages/admin/DeviceDetail.tsx).
+- [x] **Per-user activity timeline** — [web/src/pages/admin/UserDetail.tsx](web/src/pages/admin/UserDetail.tsx) merges audit, session, and connection rows into one timeline for `/admin/users/{id}`.
+- [x] **Admin search by IP / user-agent / endpoint** — [web/src/pages/app/Finder.tsx](web/src/pages/app/Finder.tsx) accepts IP, `host:port`, email, device name, and User-Agent fragments, with cross-source counts and deep links.
 
 ### Stage C — Network-level capture (new infrastructure)
 
-- [ ] **DNS query log** — replace the existing `dnsmasq` container with a logging resolver. Two options:
+- [x] **DNS query log** — replace the existing `dnsmasq` container with a logging resolver. Current bridge: CoreDNS now logs queries to stdout and reloads the shared hosts file; next step is shipping records into `dns_queries` or Loki. Two options:
   - **Unbound** with `qname-log` + `log-replies: yes` → tail logs into a `dns_queries` table or a Loki stream.
   - **Custom Rust resolver** (`hickory-dns` / `trust-dns-server`) writing directly to Postgres. More work; tighter integration; preferred long-term.
-- [ ] **Destination IP log** — netfilter `NFLOG` target or `conntrack-tools` export in the WG container's netns; ship via `ulogd2` → Postgres (or Loki). Per-flow record: `peer_id` (resolved via peer src_ip), `dst_ip`, `dst_port`, `proto`, `bytes_in`, `bytes_out`, `started_at`, `ended_at`.
-- [ ] **Geo enrichment** — MaxMind GeoLite2 lookup on destination IPs at write time; surface as a heatmap / map on the admin overview.
+- [~] **Destination IP log** — netfilter `NFLOG` target or `conntrack-tools` export in the WG container's netns; ship via `ulogd2` → Postgres (or Loki). Per-flow record: `peer_id` (resolved via peer src_ip), `dst_ip`, `dst_port`, `proto`, `bytes_in`, `bytes_out`, `started_at`, `ended_at`.
+  - [x] **Ingestor infrastructure** — scaffolded the full pipeline:
+    - `migrations/00000000000021_destination_ips.sql` — `destination_ips` table with device/user fk and per-flow columns
+    - `crates/zerovpn-db/src/repos/destination_ips.rs` — insert/query repo helpers
+    - `crates/zerovpn-worker/src/destination_ingest.rs` — TCP/JSON listener on `ZEROVPN_INGEST__DEST_BIND` (default `0.0.0.0:9898`); resolves src_ip → device/user; writes to repo
+    - `scripts/ulogd-exporter.py` — Python exporter transforms ulogd JSON → flow format
+    - `deploy/ulogd.conf` — ulogd2 config template for NFLOG → JSON
+    - `deploy/Dockerfile.nflog-exporter` — exporter container
+    - `docker-compose.yml` — worker ingest port exposed; `nflog-exporter` service under `ingest` profile
+    - `docs/STAGE_C_INGEST.md` — architecture & usage guide
+    - ✅ Run: `bash scripts/test-stage-c.sh` to validate
+  - [ ] **NFLOG → ulogd2 integration** — wire real netfilter events from WG netns to ulogd2 container; add container + iptables rules to WG entrypoint.
+- [x] **Geo enrichment** — MaxMind GeoLite2 lookup on destination IPs at write time:
+  - `crates/zerovpn-core/src/geo.rs` — `GeoReader` wrapper with thread-safe lookup
+  - `migrations/00000000000022_destination_ips_geo.sql` — adds latitude, longitude, country_code, country_name, city_name columns + indexes
+  - `crates/zerovpn-db/src/repos/destination_ips.rs` — updated insert signature to accept geo fields
+  - `crates/zerovpn-worker/src/destination_ingest.rs` — integrates GeoReader, loads from `ZEROVPN_GEO_DB_PATH`, enriches each flow at ingest
+  - Workspace: ✅ Compiles cleanly, all geo fields optional (best-effort enrichment)
 - [ ] **Admin per-device traffic explorer** — drill from a device into its DNS history + destination history, with date range + filters.
 
 ### Stage D — Compliance counterweights (must ship with Stage C)

@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod error;
+pub mod geo;
 pub mod ids;
 pub mod models;
 

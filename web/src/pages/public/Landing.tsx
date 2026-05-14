@@ -14,74 +14,18 @@ import {
   CodeBlock,
   Eyebrow,
   Kbd,
-  LiveDot,
-  Pill,
-  Sparkline,
-  Wordmark,
-} from "@/components/swiss"
-import { LiveBackbone } from "@/components/topology/LiveBackbone"
-import { Button } from "@/components/ui/button"
-import { ping } from "@/lib/api"
-import { cardVariants, stagger } from "@/lib/motion"
-import { cn } from "@/lib/utils"
-
-/**
- * Editorial landing page.
- *
- * Layout rhythm: hero → numbers → personas → preview/feature/preview
- * sandwich → architecture → preview → deploy → security → compare →
- * roadmap → FAQ → CTA. Hairline rules give the Swiss bones; oversized
- * display type + asymmetric bento give the editorial feel.
- *
- * Motion:
- *  - Hero stagger-mounts on load.
- *  - Below-the-fold sections use `whileInView` so the cascade follows
- *    the user, not the page.
- *  - Hero has subtle ambient loops (drifting dots, blinking caret,
- *    counter shimmer) that disable themselves under `prefers-reduced-
- *    motion`.
- *  - Counters in the numbers strip animate up on first view.
- */
-export function LandingPage() {
-  const pingQ = useQuery({
-    queryKey: ["ping"],
-    queryFn: ping,
-    refetchInterval: 5000,
-  })
-
-  return (
-    <div className="bg-background text-foreground">
-      <LandingNav />
-      <Hero pingState={pingQ.status} pingTs={pingQ.data?.ts_ms as number | undefined} />
-      <NumbersStrip />
-      <Personas />
-      <PreviewDashboard />
-      <FeaturesBento />
-      <PreviewTopology />
-      <Architecture />
-      <PreviewDeviceDetail />
-      <Deploy />
-      <Security />
-      <Compare />
-      <Roadmap />
-      <FAQ />
-      <CTA />
-      <LandingFooter />
-    </div>
-  )
-}
-
-// ── Nav ───────────────────────────────────────────────────────────────
-
-function LandingNav() {
-  return (
-    <nav className="bg-background/85 sticky top-0 z-20 flex items-center gap-6 border-b px-6 py-4 backdrop-blur">
-      <Link to="/">
-        <Wordmark size={13} />
-      </Link>
-      <div className="text-muted-foreground ml-auto hidden items-center gap-6 font-mono text-xs md:flex">
-        {[
-          ["#features", "Features"],
+      <div className="border-border bg-background flex h-[260px] items-center justify-center border p-6 text-center sm:h-[320px] lg:h-[360px]">
+        <div className="max-w-[30ch]">
+          <div className="text-muted-foreground/70 font-mono text-[10px] uppercase">
+            Topology preview
+          </div>
+          <div className="font-heading mt-2 text-2xl tracking-[-0.02em]">
+            Live topology loads after sign-in.
+          </div>
+          <div className="text-muted-foreground mt-2 font-mono text-[11px]">
+            No synthetic graph data is rendered here.
+          </div>
+        </div>
           ["#architecture", "Architecture"],
           ["#deploy", "Deploy"],
           ["#security", "Security"],
@@ -481,8 +425,6 @@ function PreviewDashboard() {
 }
 
 function MockDashboard() {
-  const rxHistory = sineWave(32, 32, 7, 0.3)
-  const txHistory = sineWave(32, 28, 6, 0.55)
   return (
     <div className="border-border bg-background flex flex-col gap-4 border p-4">
       <div className="text-muted-foreground/70 flex items-center justify-between font-mono text-[10px] uppercase">
@@ -493,10 +435,10 @@ function MockDashboard() {
       </div>
       <div className="grid grid-cols-2 gap-0 border sm:grid-cols-4">
         {[
-          { l: "Devices · live", v: "4", f: "all active" },
-          { l: "TX · live", v: "182", u: "Mb/s", spark: txHistory, c: "var(--primary)" },
-          { l: "RX · live", v: "240", u: "Mb/s", spark: rxHistory, c: "var(--chart-1)" },
-          { l: "Hubs", v: "3 / 3", f: "reachable" },
+          { l: "Devices", v: "Live data" },
+          { l: "TX", v: "Streams in" },
+          { l: "RX", v: "Streams in" },
+          { l: "Hubs", v: "Connected" },
         ].map((k, i) => (
           <div
             key={k.l}
@@ -514,80 +456,27 @@ function MockDashboard() {
             </span>
             <span className="font-heading flex items-baseline gap-1 text-2xl tracking-[-0.02em]">
               {k.v}
-              {k.u && (
-                <span className="text-muted-foreground font-mono text-[10px]">{k.u}</span>
-              )}
             </span>
-            {k.spark && (
-              <div className="h-[22px]">
-                <Sparkline data={k.spark} color={k.c} />
-              </div>
-            )}
-            {k.f && (
-              <span className="text-muted-foreground/70 font-mono text-[9px]">
-                {k.f}
-              </span>
-            )}
           </div>
         ))}
       </div>
       <div className="border p-3">
         <div className="text-muted-foreground/70 mb-1 flex items-center justify-between font-mono text-[9px] uppercase">
           <span>Bandwidth · 24h · all devices</span>
-          <span>live</span>
+          <span>connected</span>
         </div>
-        <FauxDualChart rx={rxHistory} tx={txHistory} />
+        <div className="border-border flex h-[120px] items-center justify-center border font-mono text-[11px] text-muted-foreground">
+          Sign in to view live bandwidth charts.
+        </div>
       </div>
       <div className="flex flex-col gap-1.5 border p-3">
         <span className="text-muted-foreground/70 font-mono text-[9px] uppercase">
-          Recent activity · 4
+          Recent activity
         </span>
-        {[
-          { t: "00:12", d: "device.added · macbook-pro", tone: "ok" as const },
-          { t: "00:08", d: "device.online · pixel-8", tone: "info" as const },
-          { t: "00:04", d: "key.rotated · ipad", tone: "warn" as const },
-          { t: "00:01", d: "device.offline · nas", tone: "neutral" as const },
-        ].map((r) => (
-          <div
-            key={r.t}
-            className="flex items-baseline gap-3 font-mono text-[11px]"
-          >
-            <span className="text-muted-foreground/70 w-10">{r.t}</span>
-            <Pill tone={r.tone} dot={false}>
-              {r.d}
-            </Pill>
-          </div>
-        ))}
+        <div className="text-muted-foreground/70 font-mono text-[11px]">
+          Activity appears after sign-in.
+        </div>
       </div>
-    </div>
-  )
-}
-
-function FauxDualChart({ rx, tx }: { rx: number[]; tx: number[] }) {
-  return (
-    <div className="h-[120px]">
-      <svg
-        viewBox="0 0 100 60"
-        preserveAspectRatio="none"
-        style={{ width: "100%", height: "100%" }}
-      >
-        <path d={pathArea(rx, 100, 60)} fill="var(--chart-1)" opacity="0.15" />
-        <path
-          d={pathLine(rx, 100, 60)}
-          fill="none"
-          stroke="var(--chart-1)"
-          strokeWidth="1.2"
-          vectorEffect="non-scaling-stroke"
-        />
-        <path d={pathArea(tx, 100, 60)} fill="var(--primary)" opacity="0.15" />
-        <path
-          d={pathLine(tx, 100, 60)}
-          fill="none"
-          stroke="var(--primary)"
-          strokeWidth="1.2"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
     </div>
   )
 }
@@ -611,17 +500,15 @@ function FeaturesBento() {
           b="Worker → ZeroMQ → API → WebSocket. Tick-level samples written to a partitioned Postgres table and replayed on refresh, so the chart isn't empty when you reload."
           accent
         >
-          <div className="mt-6 grid grid-cols-2 gap-3">
-            <MiniStat label="latency" value="<200" unit="ms" />
-            <MiniStat label="tick rate" value="1" unit="Hz" />
-          </div>
-          <div className="mt-4 h-[80px]">
-            <Sparkline
-              data={sineWave(48, 30, 6, 0.4)}
-              color="var(--primary)"
-              kind="area"
-              height={80}
-            />
+          <div className="mt-6 grid grid-cols-2 gap-3 text-[11px] font-mono">
+            <div className="border-border border p-3">
+              <div className="text-muted-foreground/70 uppercase">latency</div>
+              <div className="mt-1 text-base text-foreground">Live</div>
+            </div>
+            <div className="border-border border p-3">
+              <div className="text-muted-foreground/70 uppercase">tick rate</div>
+              <div className="mt-1 text-base text-foreground">Streamed</div>
+            </div>
           </div>
         </BentoCard>
         <BentoCard
@@ -1052,84 +939,18 @@ function PreviewDeviceDetail() {
 
 function MockDeviceDetail() {
   return (
-    <div className="border-border bg-background flex flex-col gap-3 border p-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="flex flex-col">
-          <span className="text-muted-foreground/70 font-mono text-[9px] uppercase">
-            Devices · A8F1B2C0
-          </span>
-          <span className="font-heading mt-0.5 text-xl tracking-[-0.02em]">
-            macbook-pro-arvid
-          </span>
+    <div className="border-border bg-background flex h-[260px] items-center justify-center border p-6 text-center sm:h-[320px] lg:h-[360px]">
+      <div className="max-w-[34ch]">
+        <div className="text-muted-foreground/70 font-mono text-[10px] uppercase">
+          Device detail preview
         </div>
-        <Pill tone="ok">online</Pill>
-      </div>
-      <div className="grid grid-cols-2 gap-0 border sm:grid-cols-4">
-        {[
-          { l: "TX · live", v: "182 Mb/s" },
-          { l: "RX · live", v: "240 Mb/s" },
-          { l: "Total · 24h", v: "8.4 GB" },
-          { l: "Handshake", v: "12s ago" },
-        ].map((k, i) => (
-          <div
-            key={k.l}
-            className={cn(
-              "flex flex-col gap-0.5 p-2.5",
-              // 2×2 on mobile, 1×4 on sm+.
-              i % 2 === 0 && "border-r sm:border-r",
-              i < 2 && "border-b sm:border-b-0",
-              i === 2 && "sm:border-r",
-            )}
-          >
-            <span className="text-muted-foreground/70 font-mono text-[9px] uppercase">
-              {k.l}
-            </span>
-            <span className="font-heading text-base tracking-[-0.02em]">
-              {k.v}
-            </span>
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5 border p-3 font-mono text-[11px]">
-          <span className="text-muted-foreground/70 font-mono text-[9px] uppercase">
-            Configuration
-          </span>
-          <Row k="vpn ip" v="10.66.0.4" />
-          <Row k="endpoint" v="hub.example.com:51820" />
-          <Row k="allowed-ips" v="0.0.0.0/0" />
-          <Row k="dns" v="10.66.0.1" />
-          <Row k="dns name" v="laptop.vpn.local" />
+        <div className="font-heading mt-2 text-2xl tracking-[-0.02em]">
+          Device charts render from real samples after login.
         </div>
-        <div className="flex flex-col gap-1.5 border p-3 font-mono text-[11px]">
-          <span className="text-muted-foreground/70 font-mono text-[9px] uppercase">
-            Activity · last 5
-          </span>
-          {[
-            { t: "now", d: "device.online", tone: "ok" as const },
-            { t: "12m", d: "config.updated", tone: "info" as const },
-            { t: "1h", d: "key.rotated", tone: "warn" as const },
-            { t: "1d", d: "dns.added", tone: "info" as const },
-            { t: "3d", d: "device.created", tone: "neutral" as const },
-          ].map((r) => (
-            <div key={r.t} className="flex items-baseline gap-2">
-              <span className="text-muted-foreground/70 w-8">{r.t}</span>
-              <Pill tone={r.tone} dot={false}>
-                {r.d}
-              </Pill>
-            </div>
-          ))}
+        <div className="text-muted-foreground mt-2 font-mono text-[11px]">
+          No fake bandwidth or activity data is injected here.
         </div>
       </div>
-    </div>
-  )
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <span className="text-muted-foreground/70 uppercase">{k}</span>
-      <span className="text-foreground truncate">{v}</span>
     </div>
   )
 }
@@ -1657,31 +1478,3 @@ function ApiPill({ state, ts }: { state: string; ts?: number }) {
   )
 }
 
-// Synthetic data for the inline product previews. Deterministic — no
-// RNG so the SSR / first render matches subsequent client renders.
-function sineWave(n: number, base: number, amp: number, phase = 0): number[] {
-  const out: number[] = []
-  for (let i = 0; i < n; i++) {
-    const t = (i / n) * Math.PI * 4 + phase
-    out.push(Math.max(0, base + amp * Math.sin(t) + (amp * 0.4) * Math.cos(t * 2.3 + phase)))
-  }
-  return out
-}
-
-function pathLine(data: number[], w: number, h: number): string {
-  if (data.length === 0) return ""
-  const max = Math.max(...data, 1)
-  const min = Math.min(...data, 0)
-  const range = max - min || 1
-  return data
-    .map((v, i) => {
-      const x = (i / Math.max(1, data.length - 1)) * w
-      const y = h - ((v - min) / range) * (h - 2) - 1
-      return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`
-    })
-    .join(" ")
-}
-
-function pathArea(data: number[], w: number, h: number): string {
-  return `${pathLine(data, w, h)} L${w},${h} L0,${h} Z`
-}
