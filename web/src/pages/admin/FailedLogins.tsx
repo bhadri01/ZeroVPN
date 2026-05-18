@@ -84,9 +84,9 @@ export function FailedLoginsPage() {
               <tr>
                 <th className="w-[180px]">When</th>
                 <th>Email</th>
-                <th>Reason</th>
-                <th className="w-[150px]">IP</th>
-                <th>User-Agent</th>
+                <th className="hidden sm:table-cell">Reason</th>
+                <th className="hidden w-[150px] md:table-cell">IP</th>
+                <th className="hidden lg:table-cell">User-Agent</th>
               </tr>
             </thead>
             <tbody>
@@ -100,10 +100,10 @@ export function FailedLoginsPage() {
                       <span className="text-muted-foreground">(no user)</span>
                     )}
                   </td>
-                  <td>
+                  <td className="hidden sm:table-cell">
                     {reasonPill(row.reason)}
                   </td>
-                  <td className="font-mono text-xs tabular-nums">
+                  <td className="hidden font-mono text-xs tabular-nums md:table-cell">
                     {row.ip ? (
                       // Strip the `/32` or `/128` suffix for the table cell
                       // — the column type is INET so the API returns
@@ -114,7 +114,7 @@ export function FailedLoginsPage() {
                     )}
                   </td>
                   <td
-                    className="text-muted-foreground max-w-[420px] truncate font-mono text-[11px]"
+                    className="text-muted-foreground hidden max-w-[420px] truncate font-mono text-[11px] lg:table-cell"
                     title={row.user_agent ?? undefined}
                   >
                     {row.user_agent ?? (

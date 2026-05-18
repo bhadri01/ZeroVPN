@@ -45,13 +45,17 @@ interface LiveTopologyProps {
   userMap?: Map<string, { label: string }>
 }
 
-// Fixed vertical SVG-unit budget. The horizontal one is computed
-// per-render from the container's aspect ratio so the viewBox always
-// matches the actual painted area — `preserveAspectRatio` stays at
-// "meet" and we get no letterboxing AND no stretching.
-const H = 560
+// Baseline SVG-unit budget. Both dimensions are computed per-render
+// from the container's aspect ratio so the viewBox always matches the
+// actual painted area — `preserveAspectRatio` stays at "meet" and we
+// get no letterboxing AND no stretching. Floors keep the content area
+// large enough that the peer ring doesn't squash on tiny viewports.
+const DEFAULT_H = 560
 const DEFAULT_VB_W = 1000
-const HUB_Y = H / 2
+// Min content-area envelope. On portrait containers (taller than wide)
+// the canvas grows vertically past DEFAULT_H so the SVG fills the full
+// container height; on landscape it grows horizontally past
+// DEFAULT_VB_W as before.
 // 2-level tree geometry. Hub at the center; user-tier nodes orbit on
 // USER_RING; each user's devices orbit on a small ring of radius
 // PEER_FROM_USER around their user. The vertical squash factor stays
@@ -171,22 +175,37 @@ export function LiveTopology({
   const svgRef = useRef<SVGSVGElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
 
-  // Dynamic horizontal viewBox extent. We hold the vertical extent fixed
-  // (H) and stretch the horizontal one so `vbW / H === containerW /
-  // containerH`. With the viewBox matching the container's aspect, the
-  // default `preserveAspectRatio="xMidYMid meet"` neither letterboxes nor
+  // Dynamic viewBox extent. We compute BOTH dimensions per-render from
+  // the container's aspect so `vbW / vbH === containerW / containerH`.
+  // With the viewBox matching container aspect, the default
+  // `preserveAspectRatio="xMidYMid meet"` neither letterboxes nor
   // stretches — every SVG user-unit maps to the same number of CSS px on
-  // both axes, so circles stay circles at every screen size.
+  // both axes, so circles stay circles at every screen size AND the SVG
+  // fills the container in both dimensions (which matters on mobile
+  // portrait, where keeping H fixed used to leave huge vertical gaps).
+  //
+  // Strategy: pin whichever dimension is "long" to its DEFAULT, then
+  // grow the other dimension to match aspect. That keeps the content
+  // (USER_RING, PEER_FROM_USER) at a sensible scale relative to the
+  // canvas regardless of container shape.
   const [vbW, setVbW] = useState<number>(DEFAULT_VB_W)
+  const [vbH, setVbH] = useState<number>(DEFAULT_H)
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
     const update = () => {
       const r = el.getBoundingClientRect()
-      if (r.height > 0 && r.width > 0) {
-        // Floor at DEFAULT_VB_W so very narrow containers don't squash
-        // the peer ring against the hub.
-        setVbW(Math.max(DEFAULT_VB_W, Math.round((H * r.width) / r.height)))
+      if (r.height <= 0 || r.width <= 0) return
+      const containerAspect = r.width / r.height
+      const defaultAspect = DEFAULT_VB_W / DEFAULT_H
+      if (containerAspect >= defaultAspect) {
+        // Landscape (or close to it) — keep H at default, grow W to match.
+        setVbW(Math.round(DEFAULT_H * containerAspect))
+        setVbH(DEFAULT_H)
+      } else {
+        // Portrait — keep W at default, grow H to match.
+        setVbW(DEFAULT_VB_W)
+        setVbH(Math.round(DEFAULT_VB_W / containerAspect))
       }
     }
     update()
@@ -194,6 +213,10 @@ export function LiveTopology({
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // Derived hub centerline — re-computed whenever the canvas resizes so
+  // the hub + user-ring stay centered as vbH grows on portrait viewports.
+  const HUB_Y = vbH / 2
 
   const [view, setView] = useState<View>(INITIAL_VIEW)
   const dragRef = useRef<{ startX: number; startY: number; tx: number; ty: number } | null>(null)
@@ -284,9 +307,9 @@ export function LiveTopology({
     if (!svg) return { x: clientX, y: clientY }
     const rect = svg.getBoundingClientRect()
     const x = ((clientX - rect.left) / rect.width) * vbW
-    const y = ((clientY - rect.top) / rect.height) * H
+    const y = ((clientY - rect.top) / rect.height) * vbH
     return { x, y }
-  }, [vbW])
+  }, [vbW, vbH])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
@@ -378,7 +401,7 @@ export function LiveTopology({
       e.preventDefault()
       const rect = svg.getBoundingClientRect()
       const cx = ((e.clientX - rect.left) / rect.width) * vbW
-      const cy = ((e.clientY - rect.top) / rect.height) * H
+      const cy = ((e.clientY - rect.top) / rect.height) * vbH
       setView((v) => {
         const factor = Math.exp(-e.deltaY * 0.0015)
         const nextScale = clamp(v.scale * factor, MIN_SCALE, MAX_SCALE)
@@ -392,7 +415,7 @@ export function LiveTopology({
     }
     svg.addEventListener("wheel", onWheel, { passive: false })
     return () => svg.removeEventListener("wheel", onWheel)
-  }, [vbW])
+  }, [vbW, vbH])
 
   const zoom = (factor: number) => {
     setView((v) => {
@@ -400,7 +423,7 @@ export function LiveTopology({
       // Zoom around the SVG center to keep the action predictable when the
       // user hits the +/- buttons.
       const cx = vbW / 2
-      const cy = H / 2
+      const cy = vbH / 2
       const k = nextScale / v.scale
       return {
         tx: cx - (cx - v.tx) * k,
@@ -493,7 +516,7 @@ export function LiveTopology({
         peerCount: userDevices.length,
       }
     })
-  }, [userGroups, nodePositions, vbW, userMap, rates])
+  }, [userGroups, nodePositions, vbW, vbH, userMap, rates])
 
   const placed: LaidOutPeer[] = useMemo(() => {
     if (placedUsers.length === 0) return []
@@ -544,7 +567,7 @@ export function LiveTopology({
       })
     }
     return out
-  }, [placedUsers, userGroups, rates, nodePositions, vbW])
+  }, [placedUsers, userGroups, rates, nodePositions, vbW, vbH])
 
   // Hub position can also be overridden by drag. Default to canvas center.
   const hubOverride = nodePositions.get("__hub__")
@@ -576,7 +599,7 @@ export function LiveTopology({
         // default `xMidYMid meet` neither letterboxes (the old "fit"
         // problem) nor stretches axes (the previous `none` workaround that
         // turned circles into ovals).
-        viewBox={`0 0 ${vbW} ${H}`}
+        viewBox={`0 0 ${vbW} ${vbH}`}
         preserveAspectRatio="xMidYMid meet"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -605,7 +628,7 @@ export function LiveTopology({
             to the scene under pan/zoom */}
         <rect
           width={vbW}
-          height={H}
+          height={vbH}
           fill="url(#zv-livetopo-grid)"
           opacity="0.55"
           className="text-border"

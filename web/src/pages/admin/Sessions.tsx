@@ -201,9 +201,9 @@ export function SessionsPage() {
                     <th className="w-[180px]">When</th>
                     <th>User</th>
                     <th>Event</th>
-                    <th className="w-[140px]">IP</th>
-                    <th>User-Agent</th>
-                    <th>Metadata</th>
+                    <th className="hidden w-[140px] lg:table-cell">IP</th>
+                    <th className="hidden lg:table-cell">User-Agent</th>
+                    <th className="hidden md:table-cell">Metadata</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -231,7 +231,7 @@ export function SessionsPage() {
                           <Kbd>{row.event}</Kbd>
                         </button>
                       </td>
-                      <td className="font-mono text-xs tabular-nums">
+                      <td className="hidden font-mono text-xs tabular-nums lg:table-cell">
                         {row.ip ? (
                           <button
                             type="button"
@@ -249,14 +249,14 @@ export function SessionsPage() {
                         )}
                       </td>
                       <td
-                        className="text-muted-foreground max-w-[240px] truncate font-mono text-[11px]"
+                        className="text-muted-foreground hidden max-w-[240px] truncate font-mono text-[11px] lg:table-cell"
                         title={row.user_agent ?? undefined}
                       >
                         {row.user_agent ?? (
                           <span className="text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="max-w-[280px]">
+                      <td className="hidden max-w-[280px] md:table-cell">
                         {Object.keys(row.metadata).length > 0 ? (
                           <CopyableCode
                             value={JSON.stringify(row.metadata)}

@@ -217,11 +217,14 @@ export function DevicesPage() {
   //   + commit target. Commit fires on release via `commitGridDrop`.
   const [localOrder, setLocalOrder] = useState<PublicDevice[] | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
-  const [dropIndex, setDropIndex] = useState<number | null>(null)
   // Refs to each grid card's outer element. Drop detection iterates
   // these and tests cursor against bounding rects. Cleared on unmount
   // via the ref callback's `null` path.
   const gridCardRefs = useRef<Map<string, HTMLElement>>(new Map())
+  // Tile the cursor was last inside during a grid drag. Used to avoid
+  // re-firing the reorder every animation frame — only when the cursor
+  // crosses into a *different* tile do we splice the array.
+  const gridHoverRef = useRef<string | null>(null)
 
   const devices = devicesQ.data ?? []
 
@@ -317,8 +320,62 @@ export function DevicesPage() {
     setPeerFilter(new Set())
   }
 
-  // (drop commit now happens in `handleDragRelease` above — fires when
-  // each Reorder.Item's pointer drag ends. No more HTML5-drag glue.)
+  /** In-flight grid reorder. Fires on every motion `onDrag` frame —
+   *  if the cursor has crossed into a *different* sibling tile since
+   *  the last frame, splice the source into that tile's slot and
+   *  update `localOrder` so motion's layout animation slides siblings
+   *  out of the way (the same FLIP-driven feel the list view gets
+   *  from `Reorder.Item`).
+   *
+   *  This is the grid analogue of motion's built-in `Reorder.Group`,
+   *  but with 2D hit-testing: motion's Reorder is 1D and would never
+   *  fire on a pure-horizontal drag. Doing the splice mid-drag (not
+   *  on release) is what makes the drop *feel* right — by the time
+   *  the user lets go, the array is already in its target shape, so
+   *  release just snaps the drag transform to zero.
+   *
+   *  Commit (persistence) still happens on release via
+   *  `handleDragRelease`, exactly like the list view. */
+  const gridInflightReorder = (
+    sourceId: string,
+    point: { x: number; y: number },
+  ) => {
+    // Which sibling's bounding box is the cursor currently inside?
+    // Using a strict point-in-rect test (rather than "closest centre")
+    // means we only swap when the user has clearly dragged onto a tile
+    // — drags in the gutter leave the order alone, no jitter.
+    let hovered: string | null = null
+    for (const [id, el] of gridCardRefs.current) {
+      if (id === sourceId) continue
+      const r = el.getBoundingClientRect()
+      if (
+        point.x >= r.left &&
+        point.x <= r.right &&
+        point.y >= r.top &&
+        point.y <= r.bottom
+      ) {
+        hovered = id
+        break
+      }
+    }
+    if (hovered === gridHoverRef.current) return
+    gridHoverRef.current = hovered
+    if (!hovered) return
+
+    const visible = filtered.map((row) => row.d)
+    const sourceIdx = visible.findIndex((d) => d.id === sourceId)
+    const targetIdx = visible.findIndex((d) => d.id === hovered)
+    if (sourceIdx === -1 || targetIdx === -1 || sourceIdx === targetIdx) return
+
+    // Shift-insert: source takes target's slot, target + tail shift by
+    // one. Dragging forward, the removed source pulls the target's
+    // index down by one in the modified array.
+    const newVisible = [...visible]
+    const [moved] = newVisible.splice(sourceIdx, 1)
+    const insertAt = sourceIdx < targetIdx ? targetIdx - 1 : targetIdx
+    newVisible.splice(insertAt, 0, moved)
+    onReorderFiltered(newVisible)
+  }
 
   // Throughput summary scoped to the *currently filtered* device set,
   // and then narrowed again to devices that are actually `online` — an
@@ -575,22 +632,26 @@ export function DevicesPage() {
           </div>
         )}
         {visibleRows.length > 0 && viewMode === "grid" && (
-          <Reorder.Group
-            as="div"
-            axis="y"
-            values={visibleRows.map((r) => r.d)}
-            onReorder={onReorderFiltered}
-            className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
-            layoutScroll
-          >
+          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {visibleRows.map(({ d }) => (
-              <SortableGridCard
+              <GridDragCard
                 key={d.id}
                 device={d}
                 isDragging={dragId === d.id}
-                onDragStart={() => setDragId(d.id)}
-                onDragEnd={handleDragRelease}
+                onDragStart={() => {
+                  setDragId(d.id)
+                  gridHoverRef.current = null
+                }}
+                onDragInflight={(point) => gridInflightReorder(d.id, point)}
+                onDragEnd={() => {
+                  gridHoverRef.current = null
+                  handleDragRelease()
+                }}
                 onDoubleClick={() => navigate(`/app/devices/${d.id}`)}
+                registerRef={(el) => {
+                  if (el) gridCardRefs.current.set(d.id, el)
+                  else gridCardRefs.current.delete(d.id)
+                }}
                 actions={
                   <RowActions
                     device={d}
@@ -602,7 +663,7 @@ export function DevicesPage() {
                 }
               />
             ))}
-          </Reorder.Group>
+          </div>
         )}
       </Panel>
       </StaggerItem>
@@ -830,77 +891,74 @@ function SortableListRow({
 }
 
 /**
- * Grid-view card wrapped in a `Reorder.Item` with the same controls-
- * via-grip pattern as the list row.
+ * Grid-view card. Uses a plain `motion.div` (not `Reorder.Item`) so
+ * the user can drag freely in 2D. Motion's `Reorder` is 1D and would
+ * never reorder on a pure-horizontal drag.
  *
- * Earlier iterations of this component layered extras on top
- * (`drag` for 2D movement, custom spring transition, `whileDrag` scale,
- * `dragElastic`, `dragMomentum={false}`). Each one seemed reasonable in
- * isolation but they collectively fought motion's built-in layout
- * animations — `whileDrag.scale` resizes the dragged element's bounding
- * box every frame, which throws off the FLIP measurements siblings use
- * to slide into the freed slot, producing the choppy "jumps instead of
- * glides" the user reported. The list view doesn't add any of those
- * and animates smoothly; mirroring its config does the same for the
- * grid.
+ * The flow mirrors what `Reorder.Item` does internally, but with
+ * 2D hit-testing instead of 1D axis comparison:
+ *   1. Pointer-down on the grip arms motion's drag via `dragControls`.
+ *   2. `drag` lets the card translate freely in both axes.
+ *   3. On every drag frame, `onDragInflight` reports the cursor point
+ *      to the parent, which re-splices the array as the cursor crosses
+ *      into a different sibling's bounding box. Motion's `layout` then
+ *      slides siblings out of the way via FLIP.
+ *   4. On release, `dragSnapToOrigin` snaps the drag transform back to
+ *      0 — by that point the array is already in its final shape, so
+ *      the card lands cleanly in its new slot with no double animation.
  *
- * Trade-off: the card slides along the group's `axis="y"` only while
- * being dragged (no horizontal cursor-following). Reordering still
- * works because the CSS-grid auto-flow re-places cards as the array
- * shuffles — moving a card down past the row Y-center inserts it into
- * the next row's first slot, etc. Matching list-view smoothness was
- * the right call here.
+ * `registerRef` hands the DOM node up to the parent so it can iterate
+ * every card's bounding rect during drop targeting.
  */
-function SortableGridCard({
+function GridDragCard({
   device: d,
   isDragging,
   onDragStart,
+  onDragInflight,
   onDragEnd,
   onDoubleClick,
+  registerRef,
   actions,
 }: {
   device: PublicDevice
   isDragging: boolean
   onDragStart: () => void
+  onDragInflight: (point: { x: number; y: number }) => void
   onDragEnd: () => void
   onDoubleClick: () => void
+  registerRef: (el: HTMLDivElement | null) => void
   actions: React.ReactNode
 }) {
   const controls = useDragControls()
   return (
-    <Reorder.Item
-      value={d}
-      as="div"
-      // Free 2D movement during drag — without this the card is locked
-      // to the parent group's axis (y), so it can't follow the cursor
-      // horizontally across the grid's columns. The reorder LOGIC still
-      // uses the group's Y-axis to decide when to swap items, so the
-      // committed order stays sensible — only the in-flight drag is
-      // freed up to feel natural.
+    <motion.div
+      ref={registerRef}
+      layout
       drag
+      dragSnapToOrigin
+      dragMomentum={false}
       dragListener={false}
       dragControls={controls}
       onDragStart={onDragStart}
+      onDrag={(_, info) => onDragInflight(info.point)}
       onDragEnd={onDragEnd}
+      onDoubleClick={onDoubleClick}
       className="flex"
+      data-grid-tile={d.id}
       style={isDragging ? { zIndex: 2 } : undefined}
     >
       <DeviceCard
         device={d}
         className="w-full"
         data-dragging={isDragging ? "1" : undefined}
-        onDoubleClick={onDoubleClick}
         dragHandleProps={{
-          // Pointer-down on the card's grip arms motion's drag controls;
-          // dragListener={false} on the Reorder.Item means no other
-          // surface initiates a drag.
           onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
             controls.start(e)
           },
         }}
         actions={actions}
       />
-    </Reorder.Item>
+    </motion.div>
   )
 }
 

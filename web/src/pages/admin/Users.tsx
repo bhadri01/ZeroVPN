@@ -389,11 +389,11 @@ export function UsersPage() {
                       />
                     </th>
                     <th>Email</th>
-                    <th>Role</th>
+                    <th className="hidden md:table-cell">Role</th>
                     <th>Status</th>
-                    <th>2FA</th>
-                    <th className="zv-num">Devices</th>
-                    <th>Last login</th>
+                    <th className="hidden lg:table-cell">2FA</th>
+                    <th className="zv-num hidden md:table-cell">Devices</th>
+                    <th className="hidden lg:table-cell">Last login</th>
                     <th />
                   </tr>
                 </thead>
@@ -435,7 +435,7 @@ export function UsersPage() {
                             </span>
                           )}
                         </td>
-                        <td>
+                        <td className="hidden md:table-cell">
                           {u.role === "admin" ? (
                             <Pill tone="info" dot={false}>
                               admin
@@ -450,7 +450,7 @@ export function UsersPage() {
                             label={u.status.replace(/_/g, " ")}
                           />
                         </td>
-                        <td>
+                        <td className="hidden lg:table-cell">
                           {u.totp_enabled ? (
                             <Pill tone="ok" dot={false}>
                               on
@@ -461,8 +461,8 @@ export function UsersPage() {
                             </Pill>
                           )}
                         </td>
-                        <td className="zv-num">{u.device_count}</td>
-                        <td className="text-muted-foreground font-mono text-xs">
+                        <td className="zv-num hidden md:table-cell">{u.device_count}</td>
+                        <td className="text-muted-foreground hidden font-mono text-xs lg:table-cell">
                           <RelativeTime value={u.last_login_at} fallback="Never" />
                         </td>
                         <td className="zv-actions">

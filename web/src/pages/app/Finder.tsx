@@ -164,11 +164,22 @@ export function FinderPage() {
               .*
             </button>
             {input && (
-              <Button size="sm" variant="ghost" onClick={clear} title="Clear">
+              <Button
+                size="lg"
+                variant="ghost"
+                onClick={clear}
+                title="Clear"
+                className="h-9 w-9 px-0"
+              >
                 <IconX className="size-3.5" />
               </Button>
             )}
-            <Button size="sm" onClick={submit} disabled={input.trim().length === 0}>
+            <Button
+              size="lg"
+              onClick={submit}
+              disabled={input.trim().length === 0}
+              className="h-9"
+            >
               Search
             </Button>
           </div>

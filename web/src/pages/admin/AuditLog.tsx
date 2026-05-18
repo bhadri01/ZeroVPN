@@ -216,10 +216,10 @@ export function AuditLogPage() {
                     <th className="w-[180px]">When</th>
                     <th>Actor</th>
                     <th>Action</th>
-                    <th>Target</th>
-                    <th className="w-[140px]">IP</th>
-                    <th>User-Agent</th>
-                    <th>Metadata</th>
+                    <th className="hidden md:table-cell">Target</th>
+                    <th className="hidden w-[140px] lg:table-cell">IP</th>
+                    <th className="hidden lg:table-cell">User-Agent</th>
+                    <th className="hidden md:table-cell">Metadata</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -251,7 +251,7 @@ export function AuditLogPage() {
                           <Kbd>{row.action}</Kbd>
                         </button>
                       </td>
-                      <td className="font-mono text-xs">
+                      <td className="hidden font-mono text-xs md:table-cell">
                         {row.target_type ?? "—"}
                         {row.target_id && (
                           <button
@@ -264,7 +264,7 @@ export function AuditLogPage() {
                           </button>
                         )}
                       </td>
-                      <td className="font-mono text-xs tabular-nums">
+                      <td className="hidden font-mono text-xs tabular-nums lg:table-cell">
                         {row.ip ? (
                           row.ip.replace(/\/(32|128)$/, "")
                         ) : (
@@ -272,14 +272,14 @@ export function AuditLogPage() {
                         )}
                       </td>
                       <td
-                        className="text-muted-foreground max-w-[260px] truncate font-mono text-[11px]"
+                        className="text-muted-foreground hidden max-w-[260px] truncate font-mono text-[11px] lg:table-cell"
                         title={row.user_agent ?? undefined}
                       >
                         {row.user_agent ?? (
                           <span className="text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="max-w-[280px]">
+                      <td className="hidden max-w-[280px] md:table-cell">
                         <CopyableCode
                           value={JSON.stringify(row.metadata)}
                           truncate

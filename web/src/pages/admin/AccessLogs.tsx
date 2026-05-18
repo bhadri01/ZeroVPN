@@ -275,13 +275,13 @@ export function AccessLogsPage() {
                 <thead>
                   <tr>
                     <th className="w-[150px]">When</th>
-                    <th className="w-[70px]">Method</th>
+                    <th className="hidden w-[70px] sm:table-cell">Method</th>
                     <th>Path</th>
                     <th className="w-[80px]">Status</th>
-                    <th className="w-[80px] text-right">Latency</th>
-                    <th>User</th>
-                    <th className="w-[140px]">IP</th>
-                    <th>User-Agent</th>
+                    <th className="hidden w-[80px] text-right md:table-cell">Latency</th>
+                    <th className="hidden md:table-cell">User</th>
+                    <th className="hidden w-[140px] lg:table-cell">IP</th>
+                    <th className="hidden lg:table-cell">User-Agent</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -290,7 +290,7 @@ export function AccessLogsPage() {
                       <td className="text-muted-foreground font-mono text-xs">
                         <RelativeTime value={row.created_at} />
                       </td>
-                      <td>
+                      <td className="hidden sm:table-cell">
                         <button
                           type="button"
                           onClick={() =>
@@ -319,10 +319,10 @@ export function AccessLogsPage() {
                           {row.status}
                         </Pill>
                       </td>
-                      <td className="text-muted-foreground text-right font-mono text-xs tabular-nums">
+                      <td className="text-muted-foreground hidden text-right font-mono text-xs tabular-nums md:table-cell">
                         {row.latency_ms} ms
                       </td>
-                      <td className="text-muted-foreground font-mono text-xs">
+                      <td className="text-muted-foreground hidden font-mono text-xs md:table-cell">
                         {row.user_id ? (
                           <button
                             type="button"
@@ -336,7 +336,7 @@ export function AccessLogsPage() {
                           <span className="text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="font-mono text-xs tabular-nums">
+                      <td className="hidden font-mono text-xs tabular-nums lg:table-cell">
                         {row.ip ? (
                           <button
                             type="button"
@@ -354,7 +354,7 @@ export function AccessLogsPage() {
                         )}
                       </td>
                       <td
-                        className="text-muted-foreground max-w-[260px] truncate font-mono text-[11px]"
+                        className="text-muted-foreground hidden max-w-[260px] truncate font-mono text-[11px] lg:table-cell"
                         title={row.user_agent ?? undefined}
                       >
                         {row.user_agent ?? (
