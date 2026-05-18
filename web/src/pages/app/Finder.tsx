@@ -37,6 +37,11 @@ import {
 export function FinderPage() {
   const [input, setInput] = useState("")
   const [committed, setCommitted] = useState("")
+  // Regex mode: when on, we wrap the input as `/.../` before submit so
+  // the backend's detect_kind picks up "regex" and runs `~*` queries
+  // against IP / action / user-agent / email / endpoint columns. Mirrors
+  // the VS Code search affordance — a `.*` toggle next to the input.
+  const [regex, setRegex] = useState(false)
 
   // Empty committed = no fetch. Page renders a help card instead.
   const q = useQuery({
@@ -46,6 +51,16 @@ export function FinderPage() {
     placeholderData: (prev) => prev,
   })
 
+  // Wrap raw input for the backend. Regex mode auto-slashes when the
+  // user hasn't already done it themselves, so they can type a literal
+  // pattern like `10\.10\.0\..*` (or even the looser `10.10.0.*`) and
+  // hit Enter. If the value is already slash-wrapped we leave it.
+  const wrap = (v: string): string => {
+    if (!regex) return v
+    if (v.length >= 3 && v.startsWith("/") && v.endsWith("/")) return v
+    return `/${v}/`
+  }
+
   // Submit-on-Enter or button click; explicit so a slow query / typo
   // doesn't fire on every keystroke.
   const submit = () => {
@@ -54,7 +69,7 @@ export function FinderPage() {
       setCommitted("")
       return
     }
-    setCommitted(v)
+    setCommitted(wrap(v))
   }
 
   // Clear the input + the committed query together so the help card
@@ -68,9 +83,27 @@ export function FinderPage() {
   // not used yet, but cheap to wire so future "shareable result URLs"
   // (?q=…) just need the search-params plumbing.
   useEffect(() => {
-    if (committed && committed !== input) setInput(committed)
+    if (!committed) return
+    // Unwrap `/.../` for display purposes so the input shows what the
+    // user typed, not what we sent.
+    const display =
+      committed.length >= 3 &&
+      committed.startsWith("/") &&
+      committed.endsWith("/")
+        ? committed.slice(1, -1)
+        : committed
+    if (display !== input) setInput(display)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [committed])
+
+  // Re-run the search when the regex toggle flips and there's a live
+  // query — otherwise toggling looks broken (the button changes but
+  // results don't update until you press Enter again).
+  useEffect(() => {
+    if (input.trim().length === 0) return
+    setCommitted(wrap(input.trim()))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regex])
 
   return (
     <PageStagger>
@@ -93,11 +126,43 @@ export function FinderPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") submit()
                 }}
-                placeholder="203.0.113.42 · 203.0.113.42:51820 · curl/8 · alice@example.com · laptop-pro"
+                placeholder={
+                  regex
+                    ? "10\\.10\\.0\\..*  ·  curl|wget|python  ·  ^api\\/v1\\/(login|register)$"
+                    : "203.0.113.42 · 203.0.113.42:51820 · curl/8 · alice@example.com · laptop-pro"
+                }
                 className="h-9 pl-9 font-mono text-sm"
                 autoFocus
               />
+              {regex && (
+                <Pill
+                  tone="info"
+                  dot={false}
+                  className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2"
+                >
+                  regex
+                </Pill>
+              )}
             </div>
+            <button
+              type="button"
+              onClick={() => setRegex((r) => !r)}
+              aria-pressed={regex}
+              aria-label="Toggle regex mode"
+              title={
+                regex
+                  ? "Regex mode — input is matched as a POSIX regex"
+                  : "Plain mode — click to enable regex (matches against IP, user-agent, endpoint, etc.)"
+              }
+              className={
+                "border-border focus-visible:ring-ring inline-flex h-9 w-9 shrink-0 items-center justify-center border font-mono text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-1 " +
+                (regex
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:border-foreground hover:text-foreground")
+              }
+            >
+              .*
+            </button>
             {input && (
               <Button size="sm" variant="ghost" onClick={clear} title="Clear">
                 <IconX className="size-3.5" />
@@ -154,6 +219,17 @@ function FinderHelp() {
           <Kbd>curl/8</Kbd> · <Kbd>python-requests</Kbd> — User-Agent
           substring across audit / failed-login / session / access-log
           tables.
+        </li>
+        <li>
+          <Kbd>.*</Kbd> button (right of the input) — flip to regex mode.
+          POSIX regex, case-insensitive, matched against user-agent /
+          action / path / email / device name / IP / WG endpoint. With
+          regex on, just type the pattern — no slashes needed: e.g.{" "}
+          <Kbd>10\.10\.0\..*</Kbd> (every IP in 10.10.0.0/24),{" "}
+          <Kbd>curl|wget|python</Kbd>,{" "}
+          <Kbd>^api/v1/(login|register)$</Kbd>. Max 200 chars; invalid
+          regex returns a 422. You can also type the slashed form
+          directly without toggling: <Kbd>{"/pattern/"}</Kbd>.
         </li>
       </ul>
     </div>

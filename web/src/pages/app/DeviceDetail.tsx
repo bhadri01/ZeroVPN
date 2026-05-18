@@ -62,6 +62,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import {
@@ -1786,52 +1794,61 @@ function PeerConfigDialog({
 
   const downloadNow = () => downloadConfig(peerName, effectiveConfig)
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[680px]">
-        <DialogHeader>
-          <DialogTitle>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex flex-col gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl"
+      >
+        <SheetHeader className="border-border border-b p-4 pr-12">
+          <SheetTitle>
             <Eyebrow>
-              Peer configuration · <span className="text-foreground">{peerName}</span>
+              Peer configuration ·{" "}
+              <span className="text-foreground">{peerName}</span>
             </Eyebrow>
-          </DialogTitle>
-          <DialogDescription>
+          </SheetTitle>
+          <SheetDescription>
             Per-OS install steps below. The same wg-conf works for every
             platform — pick whichever has the smoothest hand-off for the
             device you're setting up.
-          </DialogDescription>
-        </DialogHeader>
+          </SheetDescription>
+        </SheetHeader>
 
-        {/* Banner — explicit about what config the user is seeing.
-            Stored-key + loading: muted "loading" pill.
-            Stored-key + error: destructive pill, re-issue offered.
-            No stored key AND nothing rotated in yet: full call-to-action;
-            the tabs + download below are hidden so the dialog reads as a
-            single "re-issue to get a working config" prompt instead of
-            offering a placeholder file that wouldn't actually connect. */}
-        {hasWorkingConfig ? null : loadingReal ? (
-          <div className="border-border bg-muted/40 text-muted-foreground border px-3 py-2 font-mono text-[11px]">
-            Loading server-stored config…
-          </div>
-        ) : privateKeyStored && confQ.isError ? (
-          <div className="border-destructive/40 bg-destructive/5 text-destructive border px-3 py-2 font-mono text-[11px]">
-            Couldn't fetch the stored config. Re-issue keys for a fresh
-            one.
-          </div>
-        ) : (
-          <div className="border-border bg-muted/30 px-3 py-2 font-mono text-[11px] leading-relaxed">
-            <span className="text-foreground font-medium">
-              Private key isn't stored server-side.
-            </span>{" "}
-            We can't show you a working configuration — click{" "}
-            <strong className="text-foreground">Re-issue keys</strong> to
-            generate a fresh keypair you can save. The old config will
-            stop working immediately.
-          </div>
-        )}
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
+          {/* Banner — explicit about what config the user is seeing.
+              Stored-key + loading: muted "loading" pill.
+              Stored-key + error: destructive pill, re-issue offered.
+              No stored key AND nothing rotated in yet: full call-to-action;
+              the tabs + download below are hidden so the sheet reads as a
+              single "re-issue to get a working config" prompt instead of
+              offering a placeholder file that wouldn't actually connect. */}
+          {hasWorkingConfig ? null : loadingReal ? (
+            <div className="border-border bg-muted/40 text-muted-foreground border px-3 py-2 font-mono text-[11px]">
+              Loading server-stored config…
+            </div>
+          ) : privateKeyStored && confQ.isError ? (
+            <div className="border-destructive/40 bg-destructive/5 text-destructive border px-3 py-2 font-mono text-[11px]">
+              Couldn't fetch the stored config. Re-issue keys for a fresh
+              one.
+            </div>
+          ) : (
+            <div className="border-border bg-muted/30 px-3 py-2 font-mono text-[11px] leading-relaxed">
+              <span className="text-foreground font-medium">
+                Private key isn't stored server-side.
+              </span>{" "}
+              We can't show you a working configuration — click{" "}
+              <strong className="text-foreground">Re-issue keys</strong>{" "}
+              to generate a fresh keypair you can save. The old config
+              will stop working immediately.
+            </div>
+          )}
 
-        {hasWorkingConfig && (
-        <Tabs defaultValue={initialTab}>
-          <TabsList className="grid grid-cols-5">
+          {hasWorkingConfig && (
+          <Tabs defaultValue={initialTab} className="flex min-h-0 flex-1 flex-col">
+          <TabsList className="grid !h-auto grid-cols-3 gap-1 sm:!h-8 sm:grid-cols-5 sm:gap-0">
+            {/* `!h-auto` overrides the TabsList variant's `h-8` (which
+                pins the list to one row, squashing both rows on mobile)
+                while keeping the single-row 32px height on sm+. Row gap
+                gives the wrapped (Android / iOS) row breathing room. */}
             <TabsTrigger value="linux">
               <IconTerminal2 size={14} className="mr-1.5" />
               Linux
@@ -1854,7 +1871,15 @@ function PeerConfigDialog({
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="linux" className="mt-3 space-y-3">
+          {/* Linux / Windows: ConfigBlock sits between Step rows, so we
+              can't flex-grow it (it would push later steps off-screen).
+              Use space-y-3 + overflow-y-auto on the panel itself so the
+              tab content scrolls vertically when there are more steps
+              than viewport. */}
+          <TabsContent
+            value="linux"
+            className="mt-3 min-h-0 space-y-3 overflow-y-auto"
+          >
             <Step
               n={1}
               text="Create the configuration file"
@@ -1874,7 +1899,10 @@ function PeerConfigDialog({
             />
           </TabsContent>
 
-          <TabsContent value="windows" className="mt-3 space-y-3">
+          <TabsContent
+            value="windows"
+            className="mt-3 min-h-0 space-y-3 overflow-y-auto"
+          >
             <Step n={1} text={`Save the config below as ${peerName}.conf`} />
             <ConfigBlock value={effectiveConfig} />
             <p className="text-muted-foreground font-mono text-[11px] leading-relaxed">
@@ -1883,7 +1911,13 @@ function PeerConfigDialog({
             </p>
           </TabsContent>
 
-          <TabsContent value="macos" className="mt-3 space-y-3">
+          {/* macOS / Android / iOS: ConfigBlock is the last child, so we
+              flex-grow it via the `grow` prop. The TabsContent becomes a
+              flex column so flex-1 on the block propagates. */}
+          <TabsContent
+            value="macos"
+            className="mt-3 flex min-h-0 flex-1 flex-col gap-3"
+          >
             <p className="text-muted-foreground font-mono text-[11px] leading-relaxed">
               For the GUI app from the App Store, save the config and use
               "Import tunnel(s) from file". For the CLI (Homebrew
@@ -1899,10 +1933,13 @@ function PeerConfigDialog({
               text="Paste the config and bring it up"
               command={`sudo wg-quick up ${peerName}`}
             />
-            <ConfigBlock value={effectiveConfig} />
+            <ConfigBlock value={effectiveConfig} grow />
           </TabsContent>
 
-          <TabsContent value="android" className="mt-3 space-y-3">
+          <TabsContent
+            value="android"
+            className="mt-3 flex min-h-0 flex-1 flex-col gap-3"
+          >
             <MobileQrSlot
               qrSvg={realQrSvg}
               loading={loadingReal}
@@ -1914,10 +1951,13 @@ function PeerConfigDialog({
               → "Scan from QR code" and point it at the QR above. Or use
               "Create from file or archive" with the .conf below.
             </p>
-            <ConfigBlock value={effectiveConfig} />
+            <ConfigBlock value={effectiveConfig} grow />
           </TabsContent>
 
-          <TabsContent value="ios" className="mt-3 space-y-3">
+          <TabsContent
+            value="ios"
+            className="mt-3 flex min-h-0 flex-1 flex-col gap-3"
+          >
             <MobileQrSlot
               qrSvg={realQrSvg}
               loading={loadingReal}
@@ -1929,12 +1969,13 @@ function PeerConfigDialog({
               <strong>+</strong> → "Create from QR code" and point the
               camera at the QR above.
             </p>
-            <ConfigBlock value={effectiveConfig} />
+            <ConfigBlock value={effectiveConfig} grow />
           </TabsContent>
-        </Tabs>
-        )}
+          </Tabs>
+          )}
+        </div>
 
-        <DialogFooter className="mt-3 flex-wrap gap-2">
+        <SheetFooter className="border-border mt-0 flex flex-row flex-wrap justify-end gap-2 border-t p-4">
           {/* Download is only meaningful once we have a real config —
               without a valid private key the .conf wouldn't connect. */}
           {hasWorkingConfig && (
@@ -1957,9 +1998,9 @@ function PeerConfigDialog({
             <IconRefresh size={14} />
             {reissuing ? "Rotating…" : "Re-issue keys"}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -1992,9 +2033,26 @@ function Step({
   )
 }
 
-function ConfigBlock({ value }: { value: string }) {
+function ConfigBlock({
+  value,
+  grow = false,
+}: {
+  value: string
+  /** When the ConfigBlock is the last child of its tab panel (iOS /
+   *  Android / macOS), flex-grow it so the wg-conf preview absorbs the
+   *  remaining sheet height — otherwise admins waste a third of the
+   *  sheet on empty space below the box. Tabs where the block sits
+   *  between Steps (Linux / Windows) leave `grow` off and get a fixed
+   *  max-h, since stretching it there would push later steps off-screen. */
+  grow?: boolean
+}) {
   return (
-    <div className="max-h-[260px] overflow-y-auto">
+    <div
+      className={cn(
+        "overflow-y-auto",
+        grow ? "min-h-[160px] flex-1" : "max-h-[160px] sm:max-h-[220px]",
+      )}
+    >
       <CopyableCode value={value} multiline />
     </div>
   )

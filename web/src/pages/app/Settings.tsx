@@ -196,7 +196,7 @@ export function SettingsPage() {
           </ul>
         </aside>
 
-        <section className="flex flex-col gap-6">
+        <section className="flex min-w-0 flex-col gap-6">
           {/* Title + body live inside the same motion.div so they
               transition as one unit when the active section changes.
               Splitting them — title outside, body inside AnimatePresence

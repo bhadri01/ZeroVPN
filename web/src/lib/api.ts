@@ -1066,8 +1066,9 @@ export interface FinderDeviceMatch {
 export interface FinderResponse {
   query: string
   /** Detected query kind. `"ip"` for a bare host address, `"endpoint"`
-   *  for `host:port`, `"text"` otherwise. */
-  kind: "ip" | "endpoint" | "text"
+   *  for `host:port`, `"regex"` for a `/pattern/` POSIX regex,
+   *  `"text"` otherwise. */
+  kind: "ip" | "endpoint" | "regex" | "text"
   counts: FinderCounts
   users: FinderUserMatch[]
   devices: FinderDeviceMatch[]

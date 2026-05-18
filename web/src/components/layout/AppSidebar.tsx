@@ -67,7 +67,7 @@ const ADMIN: NavEntry[] = [
 
 export function AppSidebar() {
   const user = useAuth((s) => s.user)
-  const { state } = useSidebar()
+  const { state, isMobile, setOpenMobile } = useSidebar()
   const collapsed = state === "collapsed"
 
   return (
@@ -90,6 +90,9 @@ export function AppSidebar() {
       >
         <Link
           to="/app"
+          onClick={() => {
+            if (isMobile) setOpenMobile(false)
+          }}
           className="flex h-12 items-center justify-center font-mono text-xs font-medium tracking-[0.04em]"
           aria-label="ZeroVPN"
         >
@@ -131,6 +134,14 @@ export function AppSidebar() {
 
 function NavList({ entries }: { entries: NavEntry[] }) {
   const location = useLocation()
+  // On mobile the sidebar renders as a Sheet (drawer). Tapping a nav
+  // item navigates but leaves the drawer covering the destination page,
+  // forcing a manual second tap to close. Auto-dismiss the drawer on
+  // navigation — only on mobile, since desktop keeps the rail visible.
+  const { isMobile, setOpenMobile } = useSidebar()
+  const closeIfMobile = () => {
+    if (isMobile) setOpenMobile(false)
+  }
   return (
     <SidebarMenu>
       {entries.map((entry) => {
@@ -150,7 +161,7 @@ function NavList({ entries }: { entries: NavEntry[] }) {
                   "before:bg-primary before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:content-['']",
               )}
             >
-              <NavLink to={entry.to} end={entry.end}>
+              <NavLink to={entry.to} end={entry.end} onClick={closeIfMobile}>
                 <Icon className="size-4" />
                 <span>{entry.label}</span>
                 {entry.k && (

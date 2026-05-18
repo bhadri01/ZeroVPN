@@ -45,7 +45,7 @@ export function TopologyPage() {
           title="Live topology"
           sub={`${devices.length} ${devices.length === 1 ? "device" : "devices"}`}
           right={<LiveIndicator />}
-          bodyClassName="!p-0 !h-[calc(100vh-220px)] !min-h-[480px] !flex-none relative overflow-hidden"
+          bodyClassName="relative overflow-hidden !flex-none !p-0 !min-h-[360px] sm:!min-h-[480px] !h-[calc(100svh-180px)] sm:!h-[calc(100svh-220px)]"
         >
           <LiveTopology
             devices={devices}

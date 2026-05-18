@@ -2403,8 +2403,9 @@ pub struct FinderResponse {
     /// trusting the URL bar.
     pub query: String,
     /// Detected query kind. `"ip"` for a bare host address, `"endpoint"`
-    /// for `host:port`, `"text"` otherwise. The frontend uses this to
-    /// decide which result groups to show prominently.
+    /// for `host:port`, `"regex"` for a `/pattern/` POSIX regex,
+    /// `"text"` otherwise. The frontend uses this to decide which
+    /// result groups to show prominently.
     pub kind: &'static str,
     pub counts: FinderCounts,
     pub users: Vec<FinderUserMatch>,
@@ -2412,6 +2413,11 @@ pub struct FinderResponse {
 }
 
 fn detect_kind(q: &str) -> &'static str {
+    // Regex: `/pattern/`. Reject the empty-body form so plain `//`
+    // doesn't get parsed as a wildcard regex.
+    if q.len() >= 3 && q.starts_with('/') && q.ends_with('/') {
+        return "regex";
+    }
     // `host:port` — bracketed v6 or `1.2.3.4:51820`. Heuristic: ends
     // with `:digits` and the front parses as an address.
     if let Some(colon) = q.rfind(':') {
@@ -2429,6 +2435,12 @@ fn detect_kind(q: &str) -> &'static str {
     }
     "text"
 }
+
+/// Cap regex length to bound the search the database has to do. POSIX
+/// regex on Postgres uses a backtracking engine, so a maliciously
+/// crafted pattern can pin a CPU; 200 chars is plenty for legitimate
+/// admin queries and keeps the worst case bounded.
+const FINDER_REGEX_MAX_LEN: usize = 200;
 
 #[utoipa::path(
     get,
@@ -2497,6 +2509,28 @@ ip: crate::routes::auth::client_ip(&headers),
     } else {
         None
     };
+    // Regex body — the inner pattern between the leading and trailing
+    // `/`. Validated here with Rust's `regex` crate (linear-time, fails
+    // fast) before being handed to Postgres `~*` so an invalid pattern
+    // becomes a 422 instead of a 500. Bounded length too — see
+    // FINDER_REGEX_MAX_LEN.
+    let regex_pat: Option<String> = if kind == "regex" {
+        let body = &q_trim[1..q_trim.len() - 1];
+        if body.is_empty() {
+            return Err(ApiError::Validation("empty regex".into()));
+        }
+        if body.len() > FINDER_REGEX_MAX_LEN {
+            return Err(ApiError::Validation(format!(
+                "regex too long (max {FINDER_REGEX_MAX_LEN} chars)"
+            )));
+        }
+        if let Err(e) = regex::Regex::new(body) {
+            return Err(ApiError::Validation(format!("invalid regex: {e}")));
+        }
+        Some(body.to_string())
+    } else {
+        None
+    };
 
     // ── Count queries ────────────────────────────────────────────────
     // Each counts rows that match the query in its most useful shape:
@@ -2523,6 +2557,18 @@ ip: crate::routes::auth::client_ip(&headers),
             .await?;
             n
         }
+        "regex" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM audit_logs
+                  WHERE user_agent ~* $1
+                     OR action      ~* $1
+                     OR host(ip)    ~* $1",
+            )
+            .bind(regex_pat.as_deref().unwrap_or(""))
+            .fetch_one(pool)
+            .await?;
+            n
+        }
         _ => 0,
     };
 
@@ -2540,6 +2586,18 @@ ip: crate::routes::auth::client_ip(&headers),
                 "SELECT COUNT(*)::BIGINT FROM failed_logins WHERE user_agent ILIKE $1",
             )
             .bind(&like_pat)
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        "regex" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM failed_logins
+                  WHERE user_agent             ~* $1
+                     OR email_attempted::TEXT  ~* $1
+                     OR host(ip)               ~* $1",
+            )
+            .bind(regex_pat.as_deref().unwrap_or(""))
             .fetch_one(pool)
             .await?;
             n
@@ -2565,6 +2623,17 @@ ip: crate::routes::auth::client_ip(&headers),
             .await?;
             n
         }
+        "regex" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM session_events
+                  WHERE user_agent ~* $1
+                     OR host(ip)    ~* $1",
+            )
+            .bind(regex_pat.as_deref().unwrap_or(""))
+            .fetch_one(pool)
+            .await?;
+            n
+        }
         _ => 0,
     };
 
@@ -2582,6 +2651,18 @@ ip: crate::routes::auth::client_ip(&headers),
                 "SELECT COUNT(*)::BIGINT FROM access_logs WHERE user_agent ILIKE $1",
             )
             .bind(&like_pat)
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        "regex" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM access_logs
+                  WHERE user_agent ~* $1
+                     OR path        ~* $1
+                     OR host(ip)    ~* $1",
+            )
+            .bind(regex_pat.as_deref().unwrap_or(""))
             .fetch_one(pool)
             .await?;
             n
@@ -2608,6 +2689,15 @@ ip: crate::routes::auth::client_ip(&headers),
             .await?;
             n
         }
+        "regex" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM peer_endpoint_history WHERE endpoint ~* $1",
+            )
+            .bind(regex_pat.as_deref().unwrap_or(""))
+            .fetch_one(pool)
+            .await?;
+            n
+        }
         _ => 0,
     };
 
@@ -2630,6 +2720,17 @@ ip: crate::routes::auth::client_ip(&headers),
                      OR peer_endpoint_at_end   LIKE $1",
             )
             .bind(endpoint_prefix_pat.as_deref().unwrap_or(""))
+            .fetch_one(pool)
+            .await?;
+            n
+        }
+        "regex" => {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*)::BIGINT FROM connection_sessions
+                  WHERE peer_endpoint_at_start ~* $1
+                     OR peer_endpoint_at_end   ~* $1",
+            )
+            .bind(regex_pat.as_deref().unwrap_or(""))
             .fetch_one(pool)
             .await?;
             n
@@ -2681,6 +2782,24 @@ ip: crate::routes::auth::client_ip(&headers),
                 });
             }
         }
+        "regex" => {
+            let rows: Vec<(Uuid, String)> = sqlx::query_as(
+                r#"SELECT id, email::TEXT AS email FROM users
+                    WHERE email::TEXT ~* $1
+                    ORDER BY created_at DESC
+                    LIMIT 10"#,
+            )
+            .bind(regex_pat.as_deref().unwrap_or(""))
+            .fetch_all(pool)
+            .await?;
+            for (id, email) in rows {
+                users.push(FinderUserMatch {
+                    id,
+                    email,
+                    matched_on: "email",
+                });
+            }
+        }
         _ => {}
     }
 
@@ -2715,6 +2834,17 @@ ip: crate::routes::auth::client_ip(&headers),
             .bind(&q_trim)
             .fetch_all(pool)
             .await?,
+            "regex" => sqlx::query_as(
+                r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
+                     FROM devices
+                    WHERE status <> 'revoked'
+                      AND (name ~* $1 OR last_peer_endpoint ~* $1)
+                    ORDER BY created_at DESC
+                    LIMIT 10"#,
+            )
+            .bind(regex_pat.as_deref().unwrap_or(""))
+            .fetch_all(pool)
+            .await?,
             _ => sqlx::query_as(
                 r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
                      FROM devices
@@ -2727,6 +2857,7 @@ ip: crate::routes::auth::client_ip(&headers),
             .await?,
         };
         let bare_ip = q_trim.clone();
+        let regex_body = regex_pat.clone();
         for (id, user_id, name, allocated_ip, last_peer_endpoint) in rows {
             let matched_on: &'static str = match kind {
                 "endpoint" => "last_peer_endpoint",
@@ -2739,6 +2870,20 @@ ip: crate::routes::auth::client_ip(&headers),
                     } else {
                         "allocated_ip"
                     }
+                }
+                "regex" => {
+                    // Re-evaluate which axis matched so the UI can show
+                    // "last_peer_endpoint" vs "name". The pattern is
+                    // already known-valid (we compiled it above).
+                    let re = regex_body
+                        .as_deref()
+                        .and_then(|p| regex::Regex::new(&format!("(?i){p}")).ok());
+                    let ep_hit = re.as_ref().is_some_and(|re| {
+                        last_peer_endpoint
+                            .as_deref()
+                            .is_some_and(|e| re.is_match(e))
+                    });
+                    if ep_hit { "last_peer_endpoint" } else { "name" }
                 }
                 _ => "name",
             };

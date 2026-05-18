@@ -18,31 +18,146 @@ export function Logomark({
     <svg
       width={size}
       height={size}
-      viewBox="0 0 18 18"
+      viewBox="0 0 20 20"
       fill="none"
       className={cn("shrink-0", className)}
       aria-hidden
     >
-      <rect
-        x="1.5"
-        y="1.5"
-        width="15"
-        height="15"
-        rx="0"
-        stroke="currentColor"
-        strokeWidth="1.25"
-      />
-      <line x1="5" y1="1.5" x2="5" y2="16.5" stroke="currentColor" strokeWidth="1" />
-      <line x1="13" y1="1.5" x2="13" y2="16.5" stroke="currentColor" strokeWidth="1" />
       <line
-        x1="1.5"
-        y1="14.5"
-        x2="16.5"
-        y2="3.5"
+        x1="1"
+        y1="10"
+        x2="5.5"
+        y2="10"
         stroke="currentColor"
-        strokeWidth="1.25"
+        strokeWidth="1.5"
+        strokeLinecap="round"
       />
+      <line
+        x1="14.5"
+        y1="10"
+        x2="19"
+        y2="10"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <circle
+        cx="10"
+        cy="10"
+        r="4.25"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <circle cx="10" cy="10" r="1.6" fill="var(--primary)" />
     </svg>
+  )
+}
+
+/** Full-page boot loader. Uses the Logomark geometry but animates the
+ *  primary-color core + an expanding halo via SMIL so it works without any
+ *  JS animation lib and isn't gated by `prefers-reduced-motion` framework
+ *  hooks. Drop in anywhere a Suspense fallback or auth-bootstrap blank
+ *  screen would otherwise render. */
+export function LogoLoader({
+  size = 56,
+  caption = "booting",
+  className,
+}: {
+  size?: number
+  caption?: string
+  className?: string
+}) {
+  return (
+    <div
+      className={cn(
+        "text-foreground flex min-h-svh flex-col items-center justify-center gap-4",
+        className,
+      )}
+      role="status"
+      aria-live="polite"
+    >
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 20 20"
+        fill="none"
+        className="shrink-0"
+        aria-hidden
+      >
+        <line
+          x1="1"
+          y1="10"
+          x2="5.5"
+          y2="10"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+        <line
+          x1="14.5"
+          y1="10"
+          x2="19"
+          y2="10"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+        <circle
+          cx="10"
+          cy="10"
+          r="4.25"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+        {/* expanding halo — fades as it grows past the ring */}
+        <circle
+          cx="10"
+          cy="10"
+          r="4.25"
+          fill="none"
+          stroke="var(--primary)"
+          strokeWidth="1.25"
+          opacity="0"
+        >
+          <animate
+            attributeName="r"
+            values="4.25;7;9"
+            dur="1.8s"
+            repeatCount="indefinite"
+          />
+          <animate
+            attributeName="opacity"
+            values="0.55;0.2;0"
+            dur="1.8s"
+            repeatCount="indefinite"
+          />
+        </circle>
+        {/* pulsing core — the live handshake */}
+        <circle cx="10" cy="10" r="1.6" fill="var(--primary)">
+          <animate
+            attributeName="r"
+            values="1.6;2.4;1.6"
+            dur="1.4s"
+            repeatCount="indefinite"
+          />
+          <animate
+            attributeName="opacity"
+            values="1;0.5;1"
+            dur="1.4s"
+            repeatCount="indefinite"
+          />
+        </circle>
+      </svg>
+      {caption && (
+        <span className="text-muted-foreground/70 font-mono text-[10px] uppercase tracking-[0.18em]">
+          {caption}
+          <span className="text-primary ml-0.5 inline-block animate-pulse">
+            ▍
+          </span>
+        </span>
+      )}
+      <span className="sr-only">Loading</span>
+    </div>
   )
 }
 
@@ -105,16 +220,18 @@ export function PageHead({
 }) {
   return (
     <div className="zv-page-head">
-      <div className="flex flex-col gap-1 min-w-0">
+      <div className="flex min-w-0 flex-1 basis-[240px] flex-col gap-1">
         {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
-        <h1 className="font-heading">{title}</h1>
+        <h1 className="font-heading break-words">{title}</h1>
         {sub && (
-          <div className="text-muted-foreground text-[13px] mt-1">{sub}</div>
+          <div className="text-muted-foreground mt-1 text-[13px]">{sub}</div>
         )}
         {children}
       </div>
       {right && (
-        <div className="flex items-center gap-2 shrink-0">{right}</div>
+        <div className="flex flex-wrap items-center justify-end gap-2 max-sm:w-full">
+          {right}
+        </div>
       )}
     </div>
   )
@@ -152,7 +269,9 @@ export function Panel({
             {sub && <div className="zv-panel-sub truncate">{sub}</div>}
           </div>
           {right && (
-            <div className="flex items-center gap-2 shrink-0">{right}</div>
+            <div className="flex flex-wrap items-center justify-end gap-2 max-sm:w-full">
+              {right}
+            </div>
           )}
         </div>
       )}

@@ -7,6 +7,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { UserMenu } from "@/components/layout/UserMenu"
 import { ModeToggle } from "@/components/mode-toggle"
 import { Kbd, LiveDot } from "@/components/swiss"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 import { WithTooltip } from "@/components/ui/with-tooltip"
 import { useBreadcrumbStore } from "@/stores/breadcrumb"
 import { adminStopImpersonation, me } from "@/lib/api"
@@ -108,6 +109,7 @@ export function TopBar({
         </div>
       )}
       <div className="flex h-12 items-center gap-3 px-4">
+        <SidebarTrigger className="md:hidden" />
         <BackButton parentTo={parentOfLeaf(crumbs)} />
         <nav
           aria-label="breadcrumb"
@@ -199,11 +201,11 @@ function SearchTrigger({ onClick }: { onClick?: () => void }) {
       <button
         type="button"
         onClick={onClick}
-        className="text-muted-foreground border-border bg-background hover:border-foreground focus-visible:ring-ring focus-visible:border-foreground flex h-7 w-44 items-center gap-2 border px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 md:w-64"
+        className="text-muted-foreground border-border bg-background hover:border-foreground focus-visible:ring-ring focus-visible:border-foreground flex h-7 w-7 items-center justify-center gap-2 border text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 sm:w-44 sm:justify-start sm:px-2.5 md:w-64"
         aria-label="Open search"
       >
         <IconSearch className="size-3.5 shrink-0" />
-        <span className="flex-1 text-left">Search · jump…</span>
+        <span className="hidden flex-1 text-left sm:inline">Search · jump…</span>
         <Kbd className="hidden md:inline-flex">⌘K</Kbd>
       </button>
     </WithTooltip>

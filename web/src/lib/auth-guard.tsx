@@ -1,7 +1,7 @@
 import { useEffect } from "react"
 import { Navigate } from "react-router"
 
-import { Skeleton } from "@/components/ui/skeleton"
+import { LogoLoader } from "@/components/swiss"
 import { ApiError, me } from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
@@ -60,21 +60,10 @@ export function useBootstrapAuth() {
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, mustChangePassword } = useAuth()
   if (loading) {
-    // Bootstrapping the session cookie — usually < 150 ms. Render a
-    // skeleton shell shaped like the dashboard so the layout doesn't
-    // shift when the real content mounts.
-    return (
-      <div className="flex min-h-svh flex-col gap-4 p-6">
-        <Skeleton className="h-10 w-64 rounded-none" />
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <Skeleton className="h-20 rounded-none" />
-          <Skeleton className="h-20 rounded-none" />
-          <Skeleton className="h-20 rounded-none" />
-          <Skeleton className="h-20 rounded-none" />
-        </div>
-        <Skeleton className="h-[260px] rounded-none" />
-      </div>
-    )
+    // Bootstrapping the session cookie — usually < 150 ms. Render the
+    // animated brand loader so even sub-second boots show consistent
+    // brand chrome instead of skeleton bars.
+    return <LogoLoader caption="restoring session" />
   }
   if (!user) return <Navigate to="/login" replace />
   if (mustChangePassword) return <Navigate to="/app/change-password" replace />
@@ -83,7 +72,7 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 export function AdminRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
-  if (loading) return null
+  if (loading) return <LogoLoader caption="verifying" />
   if (!user) return <Navigate to="/login" replace />
   if (user.role !== "admin") return <Navigate to="/app" replace />
   return <>{children}</>

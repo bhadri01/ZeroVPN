@@ -1,3 +1,15 @@
+import {
+  IconBrandAndroid,
+  IconBrandApple,
+  IconBrandUbuntu,
+  IconBrandWindows,
+  IconDeviceDesktop,
+  IconDeviceLaptop,
+  IconDeviceMobile,
+  IconDevices,
+  IconServer,
+  IconUser,
+} from "@tabler/icons-react"
 import { useQuery } from "@tanstack/react-query"
 import {
   animate,
@@ -14,18 +26,56 @@ import {
   CodeBlock,
   Eyebrow,
   Kbd,
-      <div className="border-border bg-background flex h-[260px] items-center justify-center border p-6 text-center sm:h-[320px] lg:h-[360px]">
-        <div className="max-w-[30ch]">
-          <div className="text-muted-foreground/70 font-mono text-[10px] uppercase">
-            Topology preview
-          </div>
-          <div className="font-heading mt-2 text-2xl tracking-[-0.02em]">
-            Live topology loads after sign-in.
-          </div>
-          <div className="text-muted-foreground mt-2 font-mono text-[11px]">
-            No synthetic graph data is rendered here.
-          </div>
-        </div>
+  LiveDot,
+  Pill,
+  Sparkline,
+  Wordmark,
+} from "@/components/swiss"
+import { Button } from "@/components/ui/button"
+import { ping } from "@/lib/api"
+import { cardVariants, stagger } from "@/lib/motion"
+import { cn } from "@/lib/utils"
+
+export function LandingPage() {
+  const pingQ = useQuery({
+    queryKey: ["ping"],
+    queryFn: ping,
+    refetchInterval: 5000,
+  })
+
+  return (
+    <div className="bg-background text-foreground">
+      <div className="border-border mx-auto max-w-screen-2xl 2xl:border-x">
+        <LandingNav />
+        <Hero pingState={pingQ.status} pingTs={pingQ.data?.ts_ms as number | undefined} />
+        <NumbersStrip />
+        <Personas />
+        <PreviewDashboard />
+        <FeaturesBento />
+        <PreviewTopology />
+        <Architecture />
+        <PreviewDeviceDetail />
+        <Deploy />
+        <Security />
+        <Compare />
+        <Roadmap />
+        <FAQ />
+        <CTA />
+        <LandingFooter />
+      </div>
+    </div>
+  )
+}
+
+function LandingNav() {
+  return (
+    <nav className="bg-background/85 sticky top-0 z-20 flex items-center gap-3 border-b px-4 py-3 backdrop-blur sm:gap-6 sm:px-6 sm:py-4">
+      <Link to="/">
+        <Wordmark size={13} />
+      </Link>
+      <div className="text-muted-foreground ml-auto hidden items-center gap-6 font-mono text-xs md:flex">
+        {[
+          ["#features", "Features"],
           ["#architecture", "Architecture"],
           ["#deploy", "Deploy"],
           ["#security", "Security"],
@@ -138,10 +188,10 @@ function Hero({
         animate={{ opacity: 1, transition: { duration: 0.6, delay: 0.25 } }}
       >
         <div className="absolute inset-0">
-          <LiveBackbone live={!reduce} />
+          <TopologyMock config={HERO_TOPO} />
         </div>
-        <div className="text-muted-foreground absolute left-4 top-4 font-mono text-[10px] tracking-wide">
-          FIG. 01 · LIVE BACKBONE
+        <div className="text-muted-foreground absolute left-4 top-4 z-[1] font-mono text-[10px] tracking-wide">
+          FIG. 01 · LIVE TOPOLOGY
         </div>
         {!reduce && <ScanLine />}
       </motion.div>
@@ -425,6 +475,21 @@ function PreviewDashboard() {
 }
 
 function MockDashboard() {
+  const rxHistory = sineWave(32, 32, 7, 0.3)
+  const txHistory = sineWave(32, 28, 6, 0.55)
+  const cells: {
+    l: string
+    v: string
+    u?: string
+    f?: string
+    spark?: number[]
+    c?: string
+  }[] = [
+    { l: "Devices · live", v: "4", f: "all active" },
+    { l: "TX · live", v: "182", u: "Mb/s", spark: txHistory, c: "var(--primary)" },
+    { l: "RX · live", v: "240", u: "Mb/s", spark: rxHistory, c: "var(--chart-1)" },
+    { l: "Hubs", v: "3 / 3", f: "reachable" },
+  ]
   return (
     <div className="border-border bg-background flex flex-col gap-4 border p-4">
       <div className="text-muted-foreground/70 flex items-center justify-between font-mono text-[10px] uppercase">
@@ -434,18 +499,11 @@ function MockDashboard() {
         </span>
       </div>
       <div className="grid grid-cols-2 gap-0 border sm:grid-cols-4">
-        {[
-          { l: "Devices", v: "Live data" },
-          { l: "TX", v: "Streams in" },
-          { l: "RX", v: "Streams in" },
-          { l: "Hubs", v: "Connected" },
-        ].map((k, i) => (
+        {cells.map((k, i) => (
           <div
             key={k.l}
             className={cn(
               "flex flex-col gap-1 p-3",
-              // 2×2 on mobile (right-border on the left column),
-              // 1×4 on sm+ (right-border on cols 1-3).
               i % 2 === 0 && "border-r sm:border-r",
               i < 2 && "border-b sm:border-b-0",
               i === 2 && "sm:border-r",
@@ -456,29 +514,113 @@ function MockDashboard() {
             </span>
             <span className="font-heading flex items-baseline gap-1 text-2xl tracking-[-0.02em]">
               {k.v}
+              {k.u && (
+                <span className="text-muted-foreground font-mono text-[10px]">
+                  {k.u}
+                </span>
+              )}
             </span>
+            {k.spark && (
+              <div className="h-[22px]">
+                <Sparkline data={k.spark} color={k.c} />
+              </div>
+            )}
+            {k.f && (
+              <span className="text-muted-foreground/70 font-mono text-[9px]">
+                {k.f}
+              </span>
+            )}
           </div>
         ))}
       </div>
       <div className="border p-3">
         <div className="text-muted-foreground/70 mb-1 flex items-center justify-between font-mono text-[9px] uppercase">
           <span>Bandwidth · 24h · all devices</span>
-          <span>connected</span>
+          <span>live</span>
         </div>
-        <div className="border-border flex h-[120px] items-center justify-center border font-mono text-[11px] text-muted-foreground">
-          Sign in to view live bandwidth charts.
-        </div>
+        <FauxDualChart rx={rxHistory} tx={txHistory} />
       </div>
       <div className="flex flex-col gap-1.5 border p-3">
         <span className="text-muted-foreground/70 font-mono text-[9px] uppercase">
-          Recent activity
+          Recent activity · 4
         </span>
-        <div className="text-muted-foreground/70 font-mono text-[11px]">
-          Activity appears after sign-in.
-        </div>
+        {[
+          { t: "00:12", d: "device.added · macbook-pro", tone: "ok" as const },
+          { t: "00:08", d: "device.online · pixel-8", tone: "info" as const },
+          { t: "00:04", d: "key.rotated · ipad", tone: "warn" as const },
+          { t: "00:01", d: "device.offline · nas", tone: "neutral" as const },
+        ].map((r) => (
+          <div
+            key={r.t}
+            className="flex items-baseline gap-3 font-mono text-[11px]"
+          >
+            <span className="text-muted-foreground/70 w-10">{r.t}</span>
+            <Pill tone={r.tone} dot={false}>
+              {r.d}
+            </Pill>
+          </div>
+        ))}
       </div>
     </div>
   )
+}
+
+function FauxDualChart({ rx, tx }: { rx: number[]; tx: number[] }) {
+  return (
+    <div className="h-[120px]">
+      <svg
+        viewBox="0 0 100 60"
+        preserveAspectRatio="none"
+        style={{ width: "100%", height: "100%" }}
+      >
+        <path d={pathArea(rx, 100, 60)} fill="var(--chart-1)" opacity="0.15" />
+        <path
+          d={pathLine(rx, 100, 60)}
+          fill="none"
+          stroke="var(--chart-1)"
+          strokeWidth="1.2"
+          vectorEffect="non-scaling-stroke"
+        />
+        <path d={pathArea(tx, 100, 60)} fill="var(--primary)" opacity="0.15" />
+        <path
+          d={pathLine(tx, 100, 60)}
+          fill="none"
+          stroke="var(--primary)"
+          strokeWidth="1.2"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    </div>
+  )
+}
+
+function sineWave(n: number, base: number, amp: number, phase = 0): number[] {
+  const out: number[] = []
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 4 + phase
+    out.push(
+      Math.max(0, base + amp * Math.sin(t) + amp * 0.4 * Math.cos(t * 2.3 + phase)),
+    )
+  }
+  return out
+}
+
+function pathLine(data: number[], w: number, h: number): string {
+  if (data.length === 0) return ""
+  const max = Math.max(...data, 1)
+  const min = Math.min(...data, 0)
+  const range = max - min || 1
+  return data
+    .map((v, i) => {
+      const x = (i / Math.max(1, data.length - 1)) * w
+      const y = h - ((v - min) / range) * (h - 2) - 1
+      return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(" ")
+}
+
+function pathArea(data: number[], w: number, h: number): string {
+  return `${pathLine(data, w, h)} L${w},${h} L0,${h} Z`
 }
 
 // ── Bento features ───────────────────────────────────────────────────
@@ -680,134 +822,413 @@ function PreviewTopology() {
   )
 }
 
+// Static mock of the LiveTopology component — mirrors its visual language
+// (hub + halo, user-tier nodes, OS-aware peer rings with brand chips,
+// animated `zv-topo-flow` dashes on live edges, top-right HUD) so the
+// landing preview matches what a signed-in user actually sees in
+// /app/topology and /admin/topology. Two configs share one renderer:
+// PREVIEW_TOPO (tight zoom, 1 user / 4 devices) and HERO_TOPO (wider
+// canvas, 3 users / 7 devices).
+type TopoIcon = typeof IconDeviceLaptop
+type TopoUser = { id: string; label: string; x: number; y: number }
+type TopoPeer = {
+  id: string
+  name: string
+  x: number
+  y: number
+  userId: string
+  tone: "live" | "idle"
+  Shape: TopoIcon
+  Brand: TopoIcon
+  rate?: string
+}
+type TopoConfig = {
+  vbW: number
+  vbH: number
+  hub: { x: number; y: number; label: string }
+  users: TopoUser[]
+  peers: TopoPeer[]
+  hud?: { x: number; y: number }
+  gridId: string
+}
+
+const PREVIEW_TOPO: TopoConfig = {
+  vbW: 700,
+  vbH: 280,
+  gridId: "topo-grid-preview",
+  hub: { x: 350, y: 210, label: "vpn-server" },
+  users: [{ id: "me", label: "me", x: 350, y: 95 }],
+  peers: [
+    {
+      id: "macbook-pro",
+      name: "macbook-pro",
+      userId: "me",
+      x: 510,
+      y: 55,
+      tone: "live",
+      Shape: IconDeviceLaptop,
+      Brand: IconBrandApple,
+      rate: "182 Mbps",
+    },
+    {
+      id: "pixel-8",
+      name: "pixel-8",
+      userId: "me",
+      x: 510,
+      y: 155,
+      tone: "live",
+      Shape: IconDeviceMobile,
+      Brand: IconBrandAndroid,
+      rate: "44 Mbps",
+    },
+    {
+      id: "ipad",
+      name: "ipad",
+      userId: "me",
+      x: 190,
+      y: 155,
+      tone: "live",
+      Shape: IconDeviceMobile,
+      Brand: IconBrandApple,
+      rate: "12 Mbps",
+    },
+    {
+      id: "nas",
+      name: "nas",
+      userId: "me",
+      x: 190,
+      y: 55,
+      tone: "idle",
+      Shape: IconServer,
+      Brand: IconBrandUbuntu,
+    },
+  ],
+  hud: { x: 540, y: 18 },
+}
+
+const HERO_TOPO: TopoConfig = {
+  vbW: 700,
+  vbH: 540,
+  gridId: "topo-grid-hero",
+  hub: { x: 350, y: 290, label: "vpn-server" },
+  users: [
+    { id: "me", label: "me", x: 350, y: 210 },
+    { id: "ada", label: "ada", x: 465, y: 330 },
+    { id: "rob", label: "rob", x: 235, y: 330 },
+  ],
+  peers: [
+    // me — 3 live
+    {
+      id: "macbook-pro",
+      name: "macbook-pro",
+      userId: "me",
+      x: 350,
+      y: 130,
+      tone: "live",
+      Shape: IconDeviceLaptop,
+      Brand: IconBrandApple,
+      rate: "182 Mbps",
+    },
+    {
+      id: "iphone-15",
+      name: "iphone-15",
+      userId: "me",
+      x: 445,
+      y: 246,
+      tone: "live",
+      Shape: IconDeviceMobile,
+      Brand: IconBrandApple,
+      rate: "21 Mbps",
+    },
+    {
+      id: "ipad",
+      name: "ipad",
+      userId: "me",
+      x: 255,
+      y: 246,
+      tone: "live",
+      Shape: IconDeviceMobile,
+      Brand: IconBrandApple,
+      rate: "8 Mbps",
+    },
+    // ada — 2 live
+    {
+      id: "linux-desktop",
+      name: "linux-desktop",
+      userId: "ada",
+      x: 555,
+      y: 270,
+      tone: "live",
+      Shape: IconDeviceDesktop,
+      Brand: IconBrandUbuntu,
+      rate: "94 Mbps",
+    },
+    {
+      id: "pixel-8",
+      name: "pixel-8",
+      userId: "ada",
+      x: 580,
+      y: 380,
+      tone: "live",
+      Shape: IconDeviceMobile,
+      Brand: IconBrandAndroid,
+      rate: "44 Mbps",
+    },
+    // rob — 1 live, 1 idle (mix tones for realism)
+    {
+      id: "windows-pc",
+      name: "windows-pc",
+      userId: "rob",
+      x: 145,
+      y: 270,
+      tone: "live",
+      Shape: IconDeviceDesktop,
+      Brand: IconBrandWindows,
+      rate: "12 Mbps",
+    },
+    {
+      id: "kindle",
+      name: "kindle",
+      userId: "rob",
+      x: 120,
+      y: 380,
+      tone: "idle",
+      Shape: IconDeviceMobile,
+      Brand: IconDevices,
+    },
+  ],
+  hud: { x: 540, y: 22 },
+}
+
+function TopologyMock({ config }: { config: TopoConfig }) {
+  const t = config
+  const liveCount = t.peers.filter((p) => p.tone === "live").length
+  // Per-user liveness drives whether the hub→user edge shows a flow.
+  const userLive = new Map(
+    t.users.map((u) => [
+      u.id,
+      t.peers.some((p) => p.userId === u.id && p.tone === "live"),
+    ]),
+  )
+  const userDeviceCount = new Map(
+    t.users.map((u) => [u.id, t.peers.filter((p) => p.userId === u.id).length]),
+  )
+  // Single-user case: anchor the user label centered. Multi-user: each
+  // user-node centers its own labels under the ring.
+  return (
+    <svg
+      viewBox={`0 0 ${t.vbW} ${t.vbH}`}
+      preserveAspectRatio="xMidYMid meet"
+      className="zv-topo zv-livetopo absolute inset-0 size-full"
+    >
+      <defs>
+        <pattern
+          id={t.gridId}
+          width="40"
+          height="40"
+          patternUnits="userSpaceOnUse"
+        >
+          <path
+            d="M 40 0 L 0 0 0 40"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="0.5"
+          />
+        </pattern>
+      </defs>
+      <rect
+        width={t.vbW}
+        height={t.vbH}
+        fill={`url(#${t.gridId})`}
+        opacity="0.55"
+        className="text-border"
+      />
+
+      {/* hub → user edges (thicker; live if any of the user's devices live) */}
+      {t.users.map((u) => {
+        const isLive = userLive.get(u.id) === true
+        return (
+          <g key={`hu-${u.id}`}>
+            <line
+              x1={t.hub.x}
+              y1={t.hub.y}
+              x2={u.x}
+              y2={u.y}
+              className={isLive ? "zv-topo-edge-live" : "zv-topo-edge"}
+              strokeWidth="1.1"
+            />
+            {isLive && (
+              <line
+                className="zv-topo-flow"
+                x1={t.hub.x}
+                y1={t.hub.y}
+                x2={u.x}
+                y2={u.y}
+                strokeWidth="1.4"
+                strokeDasharray="2 6"
+                style={{ animationDuration: "1.8s" }}
+              />
+            )}
+          </g>
+        )
+      })}
+
+      {/* user → device edges + per-device flow on live ones */}
+      {t.peers.map((p) => {
+        const user = t.users.find((u) => u.id === p.userId)
+        if (!user) return null
+        const isLive = p.tone === "live"
+        return (
+          <g key={`e-${p.id}`}>
+            <line
+              x1={user.x}
+              y1={user.y}
+              x2={p.x}
+              y2={p.y}
+              className={isLive ? "zv-topo-edge-live" : "zv-topo-edge"}
+              strokeWidth="0.8"
+            />
+            {isLive && (
+              <line
+                className="zv-topo-flow"
+                x1={user.x}
+                y1={user.y}
+                x2={p.x}
+                y2={p.y}
+                strokeWidth="1.2"
+                strokeDasharray="2 5"
+                style={{ animationDuration: "2.1s" }}
+              />
+            )}
+          </g>
+        )
+      })}
+
+      {/* peer nodes — outer ring + OS shape + brand chip + side label + rate */}
+      {t.peers.map((p) => {
+        const user = t.users.find((u) => u.id === p.userId)
+        const anchorRef = user?.x ?? t.hub.x
+        const labelAnchor: "start" | "end" = p.x >= anchorRef ? "start" : "end"
+        const labelDx = labelAnchor === "start" ? 18 : -18
+        const strokeClass =
+          p.tone === "live" ? "zv-topo-peer-live" : "zv-topo-peer-idle"
+        return (
+          <g key={p.id} transform={`translate(${p.x}, ${p.y})`}>
+            <circle r={14} className={strokeClass} strokeWidth="1.2" />
+            <g transform="translate(-9, -9)" className="zv-topo-peer-icon">
+              <p.Shape size={18} strokeWidth={1.5} />
+            </g>
+            <g transform="translate(8, 6)" className="zv-topo-peer-brand">
+              <circle r={6} className="zv-topo-peer-brand-bg" />
+              <g transform="translate(-4, -4)">
+                <p.Brand size={8} strokeWidth={1.8} />
+              </g>
+            </g>
+            <text
+              x={labelDx}
+              y={4}
+              textAnchor={labelAnchor}
+              className="zv-topo-peer-label"
+            >
+              {p.name}
+            </text>
+            {p.rate && (
+              <text
+                x={labelDx}
+                y={18}
+                textAnchor={labelAnchor}
+                className="zv-topo-meta"
+              >
+                {p.rate}
+              </text>
+            )}
+          </g>
+        )
+      })}
+
+      {/* user-tier nodes — matches <UserNode>: ring + IconUser + 2 labels */}
+      {t.users.map((u) => {
+        const isLive = userLive.get(u.id) === true
+        const count = userDeviceCount.get(u.id) ?? 0
+        return (
+          <g key={u.id} transform={`translate(${u.x}, ${u.y})`}>
+            <circle
+              r={18}
+              className={isLive ? "zv-topo-peer-live" : "zv-topo-peer-idle"}
+              strokeWidth="1.4"
+            />
+            <g transform="translate(-9, -9)" className="zv-topo-peer-icon">
+              <IconUser size={18} strokeWidth={1.6} />
+            </g>
+            <text
+              x={0}
+              y={32}
+              textAnchor="middle"
+              className="zv-topo-hub-label"
+            >
+              {u.label}
+            </text>
+            <text x={0} y={44} textAnchor="middle" className="zv-topo-meta">
+              {count} {count === 1 ? "device" : "devices"}
+            </text>
+          </g>
+        )
+      })}
+
+      {/* hub on top — matches <HubNode>: pulsing halo + IconServer + chip + peers count */}
+      <g transform={`translate(${t.hub.x}, ${t.hub.y})`}>
+        <motion.circle
+          className="zv-topo-halo"
+          opacity="0.55"
+          animate={{ r: [28, 32, 28] }}
+          transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+        />
+        <circle r={22} className="zv-topo-halo" opacity="0.85" />
+        <circle r={18} className="zv-topo-hub" strokeWidth="1.4" />
+        <g transform="translate(-10, -10)" className="zv-topo-hub-icon">
+          <IconServer size={20} strokeWidth={1.6} />
+        </g>
+        <g transform="translate(24, -10)">
+          <rect
+            width={90}
+            height={20}
+            className="zv-topo-hub-tag"
+            strokeWidth="0.5"
+            rx={1}
+          />
+          <text x={6} y={13} className="zv-topo-hub-label">
+            {t.hub.label}
+          </text>
+        </g>
+        <text x={24} y={28} className="zv-topo-meta zv-topo-meta-ink">
+          {t.peers.length} peers
+        </text>
+      </g>
+
+      {/* HUD — top-right, screen-space anchored like real LiveTopology */}
+      <g
+        transform={`translate(${t.hud?.x ?? t.vbW - 160}, ${t.hud?.y ?? 18})`}
+        className="zv-topo-meta"
+      >
+        <text fontSize="9">
+          PEERS · {liveCount}/{t.peers.length}
+        </text>
+      </g>
+    </svg>
+  )
+}
+
 function MockTopology() {
   return (
     <div className="border-border bg-background relative h-[260px] border sm:h-[320px] lg:h-[360px]">
       <div className="text-muted-foreground/70 absolute left-3 top-3 z-[1] font-mono text-[10px] uppercase">
-        Live topology · 4 devices
+        Live topology · {PREVIEW_TOPO.peers.length} devices
       </div>
       <div className="text-muted-foreground/70 absolute right-3 top-3 z-[1] inline-flex items-center gap-1.5 font-mono text-[10px]">
         <LiveDot /> live
       </div>
-      <svg
-        viewBox="0 0 600 360"
-        preserveAspectRatio="xMidYMid meet"
-        className="absolute inset-0 size-full"
-      >
-        <defs>
-          <pattern id="topo-grid-mock" width="32" height="32" patternUnits="userSpaceOnUse">
-            <path d="M 32 0 L 0 0 0 32" fill="none" stroke="currentColor" strokeWidth="0.5" />
-          </pattern>
-        </defs>
-        <rect width="600" height="360" fill="url(#topo-grid-mock)" className="text-border" opacity="0.5" />
-
-        {/* edges: server → user, user → devices */}
-        <line x1="120" y1="180" x2="290" y2="180" stroke="currentColor" className="text-border" strokeWidth="1" />
-        <line x1="310" y1="180" x2="470" y2="80" stroke="currentColor" className="text-border" strokeWidth="1" />
-        <line x1="310" y1="180" x2="470" y2="170" stroke="currentColor" className="text-border" strokeWidth="1" />
-        <line x1="310" y1="180" x2="470" y2="260" stroke="currentColor" className="text-border" strokeWidth="1" />
-        <line x1="310" y1="180" x2="470" y2="340" stroke="currentColor" className="text-border" strokeWidth="1" opacity="0.4" />
-
-        {/* pulses along edges */}
-        <motion.circle
-          r="3"
-          fill="var(--primary)"
-          cx={120}
-          cy={180}
-          animate={{ cx: [120, 290], cy: [180, 180] }}
-          transition={{ duration: 2.4, repeat: Infinity, ease: "linear" }}
-        />
-        <motion.circle
-          r="2.5"
-          fill="var(--chart-1)"
-          cx={310}
-          cy={180}
-          animate={{ cx: [310, 470], cy: [180, 80] }}
-          transition={{ duration: 2.8, repeat: Infinity, ease: "linear" }}
-        />
-        <motion.circle
-          r="2.5"
-          fill="var(--chart-1)"
-          cx={310}
-          cy={180}
-          animate={{ cx: [310, 470], cy: [180, 170] }}
-          transition={{ duration: 2.0, repeat: Infinity, ease: "linear", delay: 0.5 }}
-        />
-        <motion.circle
-          r="2.5"
-          fill="var(--chart-1)"
-          cx={310}
-          cy={180}
-          animate={{ cx: [310, 470], cy: [180, 260] }}
-          transition={{ duration: 2.6, repeat: Infinity, ease: "linear", delay: 1.0 }}
-        />
-
-        {/* nodes */}
-        <NodeRect x={70} y={155} w={100} h={50} label="vpn-server" sub="hub" tone="primary" />
-        <NodeRect x={260} y={155} w={100} h={50} label="you" sub="user" tone="muted" />
-        <NodeRect x={440} y={55} w={120} h={50} label="macbook-pro" sub="online" tone="ok" />
-        <NodeRect x={440} y={145} w={120} h={50} label="pixel-8" sub="online" tone="ok" />
-        <NodeRect x={440} y={235} w={120} h={50} label="ipad" sub="online" tone="ok" />
-        <NodeRect x={440} y={315} w={120} h={50} label="nas" sub="offline" tone="off" />
-      </svg>
+      <TopologyMock config={PREVIEW_TOPO} />
     </div>
-  )
-}
-
-function NodeRect({
-  x,
-  y,
-  w,
-  h,
-  label,
-  sub,
-  tone,
-}: {
-  x: number
-  y: number
-  w: number
-  h: number
-  label: string
-  sub: string
-  tone: "primary" | "muted" | "ok" | "off"
-}) {
-  const stroke =
-    tone === "primary"
-      ? "var(--primary)"
-      : tone === "ok"
-        ? "var(--status-online, var(--primary))"
-        : tone === "off"
-          ? "var(--muted-foreground)"
-          : "currentColor"
-  return (
-    <g>
-      <rect
-        x={x}
-        y={y}
-        width={w}
-        height={h}
-        fill="var(--background)"
-        stroke={stroke}
-        strokeWidth="1"
-        opacity={tone === "off" ? 0.5 : 1}
-      />
-      <text
-        x={x + 8}
-        y={y + 22}
-        className="fill-foreground font-mono"
-        fontSize="11"
-      >
-        {label}
-      </text>
-      <text
-        x={x + 8}
-        y={y + 38}
-        className="fill-muted-foreground font-mono"
-        fontSize="9"
-      >
-        {sub}
-      </text>
-    </g>
   )
 }
 
@@ -820,12 +1241,6 @@ function Architecture() {
     { tag: "worker", title: "Worker", body: "WG state · ZMQ publisher · tick-level samples" },
     { tag: "data", title: "Data plane", body: "Postgres 18 · Redis · age-encrypted backups" },
     { tag: "wire", title: "WireGuard / AmneziaWG", body: "Kernel module · zero-config peer rotation" },
-  ]
-  const stack = [
-    "Rust 1.81", "Axum", "sqlx", "Tokio",
-    "WireGuard", "AmneziaWG", "ZeroMQ", "MessagePack",
-    "Postgres 18", "Redis", "Caddy 2",
-    "React 19", "Vite", "TanStack Query", "Zustand", "Tailwind",
   ]
   return (
     <section
@@ -843,16 +1258,6 @@ function Architecture() {
           Browser to backbone in five well-defined layers. Every hop is yours —
           no third-party SaaS in the data path, no telemetry phoning home.
         </p>
-        <div className="mt-6 flex flex-wrap gap-1.5 font-mono text-[10px] sm:mt-8">
-          {stack.map((s) => (
-            <span
-              key={s}
-              className="border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 border px-2 py-1 transition-colors"
-            >
-              {s}
-            </span>
-          ))}
-        </div>
       </div>
       <motion.div
         className="flex flex-col p-6 sm:p-10 lg:p-14"
@@ -938,17 +1343,109 @@ function PreviewDeviceDetail() {
 }
 
 function MockDeviceDetail() {
+  const bandwidth = sineWave(40, 30, 8, 0.7)
+  const rows: { k: string; v: string; mono?: boolean }[] = [
+    { k: "name", v: "macbook-pro", mono: true },
+    { k: "os", v: "macos" },
+    { k: "wg-ip", v: "10.66.0.4/32", mono: true },
+    { k: "pubkey", v: "ab12·c9f4·…·8e0d", mono: true },
+    { k: "endpoint", v: "198.51.100.42:51820", mono: true },
+    { k: "last hs", v: "12s ago" },
+  ]
+  const audit: { t: string; d: string; tone: "ok" | "info" | "warn" | "neutral" }[] = [
+    { t: "00:12", d: "device.added", tone: "ok" },
+    { t: "00:08", d: "device.online", tone: "info" },
+    { t: "00:04", d: "key.rotated", tone: "warn" },
+    { t: "00:01", d: "endpoint.changed", tone: "neutral" },
+  ]
   return (
-    <div className="border-border bg-background flex h-[260px] items-center justify-center border p-6 text-center sm:h-[320px] lg:h-[360px]">
-      <div className="max-w-[34ch]">
-        <div className="text-muted-foreground/70 font-mono text-[10px] uppercase">
-          Device detail preview
+    <div className="border-border bg-background flex flex-col gap-3 border p-4 font-mono text-[11px]">
+      {/* Header — device name + OS chip + status pill */}
+      <div className="flex items-center justify-between gap-3 border-b pb-3">
+        <div className="flex items-center gap-2">
+          <span className="border-border inline-flex h-7 w-7 items-center justify-center border">
+            <IconDeviceLaptop size={14} strokeWidth={1.6} />
+          </span>
+          <div className="flex flex-col">
+            <span className="text-foreground text-[12px]">macbook-pro</span>
+            <span className="text-muted-foreground/70 text-[9px] uppercase">
+              device · #d1f2
+            </span>
+          </div>
         </div>
-        <div className="font-heading mt-2 text-2xl tracking-[-0.02em]">
-          Device charts render from real samples after login.
+        <div className="flex items-center gap-1.5">
+          <Pill tone="ok">active</Pill>
+          <Pill tone="neutral" dot={false}>
+            wg
+          </Pill>
         </div>
-        <div className="text-muted-foreground mt-2 font-mono text-[11px]">
-          No fake bandwidth or activity data is injected here.
+      </div>
+
+      {/* Properties + bandwidth grid */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1.1fr]">
+        <dl className="border p-3">
+          <div className="text-muted-foreground/70 mb-2 text-[9px] uppercase">
+            Properties
+          </div>
+          {rows.map((r) => (
+            <div
+              key={r.k}
+              className="flex items-baseline justify-between border-b border-dashed border-border/50 py-1 last:border-b-0"
+            >
+              <dt className="text-muted-foreground text-[10px] uppercase">
+                {r.k}
+              </dt>
+              <dd className={cn("text-foreground text-[11px]", r.mono && "tabular-nums")}>
+                {r.v}
+              </dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="flex flex-col border">
+          <div className="text-muted-foreground/70 flex items-center justify-between border-b px-3 py-2 text-[9px] uppercase">
+            <span>Bandwidth · 24h</span>
+            <span className="inline-flex items-center gap-1.5">
+              <LiveDot /> live
+            </span>
+          </div>
+          <div className="h-[78px] px-3 pt-1">
+            <Sparkline data={bandwidth} color="var(--chart-1)" />
+          </div>
+          <div className="text-muted-foreground/80 grid grid-cols-3 border-t text-center text-[10px]">
+            <div className="border-r px-2 py-1.5">
+              <div className="text-muted-foreground/60 text-[9px] uppercase">tx</div>
+              <div className="text-foreground tabular-nums">182 Mb/s</div>
+            </div>
+            <div className="border-r px-2 py-1.5">
+              <div className="text-muted-foreground/60 text-[9px] uppercase">rx</div>
+              <div className="text-foreground tabular-nums">240 Mb/s</div>
+            </div>
+            <div className="px-2 py-1.5">
+              <div className="text-muted-foreground/60 text-[9px] uppercase">total</div>
+              <div className="text-foreground tabular-nums">4.2 GB</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Audit strip */}
+      <div className="border p-3">
+        <div className="text-muted-foreground/70 mb-2 flex items-center justify-between text-[9px] uppercase">
+          <span>Audit · timeline</span>
+          <span className="text-muted-foreground/60">retained</span>
+        </div>
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+          {audit.map((a) => (
+            <div key={a.d} className="flex items-baseline gap-2">
+              <span className="text-muted-foreground/70 w-10 tabular-nums">
+                {a.t}
+              </span>
+              <Pill tone={a.tone} dot={false}>
+                {a.d}
+              </Pill>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -1371,7 +1868,7 @@ function CTA() {
       <div className="text-muted-foreground mx-auto mt-8 flex max-w-full items-center gap-2 overflow-x-auto px-1 font-mono text-[11px] sm:mt-10 sm:justify-center">
         <span className="shrink-0 opacity-60">$</span>
         <span className="text-foreground whitespace-nowrap">
-          git clone https://github.com/zerovpn/zerovpn &amp;&amp; cd zerovpn &amp;&amp; docker compose --profile wg up -d
+          git clone https://github.com/bhadri01/ZeroVPN.git &amp;&amp; cd ZeroVPN &amp;&amp; cp .env.example .env &amp;&amp; docker compose --profile wg up -d
         </span>
       </div>
     </motion.section>
@@ -1390,7 +1887,7 @@ function LandingFooter() {
           Built with Rust + React.
         </span>
         <a
-          href="https://github.com/zerovpn/zerovpn"
+          href="https://github.com/bhadri01/ZeroVPN"
           target="_blank"
           rel="noreferrer"
           className="hover:text-foreground mt-1 transition-colors"
@@ -1419,7 +1916,7 @@ function LandingFooter() {
           Install
         </a>
         <a
-          href="https://github.com/zerovpn/zerovpn/blob/main/docs/runbook.md"
+          href="https://github.com/bhadri01/ZeroVPN/blob/main/docs/runbook.md"
           target="_blank"
           rel="noreferrer"
           className="hover:text-foreground transition-colors"
@@ -1427,7 +1924,7 @@ function LandingFooter() {
           Runbook ↗
         </a>
         <a
-          href="https://github.com/zerovpn/zerovpn/blob/main/docs/architecture.md"
+          href="https://github.com/bhadri01/ZeroVPN/blob/main/docs/architecture.md"
           target="_blank"
           rel="noreferrer"
           className="hover:text-foreground transition-colors"

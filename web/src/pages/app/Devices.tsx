@@ -374,7 +374,7 @@ export function DevicesPage() {
         right={
           <Sheet open={addOpen} onOpenChange={setAddOpen}>
             <SheetTrigger asChild>
-              <Button>
+              <Button className="max-sm:w-full">
                 <IconPlus />
                 Add device
               </Button>
@@ -440,7 +440,7 @@ export function DevicesPage() {
                 </button>
               )}
             </div>
-            <div className="relative">
+            <div className="relative max-sm:w-full">
               <IconSearch
                 size={12}
                 className="text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2"
@@ -449,7 +449,7 @@ export function DevicesPage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Filter…"
-                className="h-7 w-48 pl-6 font-mono text-xs"
+                className="h-7 w-full pl-6 font-mono text-xs sm:w-48"
               />
               {query && (
                 <WithTooltip label="Clear filter">

@@ -18,17 +18,23 @@ export default defineConfig({
     // those requests to the api on its host port. WS upgrades over the same
     // path work because `ws: true` lets Vite proxy the upgrade frame.
     //
-    // Override the target with VITE_API_PROXY for non-default ports.
+    // Use 127.0.0.1 (not `localhost`) so Node always resolves to IPv4 — the
+    // Rust API binds to 127.0.0.1:8080 only, while unrelated Docker
+    // containers sometimes bind `::` on the same port. Resolving via
+    // `localhost` can prefer IPv6 (::1) on macOS and silently hit the wrong
+    // process, which then returns 405 / 404 for POSTs.
+    //
+    // Override with VITE_API_PROXY for non-default ports/hosts.
     proxy: {
       "/api": {
-        target: process.env.VITE_API_PROXY ?? "http://localhost:8080",
+        target: process.env.VITE_API_PROXY ?? "http://127.0.0.1:8080",
         changeOrigin: true,
         ws: true,
       },
-      "/health": process.env.VITE_API_PROXY ?? "http://localhost:8080",
-      "/ready": process.env.VITE_API_PROXY ?? "http://localhost:8080",
-      "/metrics": process.env.VITE_API_PROXY ?? "http://localhost:8080",
-      "/openapi.json": process.env.VITE_API_PROXY ?? "http://localhost:8080",
+      "/health": process.env.VITE_API_PROXY ?? "http://127.0.0.1:8080",
+      "/ready": process.env.VITE_API_PROXY ?? "http://127.0.0.1:8080",
+      "/metrics": process.env.VITE_API_PROXY ?? "http://127.0.0.1:8080",
+      "/openapi.json": process.env.VITE_API_PROXY ?? "http://127.0.0.1:8080",
     },
   },
 })

@@ -141,7 +141,13 @@ export function DeviceCard({
           {...dragHandleProps}
           aria-label="Drag to reorder"
           title="Drag to reorder"
-          className="border-border bg-card text-muted-foreground/40 group-hover/card:text-muted-foreground hover:text-foreground hover:border-foreground absolute left-1.5 top-1.5 z-10 inline-flex size-5 cursor-grab select-none items-center justify-center border opacity-0 transition-[opacity,color,border-color] group-hover/card:opacity-100 active:cursor-grabbing"
+          // Mobile (no hover state): grip is always visible AND we use
+          // `touch-none` so the browser doesn't capture touchmove for
+          // page scrolling — without that, motion's drag controls never
+          // see move events and reorder silently does nothing on touch.
+          // Desktop (sm:): revert to opacity-0 + group-hover so the grip
+          // stays out of the way until the row is hovered.
+          className="border-border bg-card text-muted-foreground/60 group-hover/card:text-muted-foreground hover:text-foreground hover:border-foreground absolute left-1.5 top-1.5 z-10 inline-flex size-5 cursor-grab touch-none select-none items-center justify-center border transition-[opacity,color,border-color] active:cursor-grabbing sm:opacity-0 sm:group-hover/card:opacity-100"
         >
           <IconGripVertical className="size-3" />
         </div>

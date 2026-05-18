@@ -76,7 +76,7 @@ export function DashboardLayout() {
 function PageMount({ children }: { children: React.ReactNode }) {
   const reduce = useReducedMotion()
   if (reduce) {
-    return <div className="flex flex-col gap-6 px-6 py-6">{children}</div>
+    return <div className="flex flex-col gap-4 px-3 py-4 sm:gap-6 sm:px-6 sm:py-6">{children}</div>
   }
   // Route-level entry. Slightly longer than a typical micro-interaction
   // so navigation reads as a deliberate transition; the leading delay
@@ -93,7 +93,7 @@ function PageMount({ children }: { children: React.ReactNode }) {
         ease: EASING.out,
         delay: TIMING.routeDelay,
       }}
-      className="flex flex-col gap-6 px-6 py-6"
+      className="flex flex-col gap-4 px-3 py-4 sm:gap-6 sm:px-6 sm:py-6"
     >
       {children}
     </motion.div>
