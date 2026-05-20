@@ -11,4 +11,3 @@ pub mod metrics;
 pub mod openapi;
 pub mod totp;
 pub mod ws;
-pub mod traffic_explorer;

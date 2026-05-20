@@ -1,6 +1,5 @@
 import * as React from "react"
 
-import { WithTooltip } from "@/components/ui/with-tooltip"
 import { cn } from "@/lib/utils"
 
 /* ── Logomark / Wordmark ───────────────────────────────────────────────
@@ -461,29 +460,6 @@ export function Kpi({
   )
 }
 
-/* ── BarTrack ──────────────────────────────────────────────────────────
-   Thin progress bar — quota / posture rows. */
-
-export function BarTrack({
-  value,
-  tone,
-  className,
-}: {
-  value: number
-  tone?: "warn" | "err"
-  className?: string
-}) {
-  return (
-    <div className={cn("zv-bar-track", className)}>
-      <div
-        className="zv-bar-fill"
-        data-tone={tone}
-        style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
-      />
-    </div>
-  )
-}
-
 /* ── CodeBlock ─────────────────────────────────────────────────────────
    Pre-formatted monospace block — wg-conf, curl examples, docker compose. */
 
@@ -531,40 +507,6 @@ export function Seg<T extends string>({
   )
 }
 
-/* ── IconBtn ───────────────────────────────────────────────────────────
-   Hairline 28px square — used in table row actions, panel head trailing
-   slots. Wraps a single icon/glyph. */
-
-export function IconBtn({
-  children,
-  onClick,
-  title,
-  type = "button",
-  className,
-  disabled,
-}: {
-  children: React.ReactNode
-  onClick?: React.MouseEventHandler<HTMLButtonElement>
-  title?: string
-  type?: "button" | "submit" | "reset"
-  className?: string
-  disabled?: boolean
-}) {
-  const btn = (
-    <button
-      type={type}
-      className={cn("zv-icon-btn", className)}
-      onClick={onClick}
-      aria-label={title}
-      disabled={disabled}
-    >
-      {children}
-    </button>
-  )
-  if (!title) return btn
-  return <WithTooltip label={title}>{btn}</WithTooltip>
-}
-
 /* ── LiveDot ───────────────────────────────────────────────────────────
    Pulsing green status indicator — connected / streaming. */
 
@@ -597,47 +539,8 @@ export function Kbd({
   return <span className={cn("zv-kbd", className)}>{children}</span>
 }
 
-/* ── Banner ────────────────────────────────────────────────────────────
-   Full-width status bar with optional left tag + trailing actions. */
-
-export function Banner({
-  tone,
-  tag,
-  children,
-  right,
-  className,
-}: {
-  tone?: "warn" | "err" | "info" | "neutral"
-  tag?: React.ReactNode
-  children?: React.ReactNode
-  right?: React.ReactNode
-  className?: string
-}) {
-  return (
-    <div
-      className={cn("zv-banner", className)}
-      data-tone={tone === "neutral" ? undefined : tone}
-    >
-      {tag && <span className="zv-banner-tag">{tag}</span>}
-      <span className="min-w-0 flex-1 truncate">{children}</span>
-      {right && <span className="flex items-center gap-2 shrink-0">{right}</span>}
-    </div>
-  )
-}
-
 /* ── Format helpers ────────────────────────────────────────────────────
    Mirror the prototype's helpers; pages import these instead of inlining. */
-
-export function fmtBytes(mb: number): string {
-  if (mb >= 1024 * 1024) return (mb / 1024 / 1024).toFixed(2) + " TB"
-  if (mb >= 1024) return (mb / 1024).toFixed(2) + " GB"
-  return mb.toFixed(1) + " MB"
-}
-
-export function fmtRate(mbps: number): string {
-  if (mbps >= 1000) return (mbps / 1000).toFixed(2) + " Gbit/s"
-  return mbps.toFixed(1) + " Mbit/s"
-}
 
 export function fmtRel(ms: number): string {
   if (ms < 60_000) return Math.floor(ms / 1000) + "s ago"

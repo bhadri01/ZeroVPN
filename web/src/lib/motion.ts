@@ -35,46 +35,11 @@ export const EASING = {
 const enter: Transition = { duration: TIMING.enter, ease: EASING.out }
 const exit: Transition = { duration: TIMING.exit, ease: EASING.in }
 
-/** Page transitions inside a router outlet. */
-export const pageVariants: Variants = {
-  initial: { opacity: 0, y: 6 },
-  animate: { opacity: 1, y: 0, transition: enter },
-  exit: { opacity: 0, y: -2, transition: exit },
-}
-
 /** Cards mounted on a page after data resolves. Stagger via `delay`. */
 export const cardVariants: Variants = {
   initial: { opacity: 0, y: 4 },
   animate: { opacity: 1, y: 0, transition: enter },
   exit: { opacity: 0, y: -2, transition: exit },
-}
-
-/** Modal / Dialog / AlertDialog content. */
-export const modalVariants: Variants = {
-  initial: { opacity: 0, scale: 0.97 },
-  animate: { opacity: 1, scale: 1, transition: enter },
-  exit: { opacity: 0, scale: 0.98, transition: exit },
-}
-
-/** A row in a list/table: enters on create, collapses on delete. */
-export const listVariants: Variants = {
-  initial: { opacity: 0, y: 4 },
-  animate: { opacity: 1, y: 0, transition: enter },
-  exit: {
-    opacity: 0,
-    x: -4,
-    height: 0,
-    marginTop: 0,
-    marginBottom: 0,
-    transition: exit,
-  },
-}
-
-/** Compact pop for command palette / popover. */
-export const popVariants: Variants = {
-  initial: { opacity: 0, scale: 0.92 },
-  animate: { opacity: 1, scale: 1, transition: enter },
-  exit: { opacity: 0, scale: 0.96, transition: exit },
 }
 
 /** Stagger N children at 40 ms apart inside the parent's `animate`. */

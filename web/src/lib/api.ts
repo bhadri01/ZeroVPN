@@ -23,7 +23,7 @@ interface ApiErrorBody {
   error?: { code?: string; message?: string; request_id?: string }
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${BASE}${path.startsWith("/") ? path : `/${path}`}`
   const headers = new Headers(init?.headers)
   if (init?.body && !headers.has("Content-Type")) {
@@ -509,7 +509,6 @@ export const totpDisable = (code: string) =>
 
 // --- account -------------------------------------------------------------
 
-export const exportData = () => apiFetch<unknown>("/me/data-export")
 export const deleteAccount = () =>
   apiFetch<{ status: string }>("/me/account", { method: "DELETE" })
 
@@ -570,7 +569,7 @@ export const adminUsersCsvUrl = (filters: AdminUserListFilters = {}) =>
 // audit entries that target this user. One request hydrates the whole
 // admin user-detail page.
 
-export interface AdminUserDetail {
+interface AdminUserDetail {
   id: string
   email: string
   role: UserRole
@@ -587,7 +586,7 @@ export interface AdminUserDetail {
   device_count: number
 }
 
-export interface AdminUserDevice {
+interface AdminUserDevice {
   id: string
   name: string
   os: DeviceOs
@@ -637,14 +636,14 @@ export const adminListDeviceConnectionHistory = (deviceId: string) =>
 
 // ── Admin device detail (Phase 2 / Stage B) ─────────────────────────
 
-export interface AdminDeviceOwner {
+interface AdminDeviceOwner {
   id: string
   email: string
   role: UserRole
   status: UserStatus
 }
 
-export interface AdminDeviceDetail {
+interface AdminDeviceDetail {
   id: string
   user_id: string
   server_id: string
@@ -663,7 +662,7 @@ export interface AdminDeviceDetail {
   created_at: string
 }
 
-export interface AdminDeviceActivity {
+interface AdminDeviceActivity {
   id: number
   action: string
   metadata: unknown
@@ -796,7 +795,7 @@ export const adminCreateUser = (body: AdminCreateUserBody) =>
 
 // ── Admin user bandwidth history ────────────────────────────────────────
 
-export interface AdminUserBandwidthBucket {
+interface AdminUserBandwidthBucket {
   bucket_start: string
   rx_bytes: number
   tx_bytes: number
@@ -1039,7 +1038,7 @@ export const adminListAccessLogs = (
 
 // ── Finder (Phase 2 / Stage B) ──────────────────────────────────────────
 
-export interface FinderCounts {
+interface FinderCounts {
   audit_logs: number
   failed_logins: number
   session_events: number
@@ -1142,7 +1141,7 @@ export const adminRotateServerKeys = (id: string) =>
 
 // ── Admin: server detail + bandwidth history ──────────────────────────
 
-export interface AdminServerDeviceRow {
+interface AdminServerDeviceRow {
   id: string
   user_id: string
   user_email: string

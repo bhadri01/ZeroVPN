@@ -1,4 +1,4 @@
-import { AnimatePresence, motion, type Variants } from "motion/react"
+import { motion } from "motion/react"
 import {
   Children,
   cloneElement,
@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react"
 
-import { cardVariants, EASING, TIMING, useReducedMotion } from "@/lib/motion"
+import { EASING, TIMING, useReducedMotion } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 /**
@@ -118,75 +118,3 @@ export function StaggerItem({
   )
 }
 
-/** Simple fade-in for one-off elements outside a stagger context. */
-export function FadeIn({
-  children,
-  className,
-  delay = 0,
-}: {
-  children: ReactNode
-  className?: string
-  delay?: number
-}) {
-  const reduce = useReducedMotion()
-  if (reduce) {
-    return className ? <div className={className}>{children}</div> : <>{children}</>
-  }
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: TIMING.enter, ease: EASING.out, delay }}
-      className={className}
-    >
-      {children}
-    </motion.div>
-  )
-}
-
-/**
- * AnimatePresence-wrapped list that stagger-mounts its children and
- * collapses them on exit. Use for device-grid / search-result grids
- * where items appear/disappear in response to filters or live data.
- *
- * Each direct child should have a stable `key` — the wrapper enforces
- * that by wrapping each child in a `<motion.div>` keyed on its
- * `props.key`. Children without a key are still animated but won't
- * benefit from AnimatePresence's exit choreography.
- */
-const listChildVariants: Variants = cardVariants
-
-export function AnimatedList({
-  children,
-  className,
-  itemClassName,
-}: {
-  children: ReactNode
-  className?: string
-  itemClassName?: string
-}) {
-  const reduce = useReducedMotion()
-  const items = Children.toArray(children).filter(isValidElement)
-  if (reduce) {
-    return <div className={className}>{items}</div>
-  }
-  return (
-    <div className={className}>
-      <AnimatePresence initial={true} mode="popLayout">
-        {items.map((child, i) => (
-          <motion.div
-            key={(child.key as string) ?? `item-${i}`}
-            layout
-            variants={listChildVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            className={itemClassName}
-          >
-            {child}
-          </motion.div>
-        ))}
-      </AnimatePresence>
-    </div>
-  )
-}

@@ -15,7 +15,6 @@ import {
   IconServer,
   IconUser,
   type Icon,
-  type IconProps,
 } from "@tabler/icons-react"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -1026,8 +1025,3 @@ function formatRateShort(bps: number): string {
   if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`
   return `${(bps / 1_000_000_000).toFixed(1)} Gbps`
 }
-
-// `IconProps` is referenced indirectly through type-only imports so the
-// bundler doesn't ship the type at runtime; keep the import to satisfy
-// downstream consumers that may extend this component.
-export type { IconProps }
