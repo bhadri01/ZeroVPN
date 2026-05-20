@@ -159,7 +159,7 @@ impl WgController for ShellController {
 /// netlink using `defguard_wireguard_rs`. Avoids forking `wg` and
 /// produces structured errors instead of stderr strings.
 ///
-/// Linux-only — `defguard_wireguard_rs::wgapi::Kernel` has no
+/// Linux-only — `defguard_wireguard_rs::Kernel` has no
 /// implementation on other targets. The constructor returns an error
 /// on non-Linux so `from_env()` can fall back to noop.
 #[cfg(target_os = "linux")]
@@ -191,8 +191,8 @@ impl WgController for KernelController {
         let preshared_key = preshared_key.map(|s| s.to_string());
         tokio::task::spawn_blocking(move || -> Result<(), ControlError> {
             use defguard_wireguard_rs::{
-                WGApi, WireguardInterfaceApi, key::Key as DgKey, net::IpAddrMask,
-                peer::Peer as DgPeer, wgapi::Kernel,
+                Kernel, WGApi, WireguardInterfaceApi, key::Key as DgKey, net::IpAddrMask,
+                peer::Peer as DgPeer,
             };
             let api = WGApi::<Kernel>::new(interface.clone())
                 .map_err(|e| ControlError::Other(e.to_string()))?;
@@ -222,7 +222,7 @@ impl WgController for KernelController {
         let public_key = public_key.to_string();
         tokio::task::spawn_blocking(move || -> Result<(), ControlError> {
             use defguard_wireguard_rs::{
-                WGApi, WireguardInterfaceApi, key::Key as DgKey, wgapi::Kernel,
+                Kernel, WGApi, WireguardInterfaceApi, key::Key as DgKey,
             };
             let api = WGApi::<Kernel>::new(interface.clone())
                 .map_err(|e| ControlError::Other(e.to_string()))?;

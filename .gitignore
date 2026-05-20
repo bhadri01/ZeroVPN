@@ -18,11 +18,9 @@ web/.vite/
 *.swo
 .DS_Store
 
-# Env / secrets — examples (.env.dev.example, .env.prod.example) are tracked;
-# actual env files (.env.dev, .env.prod) and everything in secrets/ are not.
+# Env / secrets — `.env.example` is tracked; the populated `.env` and
+# everything in secrets/ are not.
 .env
-.env.dev
-.env.prod
 .env.local
 .env.*.local
 secrets/

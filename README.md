@@ -9,8 +9,8 @@ Phase 1A (foundation). See [TODO.md](TODO.md) and [CHANGELOG.md](CHANGELOG.md) f
 ## Quickstart (dev)
 
 ```bash
-make setup     # one-time: copies .env.dev.example → .env.dev, generates dev secrets, builds images
-make up        # start the dev stack
+make setup     # one-time: copies .env.example → .env, generates dev secrets, builds images
+make up        # start the dev stack (core + MailHog via the `dev` profile)
 make logs      # tail logs
 make migrate   # run pending DB migrations
 make bootstrap-admin EMAIL=admin@example.com   # create the first admin (will prompt for password)
@@ -21,20 +21,19 @@ make clean     # nuke volumes (destructive)
 After `make up`:
 - Web UI: <https://localhost> (self-signed cert from Caddy's local CA)
 - MailHog: <http://localhost:8025>
-- Grafana (with observability profile): <https://localhost/grafana>
+- Grafana (with `--profile observability`): <https://localhost/grafana>
 
 ## Quickstart (production)
 
 ```bash
-make setup-prod                                  # copies .env.prod.example → .env.prod
-$EDITOR .env.prod                                # fill in ZEROVPN_DOMAIN, SMTP relay
-./scripts/init-secrets.sh prod                   # generates random secrets
-make up-prod                                     # starts the prod stack
-make migrate ENV=prod
-make bootstrap-admin EMAIL=admin@your-domain ENV=prod
+make setup                                       # copies .env.example → .env, generates secrets
+$EDITOR .env                                     # see "going to production" block at the top of .env
+make up-prod                                     # starts the stack without the `dev` profile (no MailHog)
+make migrate
+make bootstrap-admin EMAIL=admin@your-domain
 ```
 
-Production differs from dev in: real Let's Encrypt TLS against `ZEROVPN_DOMAIN`, no exposed internal ports, no MailHog, separate `.env.prod` + `secrets/prod/` so dev secrets never leak in. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
+Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, real `ZEROVPN_DOMAIN`, real SMTP relay, `ZEROVPN_CADDYFILE=./deploy/Caddyfile.prod`, `ZEROVPN_WG__BACKEND=kernel`. `make up-prod` skips the `dev` profile so MailHog never comes up. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
 
 ## Architecture
 
@@ -67,7 +66,7 @@ See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace wit
 ├── Cargo.toml                     # workspace
 ├── Makefile
 ├── docker-compose.yml
-├── docker-compose.dev.yml
+├── .env.example
 ├── CHANGELOG.md
 ├── TODO.md
 └── README.md

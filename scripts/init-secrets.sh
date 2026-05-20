@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Generates random secrets for an environment.
+# Generates random secrets and writes them into `.env` + `secrets/*.txt`.
 #
-#   ./scripts/init-secrets.sh dev      # writes .env.dev + secrets/dev/*.txt
-#   ./scripts/init-secrets.sh prod     # writes .env.prod + secrets/prod/*.txt
+#   ./scripts/init-secrets.sh
 #
 # Idempotent: only replaces values that are still CHANGEME, and only writes
 # secret files that don't already exist. Run again after a rotation by first
@@ -11,24 +10,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-env_name="${1:-}"
-case "$env_name" in
-    dev|prod) ;;
-    "")
-        echo "Usage: $0 <dev|prod>" >&2
-        exit 1
-        ;;
-    *)
-        echo "ERROR: unknown environment '$env_name' (expected: dev | prod)" >&2
-        exit 1
-        ;;
-esac
-
-env_file=".env.${env_name}"
-secrets_dir="secrets/${env_name}"
+env_file=".env"
+secrets_dir="secrets"
 
 if [[ ! -f "$env_file" ]]; then
-    echo "ERROR: $env_file not found. Run: cp .env.${env_name}.example $env_file" >&2
+    echo "ERROR: $env_file not found. Run: cp .env.example $env_file" >&2
     exit 1
 fi
 
@@ -69,9 +55,8 @@ awk -v ss="$session_secret" -v kek="$kek" -v dbpw="$db_password" -v rpw="$redis_
     { print }
 ' "$env_file" > "$tmp"
 mv "$tmp" "$env_file"
+chmod 600 "$env_file"
 
-# Per-environment secrets directory. Different KEKs/DB passwords across envs
-# is a security requirement, not a convenience.
 mkdir -p "$secrets_dir"
 chmod 700 "$secrets_dir"
 
@@ -88,4 +73,4 @@ write_if_missing "$secrets_dir/redis_password.txt"   "$redis_password"
 write_if_missing "$secrets_dir/session_secret.txt"   "$session_secret"
 write_if_missing "$secrets_dir/kek.txt"              "$kek"
 
-echo "Secrets initialized for '$env_name' in $env_file + $secrets_dir/."
+echo "Secrets initialized in $env_file + $secrets_dir/."

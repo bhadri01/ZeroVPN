@@ -2,30 +2,27 @@
 
 ## Dev vs. prod isolation
 
-ZeroVPN ships two Docker Compose overrides on top of a shared `docker-compose.yml` baseline:
+ZeroVPN ships a single `docker-compose.yml` + single `.env`. Dev vs. prod is driven by `.env` values; optional service groups (MailHog, observability stack, WG, ingest) come up via compose **profiles**:
 
 | | dev | prod |
 |---|---|---|
-| Compose layer | `docker-compose.yml` + `docker-compose.dev.yml` | `docker-compose.yml` + `docker-compose.prod.yml` |
-| Env file | `.env.dev` (from `.env.dev.example`) | `.env.prod` (from `.env.prod.example`) |
-| Secrets dir | `secrets/dev/` | `secrets/prod/` |
-| Caddyfile | `deploy/Caddyfile.dev` (auto_https off, port literals) | `deploy/Caddyfile.prod` (real domain, Let's Encrypt) |
-| `ZEROVPN_ENVIRONMENT` | `dev` | `production` — api refuses to boot with default secrets |
-| Exposed host ports | 8080 (api), 5555 (zmq), 55432 (pg), 56379 (redis), 8025 (MailHog) | 80, 443, 51820/udp only |
-| Mailer | MailHog | real SMTP relay |
-| WG backend | `noop` | `shell` (requires `--profile wg`) |
-| Session cookie | not Secure (plaintext localhost) | Secure flag set |
-| Stats cadence | 5 s simulator | 30 s real poller |
+| Compose invocation | `docker compose --profile dev up -d` (via `make up`) | `docker compose up -d` (via `make up-prod`) |
+| Env file | `.env` (from `.env.example`) — `ZEROVPN_ENVIRONMENT=dev` | `.env` (same file, edited) — `ZEROVPN_ENVIRONMENT=production` |
+| Caddyfile | `deploy/Caddyfile.dev` (`ZEROVPN_CADDYFILE` defaults here) | `deploy/Caddyfile.prod` (set in `.env`) |
+| Exposed host ports | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 + 8025 (MailHog via `dev` profile) | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 (no MailHog) |
+| Mailer | MailHog (via `dev` profile) | real SMTP relay (set `ZEROVPN_SMTP__HOST` in `.env`) |
+| WG backend | `noop` | `kernel` (set in `.env`; requires `--profile wg`) |
+| Session cookie | not Secure (plaintext localhost) | Secure flag set (api enforces when `ZEROVPN_ENVIRONMENT=production`) |
 
-`make` defaults to `ENV=dev`. For prod, use `make <target> ENV=prod` or the `*-prod` aliases (`make setup-prod`, `make up-prod`).
+Compose profiles compose: `--profile dev --profile observability` enables both.
 
 ## First-time setup (dev)
 
 ```
 git clone <this repo>
 cd zerovpn
-make setup                                  # copies .env.dev.example → .env.dev, generates dev secrets, builds images
-make up
+make setup                                  # copies .env.example → .env, generates secrets, builds images
+make up                                     # docker compose --profile dev up -d
 make migrate
 make bootstrap-admin EMAIL=admin@example.com   # interactive password prompt
 ```
@@ -51,7 +48,7 @@ Open <http://localhost:5173> in your browser. The Vite dev server proxies `/api/
 
 How it works:
 
-- [scripts/dev-native.sh](../scripts/dev-native.sh) sources `.env.dev` then rewrites the docker-network hostnames (`db`, `redis`, `worker`, `mailhog`) to their `localhost:<host-port>` mappings from `docker-compose.dev.yml`. Single source of truth — change a secret in `.env.dev` and it flows through.
+- [scripts/dev-native.sh](../scripts/dev-native.sh) sources `.env` then rewrites the docker-network hostnames (`db`, `redis`, `worker`, `mailhog`) to their `localhost:<host-port>` mappings from `docker-compose.yml`. Single source of truth — change a secret in `.env` and it flows through.
 - The dockerized api/worker/frontend services are kept stopped while you iterate; ports 8080 and 5555 are free for the host processes to bind.
 - `make dev-down` stops the infra. To go back to the fully-dockerized loop: `make up`.
 
@@ -70,13 +67,14 @@ When to use which:
 ```
 git clone <this repo>
 cd zerovpn
-make setup-prod                              # copies .env.prod.example → .env.prod
-$EDITOR .env.prod                            # fill in ZEROVPN_DOMAIN, ZEROVPN_ACME_EMAIL, SMTP relay
-./scripts/init-secrets.sh prod               # fills CHANGEME values + writes secrets/prod/*.txt
-make up-prod
-make migrate ENV=prod
-make bootstrap-admin EMAIL=admin@yourdomain  ENV=prod
+make setup                                   # copies .env.example → .env, generates secrets
+$EDITOR .env                                 # see "going to production" block at the top of .env
+make up-prod                                 # docker compose up -d (no `dev` profile, so no MailHog)
+make migrate
+make bootstrap-admin EMAIL=admin@yourdomain
 ```
+
+The `.env.example` header lists the eight values that must flip for prod (`ZEROVPN_ENVIRONMENT`, `ZEROVPN_DOMAIN`, `ZEROVPN_PUBLIC_URL`, `ZEROVPN_ACME_EMAIL`, `ZEROVPN_CADDYFILE`, `ZEROVPN_SMTP__HOST`, `ZEROVPN_WG__BACKEND`, log levels).
 
 `ZEROVPN_DOMAIN` must resolve to this host before `make up-prod`, or Caddy's first Let's Encrypt issuance attempt will fail. The api will also refuse to boot if `ZEROVPN_DOMAIN` is `localhost` or a `REPLACE_*` placeholder — see [validate_production_config in crates/zerovpn-api/src/main.rs](../crates/zerovpn-api/src/main.rs).
 
@@ -90,11 +88,11 @@ The default `make up` runs the management plane only — **no actual WireGuard i
    sudo modprobe wireguard
    ```
 
-2. **Set `ZEROVPN_WG__BACKEND=kernel` in `.env.prod`.** (`.env.prod.example` already ships with this default.) The api/worker drive peers directly via the kernel WireGuard netlink UAPI through `defguard_wireguard_rs` — no `wg` binary on the host, no `nsenter` shell hop. The legacy `shell` backend that shells out to `wg set` is still available for environments where netlink isn't reachable. Either way, the container running the controller needs `CAP_NET_ADMIN` and visibility of the WG interface's netns.
+2. **Set `ZEROVPN_WG__BACKEND=kernel` in `.env`.** The api/worker drive peers directly via the kernel WireGuard netlink UAPI through `defguard_wireguard_rs` — no `wg` binary on the host, no `nsenter` shell hop. The legacy `shell` backend that shells out to `wg set` is still available for environments where netlink isn't reachable. Either way, the container running the controller needs `CAP_NET_ADMIN` and visibility of the WG interface's netns.
 
-3. **Bring up the wg container alongside the rest of the prod stack:**
+3. **Bring up the wg container alongside the rest of the stack:**
    ```
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile wg up -d
+   docker compose --profile wg up -d
    ```
    The bootstrap routine writes `wg0.conf` into the shared `wg_config` volume on first boot; the wg container picks it up and runs `wg-quick up wg0`.
 
@@ -105,12 +103,13 @@ The default `make up` runs the management plane only — **no actual WireGuard i
 ## Bringing up observability
 
 ```
-docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+docker compose --profile observability up -d
+# or alongside dev: docker compose --profile dev --profile observability up -d
 ```
 
 Adds Prometheus (scraping `api:8080/metrics` every 15 s), Grafana with the Prometheus + Loki datasources pre-provisioned (admin/admin at <http://localhost/grafana/>), Loki + Promtail for centralized container logs, and a nightly backup container.
 
-For age-encrypted backups, set `ZEROVPN_BACKUP_AGE_RECIPIENT` to your age public key in the active env file (`.env.dev` or `.env.prod`) before bringing up the profile.
+For age-encrypted backups, set `ZEROVPN_BACKUP_AGE_RECIPIENT` to your age public key in `.env` before bringing up the profile.
 
 ## Healthchecks
 
@@ -151,7 +150,7 @@ ZeroVPN runs in "every-tick kept forever" mode by default (migration 5). At each
 | 200 peers, 1 Hz | 17.3M | 860 MB | 26 GB | 314 GB |
 | 50 peers, 5 Hz cadence | 17M | 860 MB | 26 GB | 314 GB |
 
-If that's too much, dial back via one of these knobs (set in `.env.dev` / `.env.prod`):
+If that's too much, dial back via one of these knobs (set in `.env`):
 
 - **Slower cadence**: `ZEROVPN_STATS_INTERVAL_SECS=5` → 5× less disk
 - **Raw-sample window**: `ZEROVPN_SAMPLE_RETENTION_DAYS=30` → drop per-device samples after 30 days (aggregates still kept forever, so long-term charts unaffected)
@@ -168,12 +167,13 @@ Privacy note: prior to migration 5 the system was explicitly "no-logs" (raw samp
 ## Rotating secrets
 
 ```
-make down ENV=<dev|prod>
-rm secrets/<env>/*.txt
-rm .env.<env>                          # so init-secrets.sh re-reads the example template
-cp .env.<env>.example .env.<env>
-./scripts/init-secrets.sh <env>        # regenerates with new values
-make up ENV=<env>
+make down
+rm secrets/*.txt
+rm .env                                # so init-secrets.sh re-reads the example template
+cp .env.example .env
+$EDITOR .env                           # re-apply any prod values (domain, SMTP, Caddyfile, etc.)
+./scripts/init-secrets.sh              # regenerates with new values
+make up                                # or make up-prod
 ```
 
 > **Caution:** rotating the session secret invalidates all live sessions; users must log in again. Rotating the KEK (`ZEROVPN_KEK`) breaks any AES-GCM-encrypted column unless you decrypt + re-encrypt with the old → new key pair first. TOTP secrets are KEK-encrypted; rotating the KEK without migration disables 2FA for everyone (they'll need to re-enroll).
@@ -209,14 +209,15 @@ The default `linuxserver/wireguard` image is fine for vanilla WireGuard. For Amn
 
 ## Security review checklist (before exposing to the internet)
 
-- [ ] Brought up via `make up-prod` (not `make up`) — confirms `.env.prod` + `Caddyfile.prod` are in effect
-- [ ] `ZEROVPN_ENVIRONMENT=production` in `.env.prod`; the api refuses to boot otherwise
-- [ ] `ZEROVPN_KEK` is a fresh 32-byte base64 random, distinct from any dev value (the prod boot check rejects `CHANGEME` and short values; `secrets/prod/` is a separate directory from `secrets/dev/`)
+- [ ] Brought up via `make up-prod` (not `make up`) — `make up-prod` omits the `dev` profile so MailHog never comes up
+- [ ] `ZEROVPN_ENVIRONMENT=production` in `.env`; the api refuses to boot otherwise
+- [ ] `ZEROVPN_KEK` is a fresh 32-byte base64 random, distinct from any value previously used in dev (the prod boot check rejects `CHANGEME` and short values; rotate via the "Rotating secrets" section before exposing publicly)
 - [ ] `ZEROVPN_DOMAIN` set to a real domain that already resolves to this host (LE issuance otherwise fails on first boot)
 - [ ] `ZEROVPN_ACME_EMAIL` set so Let's Encrypt can contact you on rate-limit / expiry
-- [ ] `ZEROVPN_SMTP__HOST` is a real relay (not `mailhog`, not `smtp.REPLACE_*`); api refuses to boot with placeholders
+- [ ] `ZEROVPN_CADDYFILE=./deploy/Caddyfile.prod` so Caddy provisions LE certs against the real domain
+- [ ] `ZEROVPN_SMTP__HOST` is a real relay (not `mailhog`); api refuses to boot with placeholders
 - [ ] Firewall: 22/tcp (SSH), 80/tcp (Caddy redirect), 443/tcp+udp (Caddy + HTTP/3), 51820/udp (WireGuard) — nothing else
-- [ ] `secrets/prod/*.txt` mode 0600, `.env.prod` mode 0600 and not in git (`git check-ignore .env.prod` should print the file)
+- [ ] `secrets/*.txt` mode 0600, `.env` mode 0600 and not in git (`git check-ignore .env` should print the file)
 - [ ] Admin email/password rotated from the bootstrap default
 - [ ] Backup `AGE_RECIPIENT` configured + verify a restore drill before relying on it
 - [ ] `ZEROVPN_WG__BACKEND=kernel` (or `shell` for legacy `wg`-binary deployments) and `docker compose --profile wg up -d` to actually route packets

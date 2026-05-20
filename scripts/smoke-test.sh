@@ -34,13 +34,13 @@ echo "Frontend"
 check "frontend / returns HTML" bash -c "curl -fsSL $BASE/ | grep -qi '<html'"
 
 echo "Containers"
-check "db is healthy" bash -c "docker compose -f docker-compose.yml -f docker-compose.dev.yml ps db --format '{{.Health}}' | grep -q healthy"
-check "worker is up" bash -c "docker compose -f docker-compose.yml -f docker-compose.dev.yml ps worker --format '{{.Status}}' | grep -q '^Up'"
-check "api is up" bash -c "docker compose -f docker-compose.yml -f docker-compose.dev.yml ps api --format '{{.Status}}' | grep -q '^Up'"
+check "db is healthy" bash -c "docker compose ps db --format '{{.Health}}' | grep -q healthy"
+check "worker is up" bash -c "docker compose ps worker --format '{{.Status}}' | grep -q '^Up'"
+check "api is up" bash -c "docker compose ps api --format '{{.Status}}' | grep -q '^Up'"
 
 echo "Worker → API ZMQ"
-check "worker is publishing heartbeats" bash -c "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs worker | grep -q 'events.heartbeat'"
-check "api connected ZMQ subscriber" bash -c "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs api | grep -q 'zmq subscriber'"
+check "worker is publishing heartbeats" bash -c "docker compose logs worker | grep -q 'events.heartbeat'"
+check "api connected ZMQ subscriber" bash -c "docker compose logs api | grep -q 'zmq subscriber'"
 
 # ---- auth + device flow -----------------------------------------------------
 

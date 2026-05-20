@@ -1,13 +1,18 @@
 name: zerovpn
 
-# Shared baseline. Not runnable on its own — pick a mode override:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml  up -d
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Single compose file. Per-environment values come from `.env`; optional
+# service groups are gated by profiles:
 #
-# The overrides supply env_file (.env.dev / .env.prod), the right Caddyfile,
-# and the right secrets/ subdirectory mount. See Makefile for the wrapper.
+#   docker compose --profile dev up -d                          # core + MailHog (default for `make up`)
+#   docker compose up -d                                        # core only — prod-shape (no MailHog)
+#   docker compose --profile observability up -d                # add Prometheus + Grafana + Loki + nightly backup
+#   docker compose --profile wg up -d                           # add the WireGuard kernel container
+#   docker compose --profile ingest up -d                       # add the nflog-exporter
+#
+# Profiles compose; `--profile dev --profile observability` brings up both.
+# Dev vs. prod knobs (Caddyfile path, RUST_LOG, ZEROVPN_DOMAIN, SMTP relay,
+# secrets) live in `.env`. See `.env.example` for the full set.
 
-# Reusable bits
 x-restart: &default-restart
   restart: unless-stopped
 
@@ -22,10 +27,15 @@ services:
   caddy:
     image: caddy:2.11-alpine
     <<: [*default-restart, *default-logging]
+    env_file: .env
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp"
+    volumes:
+      - ${ZEROVPN_CADDYFILE:-./deploy/Caddyfile.dev}:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
     networks:
       - web
     depends_on:
@@ -62,8 +72,12 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.api
     <<: [*default-restart, *default-logging]
+    env_file: .env
     environment:
       ZEROVPN_BIND_ADDRESS: 0.0.0.0:8080
+    ports:
+      # Loopback-only — for native debugging via host. Safe to leave in prod.
+      - "127.0.0.1:18080:8080"
     networks:
       - web
       - backend
@@ -89,15 +103,20 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.worker
     <<: [*default-restart, *default-logging]
+    env_file: .env
+    environment:
+      ZEROVPN_INGEST__DEST_BIND: 0.0.0.0:9898
+    ports:
+      # Loopback-only ZMQ for native api debugging.
+      - "127.0.0.1:5555:5555"
+      # destination_ingest TCP endpoint — public-facing so external nflog
+      # exporters can connect.
+      - "9898:9898"
     networks:
       - backend
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "9898:9898"  # destination_ingest TCP endpoint
-    environment:
-      ZEROVPN_INGEST__DEST_BIND: 0.0.0.0:9898
     read_only: true
     tmpfs:
       - /tmp:size=64m
@@ -113,10 +132,14 @@ services:
       POSTGRES_DB: zerovpn
       POSTGRES_USER: zerovpn
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-    # Postgres 18+ images expect the volume at /var/lib/postgresql (parent),
-    # so pg_upgrade --link works without crossing mount boundaries. Data
-    # lands in /var/lib/postgresql/<major>/. The secrets/<env>/db_password.txt
-    # mount is added by the dev/prod override.
+    volumes:
+      # Postgres 18+ expects the volume at the parent dir so pg_upgrade --link
+      # works without crossing mount boundaries; data lands in
+      # /var/lib/postgresql/<major>/.
+      - pg_data:/var/lib/postgresql
+      - ./secrets/db_password.txt:/run/secrets/db_password:ro
+    ports:
+      - "127.0.0.1:55432:5432"
     networks:
       - backend
     healthcheck:
@@ -153,43 +176,11 @@ services:
       - ""
       - --appendonly
       - "no"
+    ports:
+      - "127.0.0.1:56379:6379"
     networks:
       - backend
     mem_limit: 96m
-
-  # WireGuard runtime — opt-in via the `wg` profile so the rest of the
-  # stack works on macOS Docker Desktop where the WG kernel module may not
-  # be available. Run as:
-  #   docker compose --profile wg up -d
-  # In production on a Linux host with the kernel module, set
-  # ZEROVPN_WG__BACKEND=kernel on the api+worker so they drive peers via
-  # netlink/UAPI directly (no `wg` binary, no nsenter). The legacy
-  # `shell` backend is still available if a deployment needs to shell out
-  # to `wg set` instead.
-  wg:
-    image: linuxserver/wireguard:latest
-    profiles: ["wg"]
-    <<: [*default-restart, *default-logging]
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    sysctls:
-      - net.ipv4.ip_forward=1
-      - net.ipv4.conf.all.src_valid_mark=1
-    network_mode: host
-    environment:
-      PUID: "1000"
-      PGID: "1000"
-      TZ: UTC
-      INTERNAL_SUBNET: "10.10.0.0/22"
-      SERVERPORT: "51820"
-      # We supply our own wg0.conf — written by the api on first boot.
-      # Disable the image's auto-config-generation entirely.
-      PEERS: "0"
-    volumes:
-      - wg_config:/config
-      - /lib/modules:/lib/modules:ro
-    mem_limit: 64m
 
   dnsmasq:
     image: coredns/coredns:latest
@@ -206,14 +197,53 @@ services:
     command:
       - -conf
       - /etc/coredns/Corefile
-    # CoreDNS reads the same hosts file volume, logs each query to stdout,
-    # and reloads the hosts file periodically so DNS-name updates keep working.
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    platform: linux/amd64
+    profiles: [dev]
+    restart: unless-stopped
+    ports:
+      - "8025:8025"  # web UI
+      - "1025:1025"  # smtp
+    networks:
+      - backend
+    mem_limit: 64m
+
+  # WireGuard runtime — opt-in via the `wg` profile so the rest of the
+  # stack works on macOS Docker Desktop where the WG kernel module may not
+  # be available. On a Linux host with the kernel module, set
+  # ZEROVPN_WG__BACKEND=kernel in .env so api+worker drive peers via the
+  # netlink UAPI directly (no `wg` binary, no nsenter).
+  wg:
+    image: linuxserver/wireguard:latest
+    profiles: [wg]
+    <<: [*default-restart, *default-logging]
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    network_mode: host
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: UTC
+      INTERNAL_SUBNET: "10.10.0.0/22"
+      SERVERPORT: "51820"
+      # We supply our own wg0.conf — written by the api on first boot.
+      PEERS: "0"
+    volumes:
+      - wg_config:/config
+      - /lib/modules:/lib/modules:ro
+    mem_limit: 64m
 
   nflog-exporter:
     build:
       context: .
       dockerfile: deploy/Dockerfile.nflog-exporter
-    profiles: ["ingest"]
+    profiles: [ingest]
     <<: [*default-restart, *default-logging]
     networks:
       - backend
@@ -221,12 +251,88 @@ services:
       - worker
     environment:
       INGEST_ENDPOINT: worker:9898
-    # For now, this runs the exporter in a placeholder mode.
-    # In production, it would read from an NFLOG socket/FIFO.
-    # Run with: docker compose --profile ingest up -d
     stdin_open: true
     tty: false
     mem_limit: 32m
+
+  # ── Observability + backups (profile: observability) ───────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: [observability]
+    restart: unless-stopped
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom_data:/prometheus
+    networks:
+      - backend
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=14d
+    mem_limit: 256m
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_DEFAULT_THEME: dark
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: "http://localhost/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - backend
+    mem_limit: 128m
+
+  loki:
+    image: grafana/loki:latest
+    profiles: [observability]
+    restart: unless-stopped
+    volumes:
+      - ./deploy/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - backend
+    mem_limit: 256m
+
+  promtail:
+    image: grafana/promtail:latest
+    profiles: [observability]
+    restart: unless-stopped
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./deploy/promtail-config.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - backend
+    mem_limit: 96m
+
+  # Nightly encrypted backup of the Postgres volume + secrets dir.
+  # Set ZEROVPN_BACKUP_AGE_RECIPIENT in .env to age-encrypt the tarball;
+  # without it, archives land in `backup_data` unencrypted.
+  backup:
+    image: offen/docker-volume-backup:v2
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      BACKUP_CRON_EXPRESSION: "0 3 * * *"
+      BACKUP_FILENAME: "zerovpn-{{ .Year }}{{ printf \"%02d\" (int .Month) }}{{ printf \"%02d\" .Day }}.tar.gz"
+      BACKUP_RETENTION_DAYS: "14"
+      AGE_PUBLIC_KEYS: "${ZEROVPN_BACKUP_AGE_RECIPIENT:-}"
+      BACKUP_PRUNING_LEEWAY: "30m"
+    volumes:
+      - pg_data:/backup/db:ro
+      - backup_data:/archive
+      - ./secrets:/backup/secrets:ro
+    networks:
+      - backend
+    mem_limit: 96m
 
 volumes:
   caddy_data:
@@ -234,6 +340,10 @@ volumes:
   pg_data:
   dnsmasq_conf:
   wg_config:
+  prom_data:
+  grafana_data:
+  loki_data:
+  backup_data:
 
 networks:
   web:

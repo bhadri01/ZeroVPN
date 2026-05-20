@@ -747,32 +747,6 @@ function BentoCard({
   )
 }
 
-function MiniStat({
-  label,
-  value,
-  unit,
-}: {
-  label: string
-  value: string
-  unit?: string
-}) {
-  return (
-    <div className="border-border flex flex-col gap-0.5 border p-2">
-      <span className="text-muted-foreground/70 font-mono text-[9px] uppercase">
-        {label}
-      </span>
-      <span className="font-heading text-xl tracking-[-0.02em]">
-        {value}
-        {unit && (
-          <span className="text-muted-foreground ml-1 font-mono text-[10px]">
-            {unit}
-          </span>
-        )}
-      </span>
-    </div>
-  )
-}
-
 // ── Preview 2: Topology ──────────────────────────────────────────────
 
 function PreviewTopology() {
