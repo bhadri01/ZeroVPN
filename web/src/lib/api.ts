@@ -545,6 +545,10 @@ export const serverCandles = (
   before?: string,
 ) => apiFetch<CandleResponse>(`/servers/${id}/candles?${candleQs(tf, limit, before)}`)
 
+/** User-aggregate candles across all of the caller's devices (dashboard). */
+export const userCandles = (tf: Timeframe = "1m", limit = 120, before?: string) =>
+  apiFetch<CandleResponse>(`/candles?${candleQs(tf, limit, before)}`)
+
 // --- 2FA -----------------------------------------------------------------
 
 export interface TotpSetupResponse {

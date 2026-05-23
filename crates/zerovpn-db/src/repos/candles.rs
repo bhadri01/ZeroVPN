@@ -136,14 +136,22 @@ async fn query_candles(
           ORDER BY bucket DESC \
           LIMIT $2"
     );
-    let rows: Vec<(OffsetDateTime, i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(&sql)
+    let rows: Vec<CandleTuple> = sqlx::query_as(&sql)
         .bind(id)
         .bind(limit)
         .bind(before)
         .fetch_all(pool)
         .await?;
-    // Returned newest-first; flip to chronological for the chart and fold the
-    // Σsum / Σsamples into an average.
+    Ok(decode_candles(rows))
+}
+
+/// Raw aggregate row shape every candle query returns:
+/// `(bucket, rx_high, rx_low, rx_sum, tx_high, tx_low, tx_sum, samples)`.
+type CandleTuple = (OffsetDateTime, i64, i64, i64, i64, i64, i64, i64);
+
+/// Queries return newest-first; flip to chronological for the chart and fold
+/// the Σsum / Σsamples into an average.
+fn decode_candles(rows: Vec<CandleTuple>) -> Vec<Candle> {
     let mut out: Vec<Candle> = rows
         .into_iter()
         .rev()
@@ -161,7 +169,7 @@ async fn query_candles(
         })
         .collect();
     out.shrink_to_fit();
-    Ok(out)
+    out
 }
 
 pub async fn device_candles(
@@ -182,6 +190,59 @@ pub async fn server_candles(
     limit: i64,
 ) -> sqlx::Result<Vec<Candle>> {
     query_candles(pool, Scope::Server, server_id, tf, before, limit).await
+}
+
+/// User-aggregate candles across all of a user's devices — backs the dashboard
+/// "All devices" chart. Unlike the per-device/per-server tables there's no
+/// stored per-tick sum across an arbitrary device subset, so we aggregate in
+/// two levels:
+///   inner — per minute (or per day), SUM the devices' HL/Σ into one combined
+///           bar and take MAX(samples) as that period's tick count (~60);
+///   outer — fold the per-minute bars into the requested timeframe with
+///           MAX(high)/MIN(low)/Σ(sum)/Σ(samples), so `avg = Σsum / Σsamples`
+///           is the true combined average rate.
+/// `high`/`low` are a per-minute sum-envelope (best obtainable without a stored
+/// per-tick cross-device series); `avg` is exact.
+pub async fn user_candles(
+    pool: &PgPool,
+    user_id: Uuid,
+    tf: Timeframe,
+    before: Option<OffsetDateTime>,
+    limit: i64,
+) -> sqlx::Result<Vec<Candle>> {
+    let table = if tf.uses_daily() {
+        "bandwidth_candles_1d"
+    } else {
+        "bandwidth_candles_1m"
+    };
+    let bucket = tf.bucket_expr();
+    let sql = format!(
+        "SELECT tf_bucket, \
+                MAX(m_rx_high)::bigint, MIN(m_rx_low)::bigint, SUM(m_rx_sum)::bigint, \
+                MAX(m_tx_high)::bigint, MIN(m_tx_low)::bigint, SUM(m_tx_sum)::bigint, \
+                SUM(m_samples)::bigint \
+           FROM ( \
+             SELECT {bucket} AS tf_bucket, c.bucket_start AS minute, \
+                    SUM(c.rx_high) AS m_rx_high, SUM(c.rx_low) AS m_rx_low, SUM(c.rx_sum) AS m_rx_sum, \
+                    SUM(c.tx_high) AS m_tx_high, SUM(c.tx_low) AS m_tx_low, SUM(c.tx_sum) AS m_tx_sum, \
+                    MAX(c.samples) AS m_samples \
+               FROM {table} c \
+               JOIN devices d ON d.id = c.device_id \
+              WHERE d.user_id = $1 \
+                AND ($3::timestamptz IS NULL OR c.bucket_start < $3) \
+              GROUP BY tf_bucket, c.bucket_start \
+           ) per_min \
+          GROUP BY tf_bucket \
+          ORDER BY tf_bucket DESC \
+          LIMIT $2"
+    );
+    let rows: Vec<CandleTuple> = sqlx::query_as(&sql)
+        .bind(user_id)
+        .bind(limit)
+        .bind(before)
+        .fetch_all(pool)
+        .await?;
+    Ok(decode_candles(rows))
 }
 
 /// Batch-insert completed 1-minute candles. Idempotent: a re-flushed minute

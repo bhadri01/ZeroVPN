@@ -400,3 +400,30 @@ pub async fn server_candles(
         candles: rows.into_iter().map(Into::into).collect(),
     }))
 }
+
+/// User-aggregate candles across all of the caller's devices — backs the
+/// dashboard "All devices" bandwidth chart.
+#[utoipa::path(
+    get,
+    path = "/candles",
+    tag = "Bandwidth",
+    params(CandleQuery),
+    responses(
+        (status = 200, description = "User-aggregate OHLC candles", body = CandleResponse),
+        (status = 400, description = "Invalid timeframe"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn user_candles(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Query(q): Query<CandleQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let (tf, tf_str) = parse_tf(q.tf)?;
+    let limit = q.limit.unwrap_or(120).clamp(1, 1000);
+    let rows = candles::user_candles(&state.pool, user.id, tf, q.before, limit).await?;
+    Ok(Json(CandleResponse {
+        tf: tf_str,
+        candles: rows.into_iter().map(Into::into).collect(),
+    }))
+}

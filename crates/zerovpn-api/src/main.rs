@@ -232,6 +232,7 @@ async fn main() -> Result<()> {
                 .route("/devices/{id}/candles", get(routes::bandwidth::device_candles))
                 .route("/servers/{id}/history", get(routes::bandwidth::server_history))
                 .route("/servers/{id}/candles", get(routes::bandwidth::server_candles))
+                .route("/candles", get(routes::bandwidth::user_candles))
                 .route("/bandwidth", get(routes::bandwidth::for_user))
                 .route("/auth/totp/setup", post(routes::totp::setup))
                 .route("/auth/totp/enable", post(routes::totp::enable))

@@ -6,9 +6,10 @@ import {
   type Timeframe,
   deviceCandles,
   serverCandles,
+  userCandles,
 } from "@/lib/api"
 
-export type CandleScope = "device" | "server"
+export type CandleScope = "device" | "server" | "user"
 
 /** Candles fetched per request. The latest page auto-refreshes; older pages
  *  are loaded on demand (cursor = oldest loaded bucket) as the user pans. */
@@ -42,13 +43,23 @@ export function useCandleSeries(
   id: string,
   tf: Timeframe,
 ): CandleSeries {
-  const fetcher = scope === "device" ? deviceCandles : serverCandles
+  // One page, optionally before a cursor. The `user` scope is session-keyed
+  // (aggregates the caller's own devices) and ignores `id`.
+  const load = useCallback(
+    (before?: string) =>
+      scope === "device"
+        ? deviceCandles(id, tf, PAGE, before)
+        : scope === "server"
+          ? serverCandles(id, tf, PAGE, before)
+          : userCandles(tf, PAGE, before),
+    [scope, id, tf],
+  )
 
   // Latest page — refetched on an interval so the newest candle keeps moving.
   const latestQ = useQuery({
     queryKey: ["candles", scope, id, tf, "latest"],
-    queryFn: () => fetcher(id, tf, PAGE),
-    enabled: id.length > 0,
+    queryFn: () => load(),
+    enabled: scope === "user" || id.length > 0,
     refetchInterval: tf === "1m" ? 15_000 : 60_000,
   })
 
@@ -78,7 +89,7 @@ export function useCandleSeries(
     if (isLoadingOlder || !hasMore || candles.length === 0) return
     const cursor = candles[0].bucket_start
     setIsLoadingOlder(true)
-    fetcher(id, tf, PAGE, cursor)
+    load(cursor)
       .then((res) => {
         if (res.candles.length < PAGE) setHasMore(false)
         if (res.candles.length > 0) {
@@ -92,7 +103,7 @@ export function useCandleSeries(
       })
       .catch(() => setHasMore(false))
       .finally(() => setIsLoadingOlder(false))
-  }, [fetcher, id, tf, candles, hasMore, isLoadingOlder])
+  }, [load, candles, hasMore, isLoadingOlder])
 
   return {
     candles,

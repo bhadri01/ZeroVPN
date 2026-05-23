@@ -92,7 +92,8 @@ function CandleTooltip({ active, payload }: TipProps) {
 
 interface Props {
   scope: CandleScope
-  id: string
+  /** Device/server UUID. Omitted for the `user` scope (session-keyed). */
+  id?: string
   height?: number
 }
 
@@ -120,7 +121,7 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
   const [tf, setTf] = useState<Timeframe>("1m")
   const [chartType, setChartType] = useState<ChartType>("bar")
   const { candles, loadOlder, isLoadingOlder, hasMore, isLoading, isError } =
-    useCandleSeries(scope, id, tf)
+    useCandleSeries(scope, id ?? "", tf)
 
   // Horizontal view state: `visibleCount` = zoom; `rightEnd` = the timestamp at
   // the right edge, or null when pinned to the latest candle (auto-advance).

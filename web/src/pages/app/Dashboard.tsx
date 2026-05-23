@@ -6,13 +6,13 @@ import { Link } from "react-router"
 import { toast } from "sonner"
 
 import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
-import { BandwidthChart } from "@/components/charts/BandwidthChart"
+import { CandleChart } from "@/components/charts/CandleChart"
 import { CopyableCode } from "@/components/CopyableCode"
 import { LiveEventStream } from "@/components/dashboard/LiveEventStream"
 import { RecentActivity } from "@/components/dashboard/RecentActivity"
 import { EmptyState } from "@/components/EmptyState"
 import { PageStagger, StaggerItem } from "@/components/motion"
-import { Kpi, KpiStrip, PageHead, Panel, Seg } from "@/components/swiss"
+import { Kpi, KpiStrip, PageHead, Panel } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -32,10 +32,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
 import {
   ApiError,
-  type BandwidthRange,
   type CreatedDevice,
   type DeviceOs,
   adminListServers,
@@ -71,7 +69,6 @@ export function DashboardPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [name, setName] = useState("")
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
-  const [range, setRange] = useState<BandwidthRange>("24h")
 
   const liveDevices = useLiveStats((s) => s.devices)
   const rates = useMemo(() => {
@@ -92,11 +89,6 @@ export function DashboardPage() {
     refetchInterval: 30_000,
   })
 
-  const bandwidthQ = useQuery({
-    queryKey: ["bandwidth", "user", range],
-    queryFn: () => userBandwidth(range),
-    refetchInterval: range === "24h" ? 30_000 : 5 * 60_000,
-  })
   // Separate, always-30d query that feeds the KPI "Total" cards. Pinning
   // to the longest available aggregate window means the headline numbers
   // don't shift when the user toggles the chart range — "Total RX" stays
@@ -326,35 +318,12 @@ export function DashboardPage() {
         )}
       </AnimatePresence>
 
-      {/* Row 2: bandwidth — full width with range selector */}
+      {/* Row 2: bandwidth — OHLC candle chart aggregated across all the user's
+          devices. Owns its own timeframe + zoom/pan controls (same chart as
+          the device detail + admin overview pages). */}
       <StaggerItem>
-        <Panel
-        title="Bandwidth"
-        sub={`All devices · ${range}`}
-        right={
-          <Seg
-            value={range}
-            options={["24h", "7d", "30d"] as const}
-            onChange={setRange}
-          />
-        }
-      >
-        {bandwidthQ.isLoading ? (
-          <Skeleton className="h-[220px] rounded-none" />
-        ) : bandwidthQ.isError ? (
-          <div className="text-destructive border-border flex h-[220px] items-center justify-center border font-mono text-xs">
-            Failed to load bandwidth.
-          </div>
-        ) : (
-          // Bucketed historical view across every device the user owns
-          // — sourced from bandwidth_aggregates so it survives reloads
-          // and reflects the real window the user picked, not the last
-          // 60 s of WS frames. The KPI cards above carry the live rate.
-          <BandwidthChart
-            buckets={bandwidthQ.data?.buckets ?? []}
-            height={220}
-          />
-        )}
+        <Panel title="Bandwidth" sub="All devices · OHLC candles · scroll to zoom · drag to pan">
+          <CandleChart scope="user" height={260} />
         </Panel>
       </StaggerItem>
 

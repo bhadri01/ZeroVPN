@@ -73,6 +73,7 @@ use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, t
         bandwidth::device_candles,
         bandwidth::server_history,
         bandwidth::server_candles,
+        bandwidth::user_candles,
         bandwidth::for_user,
 
         // Admin
