@@ -162,7 +162,8 @@ export function DashboardPage() {
   // device that just connected doesn't backfill zeros into the past.
   const liveHistory = useMemo(() => {
     const ids = onlineDeviceIds
-    if (ids.length === 0) return { rx: [] as number[], tx: [] as number[] }
+    if (ids.length === 0)
+      return { rx: [] as number[], tx: [] as number[], total: [] as number[] }
     let maxLen = 0
     const rxSlices: number[][] = []
     const txSlices: number[][] = []
@@ -177,7 +178,7 @@ export function DashboardPage() {
       txSlices.push(tx)
       maxLen = Math.max(maxLen, rx.length, tx.length)
     }
-    if (maxLen === 0) return { rx: [], tx: [] }
+    if (maxLen === 0) return { rx: [], tx: [], total: [] }
     const rx = new Array<number>(maxLen).fill(0)
     const tx = new Array<number>(maxLen).fill(0)
     for (const s of rxSlices) {
@@ -188,7 +189,9 @@ export function DashboardPage() {
       const off = maxLen - s.length
       for (let i = 0; i < s.length; i++) tx[off + i] += s[i]
     }
-    return { rx, tx }
+    // Combined per-second total (rx+tx) — the "Total usage" card's line.
+    const total = rx.map((v, i) => v + tx[i])
+    return { rx, tx, total }
   }, [onlineDeviceIds, liveDevices])
 
   const servers = serversQ.data ?? []
@@ -283,12 +286,15 @@ export function DashboardPage() {
           deltaTone={onlineCount > 0 ? "up" : undefined}
         />
         <Kpi
-          label="Total usage"
-          value={
-            totalsQ.isLoading ? "—" : formatBytes(totalUsageBytes)
+          label="Total RX"
+          value={totalsQ.isLoading ? "—" : formatBytes(totalRxBytes)}
+          spark={liveHistory.rx}
+          sparkColor="var(--chart-1)"
+          footL={
+            onlineCount === 0
+              ? "no online devices"
+              : `live · ${formatRate(totalRx)}`
           }
-          footL={`RX ${formatBytes(totalRxBytes)} · TX ${formatBytes(totalTxBytes)}`}
-          footR={isAdmin && servers.length > 0 ? `${liveHubs}/${servers.length} hubs` : undefined}
         />
         <Kpi
           label="Total TX"
@@ -302,15 +308,14 @@ export function DashboardPage() {
           }
         />
         <Kpi
-          label="Total RX"
-          value={totalsQ.isLoading ? "—" : formatBytes(totalRxBytes)}
-          spark={liveHistory.rx}
-          sparkColor="var(--chart-1)"
-          footL={
-            onlineCount === 0
-              ? "no online devices"
-              : `live · ${formatRate(totalRx)}`
+          label="Total usage"
+          value={
+            totalsQ.isLoading ? "—" : formatBytes(totalUsageBytes)
           }
+          spark={liveHistory.total}
+          sparkColor="var(--primary)"
+          footL={`RX ${formatBytes(totalRxBytes)} · TX ${formatBytes(totalTxBytes)}`}
+          footR={isAdmin && servers.length > 0 ? `${liveHubs}/${servers.length} hubs` : undefined}
         />
         </KpiStrip>
       </StaggerItem>

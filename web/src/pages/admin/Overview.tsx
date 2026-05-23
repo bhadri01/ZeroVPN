@@ -12,6 +12,7 @@ import { AnimatePresence, motion } from "motion/react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
+import { CandleChart } from "@/components/charts/CandleChart"
 import {
   LiveIndicator,
   NetworkMonitorChart,
@@ -336,6 +337,15 @@ function ServerLiveCard({
             TX
           </span>
         </div>
+      </div>
+
+      {/* Historical candles — server-aggregate OHLC across all peers. The
+          chart owns its timeframe + zoom/pan/lazy-history controls. */}
+      <div className="border-border flex flex-col gap-2 border-t pt-4">
+        <span className="text-muted-foreground font-mono text-[10px] uppercase tracking-wide">
+          Bandwidth candles · scroll to zoom · drag to pan
+        </span>
+        <CandleChart scope="server" id={server.id} height={260} />
       </div>
     </div>
   )

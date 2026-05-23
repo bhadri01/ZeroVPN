@@ -475,6 +475,71 @@ export const deviceHistory = (id: string, opts?: HistoryOpts) =>
 export const serverHistory = (id: string, opts?: HistoryOpts) =>
   apiFetch<ServerHistoryResponse>(`/servers/${id}/history${historyQs(opts)}`)
 
+// --- OHLC bandwidth candles (trading-style HL + average) ---------------------
+// The 1-minute candle is the source of truth (worker-accumulated); coarser
+// timeframes are derived on read and the long ones (1d/7d/1mo) come from a
+// daily rollup. Rates are bits/sec.
+
+export type Timeframe =
+  | "1m"
+  | "3m"
+  | "5m"
+  | "15m"
+  | "30m"
+  | "1h"
+  | "1d"
+  | "7d"
+  | "1mo"
+
+export const TIMEFRAMES: { value: Timeframe; label: string }[] = [
+  { value: "1m", label: "1 min" },
+  { value: "3m", label: "3 min" },
+  { value: "5m", label: "5 min" },
+  { value: "15m", label: "15 min" },
+  { value: "30m", label: "30 min" },
+  { value: "1h", label: "1 hour" },
+  { value: "1d", label: "1 day" },
+  { value: "7d", label: "7 day" },
+  { value: "1mo", label: "1 month" },
+]
+
+export interface Candle {
+  bucket_start: string
+  rx_high: number
+  rx_low: number
+  rx_avg: number
+  tx_high: number
+  tx_low: number
+  tx_avg: number
+}
+
+export interface CandleResponse {
+  tf: Timeframe
+  candles: Candle[]
+}
+
+// `before` (RFC3339) pages backwards: returns only candles older than it, so
+// the chart can lazily load history as the user pans/scrolls left.
+function candleQs(tf: Timeframe, limit: number, before?: string): string {
+  const p = new URLSearchParams({ tf, limit: String(limit) })
+  if (before) p.set("before", before)
+  return p.toString()
+}
+
+export const deviceCandles = (
+  id: string,
+  tf: Timeframe = "1m",
+  limit = 120,
+  before?: string,
+) => apiFetch<CandleResponse>(`/devices/${id}/candles?${candleQs(tf, limit, before)}`)
+
+export const serverCandles = (
+  id: string,
+  tf: Timeframe = "1m",
+  limit = 120,
+  before?: string,
+) => apiFetch<CandleResponse>(`/servers/${id}/candles?${candleQs(tf, limit, before)}`)
+
 // --- 2FA -----------------------------------------------------------------
 
 export interface TotpSetupResponse {

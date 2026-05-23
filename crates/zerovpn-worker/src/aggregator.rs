@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use time::OffsetDateTime;
 use tracing::{info, warn};
-use zerovpn_db::{PgPool, repos::bandwidth};
+use zerovpn_db::{PgPool, repos::{bandwidth, candles}};
 
 /// 1-minute cadence. Each tick re-rolls the current hour (idempotently),
 /// so the dashboard never trails by more than a minute.
@@ -74,6 +74,26 @@ async fn run_once(pool: &PgPool) {
     match bandwidth::rollup_daily(pool, prev_day).await {
         Ok(n) => info!(?prev_day, rows = n, "previous-day rollup"),
         Err(e) => warn!(?e, "previous-day rollup failed"),
+    }
+
+    // OHLC candle daily rollup — fold the 1-minute candles into the daily
+    // table that backs the 1d/7d/1month timeframes, so those views never
+    // scan weeks of minute rows. Same current-day + previous-day pattern as
+    // the byte aggregates above (midnight straddle), idempotent on conflict.
+    let cur_day_end = cur_day + time::Duration::days(1);
+    let prev_day_end = cur_day;
+    for (start, end, label) in [
+        (cur_day, cur_day_end, "current-day candle rollup"),
+        (prev_day, prev_day_end, "previous-day candle rollup"),
+    ] {
+        match candles::rollup_device_daily(pool, start, end).await {
+            Ok(n) => info!(?start, rows = n, "{label} (device)"),
+            Err(e) => warn!(?e, "{label} (device) failed"),
+        }
+        match candles::rollup_server_daily(pool, start, end).await {
+            Ok(n) => info!(?start, rows = n, "{label} (server)"),
+            Err(e) => warn!(?e, "{label} (server) failed"),
+        }
     }
 }
 

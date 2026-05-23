@@ -29,7 +29,7 @@ import { useEffect, useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 
-import { BandwidthChart } from "@/components/charts/BandwidthChart"
+import { CandleChart } from "@/components/charts/CandleChart"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { EditDeviceDialog } from "@/components/devices/EditDeviceDialog"
@@ -41,7 +41,6 @@ import {
   KpiStrip,
   PageHead,
   Panel,
-  Seg,
   fmtRel,
 } from "@/components/swiss"
 import { StatusPill } from "@/components/StatusPill"
@@ -75,7 +74,6 @@ import { useBreadcrumbOverride } from "@/hooks/useBreadcrumbOverride"
 import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import {
   ApiError,
-  type BandwidthRange,
   type CreatedDevice,
   type DeviceEvent,
   type DeviceOs,
@@ -157,14 +155,16 @@ export function DeviceDetailPage() {
     refetchInterval: 30_000,
   })
 
-  // Bandwidth chart: device-scoped historical buckets, 24h/7d/30d range.
-  const [range, setRange] = useState<BandwidthRange>("24h")
+  // Headline "total bytes" tile — fixed 24 h window off the byte aggregates.
   const bwQ = useQuery({
-    queryKey: ["bandwidth", "device", id, range],
-    queryFn: () => deviceBandwidth(id, range),
+    queryKey: ["bandwidth", "device", id, "24h"],
+    queryFn: () => deviceBandwidth(id, "24h"),
     enabled: id.length > 0,
-    refetchInterval: range === "24h" ? 30_000 : 5 * 60_000,
+    refetchInterval: 30_000,
   })
+
+  // OHLC bandwidth candles are owned by the self-contained <CandleChart> below
+  // (timeframe + zoom/pan + lazy history live inside it).
 
   const [revokeOpen, setRevokeOpen] = useState(false)
   // Pause is reversible but still kicks the live tunnel for the user, so
@@ -278,6 +278,9 @@ export function DeviceDetailPage() {
   const d = deviceQ.data
   const rxHistory = live?.rxHistory ?? []
   const txHistory = live?.txHistory ?? []
+  // Combined per-second total (rx+tx) — the "Total" KPI card's line chart.
+  // rx/tx histories are pushed together so they share a length.
+  const totalHistory = rxHistory.map((v, i) => v + (txHistory[i] ?? 0))
   const isOnline = connState(d) === "online"
   const isPaused = d.status === "paused"
   const isRevoked = d.status === "revoked"
@@ -294,10 +297,15 @@ export function DeviceDetailPage() {
   // 30-day total — derived from the deviceBandwidth(30d) call, summed.
   // Pulled separately so the headline tile is honest about what window
   // it's showing.
-  const totalBytes = (bwQ.data?.buckets ?? []).reduce(
-    (s, b) => s + b.rx_bytes + b.tx_bytes,
+  const total24hRx = (bwQ.data?.buckets ?? []).reduce(
+    (s, b) => s + b.rx_bytes,
     0,
   )
+  const total24hTx = (bwQ.data?.buckets ?? []).reduce(
+    (s, b) => s + b.tx_bytes,
+    0,
+  )
+  const totalBytes = total24hRx + total24hTx
 
   const allowedIpsForDisplay = "0.0.0.0/0, ::/0"
   const dnsForDisplay =
@@ -309,9 +317,17 @@ export function DeviceDetailPage() {
     <PageStagger>
       <StaggerItem>
       <PageHead
-        eyebrow={`Devices · ${d.id.slice(0, 8).toUpperCase()}`}
+        eyebrow={`${d.os} · ${d.device_type} · ${d.id.slice(0, 8).toUpperCase()}`}
         title={d.name}
-        sub={`${d.os} · ${d.allocated_ip} · added ${ageLabel} ago`}
+        sub={
+          <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <span className="font-mono">{d.allocated_ip}</span>
+            <CopyIcon value={d.allocated_ip} title="Copy IP address" />
+            <span className="text-muted-foreground/70">
+              · added {ageLabel} ago
+            </span>
+          </span>
+        }
         right={
           <>
             <StatusPill
@@ -381,31 +397,47 @@ export function DeviceDetailPage() {
       />
       </StaggerItem>
 
-      {/* KPI strip — design's 4-up: TX live, RX live, Total (window), Last handshake */}
+      {/* KPI strip — design's 4-up: RX live, TX live, Total (window), Last handshake */}
       <StaggerItem>
       <KpiStrip>
         <Kpi
-          label="TX · live"
-          value={isOnline ? formatBps(live?.txBps ?? 0) : <Dash />}
-          spark={isOnline ? txHistory.slice(-32) : []}
-          sparkColor="var(--primary)"
-          footL={isOnline ? "live" : "idle"}
-          deltaTone={isOnline ? "up" : undefined}
-        />
-        <Kpi
-          label="RX · live"
-          value={isOnline ? formatBps(live?.rxBps ?? 0) : <Dash />}
+          label="RX"
+          value={
+            bwQ.isLoading ? (
+              <Dash />
+            ) : (
+              <span className="tabular-nums">{formatBytes(total24hRx)}</span>
+            )
+          }
           spark={isOnline ? rxHistory.slice(-32) : []}
           sparkColor="var(--chart-1)"
-          footL={isOnline ? "live" : "idle"}
+          footL={isOnline ? formatBps(live?.rxBps ?? 0) : "idle"}
+          footR={isOnline ? "live" : undefined}
           deltaTone={isOnline ? "up" : undefined}
         />
         <Kpi
-          label={`Total · ${range}`}
+          label="TX"
+          value={
+            bwQ.isLoading ? (
+              <Dash />
+            ) : (
+              <span className="tabular-nums">{formatBytes(total24hTx)}</span>
+            )
+          }
+          spark={isOnline ? txHistory.slice(-32) : []}
+          sparkColor="var(--primary)"
+          footL={isOnline ? formatBps(live?.txBps ?? 0) : "idle"}
+          footR={isOnline ? "live" : undefined}
+          deltaTone={isOnline ? "up" : undefined}
+        />
+        <Kpi
+          label="Total"
           value={
             bwQ.isLoading ? <Dash /> : <span className="tabular-nums">{formatBytes(totalBytes)}</span>
           }
-          footL={`window ${range}`}
+          spark={isOnline ? totalHistory.slice(-32) : []}
+          sparkColor="var(--primary)"
+          footL="rx + tx"
         />
         <Kpi
           label="Last handshake"
@@ -416,28 +448,11 @@ export function DeviceDetailPage() {
       </StaggerItem>
 
       {/* Bandwidth — full width now that Configuration lives in the header
-          "Edit" dialog (peer config + QR stay in the "Config" dialog). */}
+          "Edit" dialog (peer config + QR stay in the "Config" dialog). The
+          chart owns its timeframe + zoom/pan controls. */}
       <StaggerItem>
-        <Panel
-          title="Bandwidth"
-          sub={`device · ${range}`}
-          right={
-            <Seg
-              value={range}
-              options={["24h", "7d", "30d"] as const}
-              onChange={setRange}
-            />
-          }
-        >
-          {bwQ.isLoading ? (
-            <Skeleton className="h-[220px] rounded-none" />
-          ) : bwQ.isError ? (
-            <p className="text-destructive font-mono text-xs">
-              Failed to load bandwidth.
-            </p>
-          ) : (
-            <BandwidthChart buckets={bwQ.data?.buckets ?? []} height={220} />
-          )}
+        <Panel title="Bandwidth" sub="OHLC candles · scroll to zoom · drag to pan">
+          <CandleChart scope="device" id={id} height={260} />
         </Panel>
       </StaggerItem>
 

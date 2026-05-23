@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use time::OffsetDateTime;
 use tracing::{info, warn};
-use zerovpn_db::PgPool;
+use zerovpn_db::{PgPool, repos::candles};
 
 const TICK: Duration = Duration::from_secs(6 * 3600);
 
@@ -49,6 +49,12 @@ const SERVER_SAMPLE_RETENTION_DAYS: i64 = 30;
 const DEST_RETENTION_DAYS: i64 = 30;
 const AUDIT_RETENTION_DAYS: i64 = 30;
 const FAILED_LOGIN_RETENTION_DAYS: i64 = 30;
+/// 1-minute candles are high-volume (one row per active peer per minute) so
+/// they're kept the same 30 d as the raw samples that feed them. The daily
+/// candle rollups are tiny (one row per peer per day) and back the long
+/// timeframes, so they're kept ~2 years.
+const CANDLE_MINUTE_RETENTION_DAYS: i64 = 30;
+const CANDLE_DAILY_RETENTION_DAYS: i64 = 730;
 
 pub async fn run(pool: PgPool) {
     info!("retention purger started");
@@ -155,6 +161,19 @@ async fn run_once(pool: &PgPool) -> sqlx::Result<()> {
         now - time::Duration::days(FAILED_LOGIN_RETENTION_DAYS),
     )
     .await?;
+
+    // OHLC candles — 1-minute base rows past 30 d, daily rollups past 2 y.
+    // The daily table preserves the long-timeframe history once the minute
+    // rows it was derived from are gone.
+    let removed = candles::prune(
+        pool,
+        now - time::Duration::days(CANDLE_MINUTE_RETENTION_DAYS),
+        now - time::Duration::days(CANDLE_DAILY_RETENTION_DAYS),
+    )
+    .await?;
+    if removed > 0 {
+        info!(rows = removed, "purged expired bandwidth candles");
+    }
 
     Ok(())
 }

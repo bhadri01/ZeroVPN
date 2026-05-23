@@ -23,10 +23,11 @@ use uuid::Uuid;
 use zerovpn_db::{
     PgPool,
     repos::{
-        audit, bandwidth, connection_sessions, devices, peer_endpoint_history,
+        audit, bandwidth, candles, connection_sessions, devices, peer_endpoint_history,
         server_samples, servers,
     },
 };
+use zerovpn_db::repos::candles::CandleRow;
 use zerovpn_wire::Event;
 
 /// Per-pubkey in-memory state between poll ticks. Holds the cumulative
@@ -44,6 +45,104 @@ struct Cumulative {
     /// of every tick — that event invalidates the device query on the
     /// frontend so the online/offline pill flips without a manual refresh.
     handshake: i64,
+}
+
+/// One peer's (or one server's) in-progress 1-minute candle. Each per-second
+/// tick folds a rate (bits/sec) into High/Low/Σ/samples in O(1); on the
+/// minute boundary the bar becomes a flushed `CandleRow`.
+#[derive(Default, Clone)]
+struct Bar {
+    rx_high: i64,
+    rx_low: i64,
+    rx_sum: i64,
+    tx_high: i64,
+    tx_low: i64,
+    tx_sum: i64,
+    samples: i32,
+}
+
+impl Bar {
+    fn observe(&mut self, rx_bps: i64, tx_bps: i64) {
+        if self.samples == 0 {
+            self.rx_high = rx_bps;
+            self.rx_low = rx_bps;
+            self.tx_high = tx_bps;
+            self.tx_low = tx_bps;
+        } else {
+            self.rx_high = self.rx_high.max(rx_bps);
+            self.rx_low = self.rx_low.min(rx_bps);
+            self.tx_high = self.tx_high.max(tx_bps);
+            self.tx_low = self.tx_low.min(tx_bps);
+        }
+        self.rx_sum += rx_bps;
+        self.tx_sum += tx_bps;
+        self.samples += 1;
+    }
+
+    /// Skip flushing minutes that were idle end-to-end — for hundreds of
+    /// peers this avoids writing a zero-row per peer per minute forever.
+    /// Idle stretches simply show as gaps in the candle chart.
+    fn has_traffic(&self) -> bool {
+        self.rx_sum > 0 || self.tx_sum > 0
+    }
+}
+
+/// In-memory OHLC accumulator shared across poll ticks. Holds the bars for
+/// the minute currently being filled (per device and per server); rolling to
+/// a new minute drains the completed bars for the worker to flush.
+#[derive(Default)]
+struct CandleAccumulator {
+    /// Minute bucket (floored UTC) the live bars belong to. `None` until the
+    /// first tick after boot.
+    minute: Option<time::OffsetDateTime>,
+    devices: HashMap<Uuid, Bar>,
+    servers: HashMap<Uuid, Bar>,
+}
+
+impl CandleAccumulator {
+    /// Move the accumulator onto `bucket`. If a *different* minute was in
+    /// progress, drain it and return its completed (device_rows, server_rows)
+    /// for flushing. Idle bars are filtered out.
+    fn roll_to(&mut self, bucket: time::OffsetDateTime) -> Option<(Vec<CandleRow>, Vec<CandleRow>)> {
+        match self.minute {
+            Some(prev) if prev != bucket => {
+                let dev = drain_bars(&mut self.devices, prev);
+                let srv = drain_bars(&mut self.servers, prev);
+                self.minute = Some(bucket);
+                Some((dev, srv))
+            }
+            None => {
+                self.minute = Some(bucket);
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Drain a bar map into flushable rows, dropping idle bars and resetting the
+/// map for the next minute.
+fn drain_bars(map: &mut HashMap<Uuid, Bar>, bucket: time::OffsetDateTime) -> Vec<CandleRow> {
+    map.drain()
+        .filter(|(_, b)| b.has_traffic())
+        .map(|(id, b)| CandleRow {
+            id,
+            bucket_start: bucket,
+            rx_high: b.rx_high,
+            rx_low: b.rx_low,
+            rx_sum: b.rx_sum,
+            tx_high: b.tx_high,
+            tx_low: b.tx_low,
+            tx_sum: b.tx_sum,
+            samples: b.samples,
+        })
+        .collect()
+}
+
+/// Floor a timestamp to its minute (UTC) — the candle's `bucket_start`.
+fn floor_minute(t: time::OffsetDateTime) -> time::OffsetDateTime {
+    let secs = t.unix_timestamp();
+    time::OffsetDateTime::from_unix_timestamp(secs - secs.rem_euclid(60)).unwrap_or(t)
 }
 
 pub fn enabled() -> bool {
@@ -80,22 +179,37 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
     // on the very first tick after worker boot, otherwise the timeline
     // would gain a phantom transition for every existing peer).
     let mut prev_online: HashMap<Uuid, bool> = HashMap::new();
+    // OHLC accumulator — survives across ticks, flushes one row per
+    // device/server per minute.
+    let mut candles = CandleAccumulator::default();
     let mut ticker = tokio::time::interval(interval);
     loop {
         ticker.tick().await;
-        match poll_once(&pool, &tx, &iface, &mut last, &mut prev_online, interval).await {
+        match poll_once(
+            &pool,
+            &tx,
+            &iface,
+            &mut last,
+            &mut prev_online,
+            &mut candles,
+            interval,
+        )
+        .await
+        {
             Ok(n) => debug!(peers = n, "wg poll"),
             Err(e) => warn!(?e, "wg poll failed"),
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn poll_once(
     pool: &PgPool,
     tx: &mpsc::Sender<(String, Event)>,
     iface: &str,
     last: &mut HashMap<String, Cumulative>,
     prev_online: &mut HashMap<Uuid, bool>,
+    candle_acc: &mut CandleAccumulator,
     interval: Duration,
 ) -> anyhow::Result<usize> {
     // Run `wg show <iface> dump`. Output is tab-separated, one peer per line
@@ -115,6 +229,23 @@ async fn poll_once(
     let mut peers_seen: usize = 0;
     let now = time::OffsetDateTime::now_utc();
     let now_ms = now.unix_timestamp() * 1000;
+
+    // OHLC candles: if this tick crossed a minute boundary, flush the bars
+    // that completed last minute (one row per active device + per server) and
+    // start filling the new minute below. Best-effort — a flush error must
+    // not stop live stats.
+    if let Some((dev_rows, srv_rows)) = candle_acc.roll_to(floor_minute(now)) {
+        if !dev_rows.is_empty() {
+            if let Err(e) = candles::insert_device_candles_1m(pool, &dev_rows).await {
+                warn!(?e, n = dev_rows.len(), "device candle flush failed");
+            }
+        }
+        if !srv_rows.is_empty() {
+            if let Err(e) = candles::insert_server_candles_1m(pool, &srv_rows).await {
+                warn!(?e, n = srv_rows.len(), "server candle flush failed");
+            }
+        }
+    }
 
     // Build a quick lookup of pubkey → (device_id, user_id) so we can
     // attribute each peer line.
@@ -349,13 +480,25 @@ async fn poll_once(
             }
         }
 
+        let rate_rx_bps = if report_rates { drx / secs * 8 } else { 0 };
+        let rate_tx_bps = if report_rates { dtx / secs * 8 } else { 0 };
+
+        // Fold this peer's rate into its in-progress 1-minute candle. Every
+        // tick (including idle 0-rate ones) counts toward the sample so the
+        // minute's average is faithful; all-idle minutes are dropped at flush.
+        candle_acc
+            .devices
+            .entry(device_id)
+            .or_default()
+            .observe(rate_rx_bps as i64, rate_tx_bps as i64);
+
         let event = Event::StatsDelta {
             device_id,
             user_id,
             rx_bytes: if report_rates { drx } else { 0 },
             tx_bytes: if report_rates { dtx } else { 0 },
-            rate_rx_bps: if report_rates { drx / secs * 8 } else { 0 },
-            rate_tx_bps: if report_rates { dtx / secs * 8 } else { 0 },
+            rate_rx_bps,
+            rate_tx_bps,
             ts_ms: now_ms,
         };
         let topic = format!("stats.peer.{}", device_id);
@@ -373,6 +516,14 @@ async fn poll_once(
     for s in all_servers {
         let (srv_rx, srv_tx, peers, online, handshakes) =
             srv_totals.get(&s.id).copied().unwrap_or((0, 0, 0, 0, 0));
+        let srv_rate_rx = (srv_rx / secs * 8) as i64;
+        let srv_rate_tx = (srv_tx / secs * 8) as i64;
+        // Server-aggregate candle: fold the summed peer rate for this minute.
+        candle_acc
+            .servers
+            .entry(s.id)
+            .or_default()
+            .observe(srv_rate_rx, srv_rate_tx);
         if let Err(e) = server_samples::insert(
             pool,
             s.id,

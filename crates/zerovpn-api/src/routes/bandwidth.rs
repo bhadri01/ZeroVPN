@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
-use zerovpn_db::repos::{bandwidth, devices, server_samples};
+use zerovpn_db::repos::{bandwidth, candles, devices, server_samples};
+use zerovpn_db::repos::candles::Timeframe;
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -271,5 +272,131 @@ pub async fn for_user(
         bucket: if bucket == "hour" { "hour" } else { "day" },
         range,
         buckets: buckets.into_iter().map(Into::into).collect(),
+    }))
+}
+
+// ── OHLC bandwidth candles (trading-style HL + average) ─────────────────────
+
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+pub struct CandleQuery {
+    /// Timeframe: 1m | 3m | 5m | 15m | 30m | 1h | 1d | 7d | 1mo. Defaults to 1m.
+    #[serde(default)]
+    pub tf: Option<String>,
+    /// Number of candles (newest-trailing). Capped at 1000; defaults to 120.
+    pub limit: Option<i64>,
+    /// Pagination cursor (RFC3339). When set, only candles strictly older than
+    /// this are returned — lets the chart page backwards as the user pans left.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub before: Option<OffsetDateTime>,
+}
+
+/// One candle: high/low of the per-second rate (bits/sec) over the timeframe,
+/// plus the true average (Σrate / Σsamples). RX and TX are charted overlaid.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CandleDto {
+    #[serde(with = "time::serde::rfc3339")]
+    pub bucket_start: OffsetDateTime,
+    pub rx_high: i64,
+    pub rx_low: i64,
+    pub rx_avg: i64,
+    pub tx_high: i64,
+    pub tx_low: i64,
+    pub tx_avg: i64,
+}
+
+impl From<candles::Candle> for CandleDto {
+    fn from(c: candles::Candle) -> Self {
+        Self {
+            bucket_start: c.bucket_start,
+            rx_high: c.rx_high,
+            rx_low: c.rx_low,
+            rx_avg: c.rx_avg,
+            tx_high: c.tx_high,
+            tx_low: c.tx_low,
+            tx_avg: c.tx_avg,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CandleResponse {
+    pub tf: String,
+    pub candles: Vec<CandleDto>,
+}
+
+fn parse_tf(tf: Option<String>) -> ApiResult<(Timeframe, String)> {
+    let s = tf.unwrap_or_else(|| "1m".into());
+    let parsed = Timeframe::parse(&s).ok_or_else(|| {
+        ApiError::Validation(format!(
+            "tf must be 1m | 3m | 5m | 15m | 30m | 1h | 1d | 7d | 1mo (got {s})"
+        ))
+    })?;
+    Ok((parsed, s))
+}
+
+/// Per-device bandwidth candles. The 1-minute base is the source of truth;
+/// coarser timeframes are derived on read (and 1d/7d/1mo from a daily rollup).
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/candles",
+    tag = "Bandwidth",
+    params(
+        ("id" = uuid::Uuid, Path, description = "Device UUID"),
+        CandleQuery,
+    ),
+    responses(
+        (status = 200, description = "OHLC bandwidth candles", body = CandleResponse),
+        (status = 400, description = "Invalid timeframe"),
+        (status = 404, description = "Device not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn device_candles(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    Query(q): Query<CandleQuery>,
+) -> ApiResult<impl IntoResponse> {
+    devices::find_for_user(&state.pool, user.id, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+
+    let (tf, tf_str) = parse_tf(q.tf)?;
+    let limit = q.limit.unwrap_or(120).clamp(1, 1000);
+    let rows = candles::device_candles(&state.pool, id, tf, q.before, limit).await?;
+    Ok(Json(CandleResponse {
+        tf: tf_str,
+        candles: rows.into_iter().map(Into::into).collect(),
+    }))
+}
+
+/// Per-server aggregate candles (summed across all peers). Admin-only.
+#[utoipa::path(
+    get,
+    path = "/servers/{id}/candles",
+    tag = "Admin",
+    params(
+        ("id" = uuid::Uuid, Path, description = "Server UUID"),
+        CandleQuery,
+    ),
+    responses(
+        (status = 200, description = "Server-aggregate OHLC candles", body = CandleResponse),
+        (status = 400, description = "Invalid timeframe"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn server_candles(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(id): Path<Uuid>,
+    Query(q): Query<CandleQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let (tf, tf_str) = parse_tf(q.tf)?;
+    let limit = q.limit.unwrap_or(120).clamp(1, 1000);
+    let rows = candles::server_candles(&state.pool, id, tf, q.before, limit).await?;
+    Ok(Json(CandleResponse {
+        tf: tf_str,
+        candles: rows.into_iter().map(Into::into).collect(),
     }))
 }

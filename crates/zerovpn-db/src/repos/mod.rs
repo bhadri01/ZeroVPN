@@ -1,6 +1,7 @@
 pub mod access_logs;
 pub mod audit;
 pub mod bandwidth;
+pub mod candles;
 pub mod connection_sessions;
 pub mod devices;
 pub mod failed_logins;
