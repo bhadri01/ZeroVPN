@@ -1,9 +1,11 @@
 //! Real WG stats poller.
 //!
-//! When `ZEROVPN_WG__BACKEND=shell` AND the `wg` binary is in PATH, this
-//! task polls `wg show <iface> dump` every `ZEROVPN_STATS_INTERVAL_SECS`
-//! and emits `Event::StatsDelta` per peer. If the backend isn't enabled,
-//! the worker simply doesn't emit live bandwidth events.
+//! When `ZEROVPN_WG__BACKEND` is a real backend (`shell` or `kernel`) AND
+//! the `wg` binary is in PATH, this task polls `wg show <iface> dump` every
+//! `ZEROVPN_STATS_INTERVAL_SECS` and emits `Event::StatsDelta` per peer,
+//! while persisting endpoints, connection sessions, handshakes, bandwidth
+//! samples and server samples. In `noop` mode (dev/macOS, no interface)
+//! the poller doesn't run and none of this is captured.
 //!
 //! `wg show <iface> dump` columns (per peer):
 //!   public_key  preshared_key  endpoint  allowed_ips  latest_handshake  rx_bytes  tx_bytes  persistent_keepalive
@@ -37,11 +39,20 @@ struct Cumulative {
     rx: u64,
     tx: u64,
     endpoint: Option<String>,
+    /// Last-seen `latest_handshake` (unix seconds). Lets us emit a
+    /// `HandshakeChange` only when the timestamp actually advances, instead
+    /// of every tick — that event invalidates the device query on the
+    /// frontend so the online/offline pill flips without a manual refresh.
+    handshake: i64,
 }
 
 pub fn enabled() -> bool {
+    // Poll whenever a *real* WG interface exists. Both `shell` and
+    // `kernel` backends bring up `wg0`, and `wg show <iface> dump` reads
+    // kernel state in either case — so production (kernel) must poll too.
+    // Only `noop` (dev/macOS, no interface) has nothing to read.
     std::env::var("ZEROVPN_WG__BACKEND")
-        .map(|v| v == "shell")
+        .map(|v| v == "shell" || v == "kernel")
         .unwrap_or(false)
 }
 
@@ -142,12 +153,16 @@ async fn poll_once(
         let drx = if rx_total >= prev.rx { rx_total - prev.rx } else { rx_total };
         let dtx = if tx_total >= prev.tx { tx_total - prev.tx } else { tx_total };
         let endpoint_changed = endpoint_now.is_some() && endpoint_now != prev.endpoint;
+        // A newer handshake than we last saw for this peer — emitted below as
+        // a HandshakeChange once we've resolved the peer to a device.
+        let handshake_advanced = latest_handshake > prev.handshake;
         last.insert(
             public_key.to_string(),
             Cumulative {
                 rx: rx_total,
                 tx: tx_total,
                 endpoint: endpoint_now.clone(),
+                handshake: latest_handshake,
             },
         );
 
@@ -188,6 +203,23 @@ async fn poll_once(
             let _ = devices::touch_handshake(pool, device_id, ts).await;
             let age = now.unix_timestamp() - latest_handshake;
             handshake_in_window = age >= 0 && (age as u64) < secs;
+
+            // Tell the frontend the handshake moved so it re-fetches the
+            // device and recomputes the online/offline pill. Only on a real
+            // advance (first sight of a handshaked peer, then each WG
+            // re-handshake ~every 2 min) so we don't spam an event per tick.
+            if handshake_advanced {
+                let _ = tx
+                    .send((
+                        format!("events.peer.{device_id}"),
+                        Event::HandshakeChange {
+                            device_id,
+                            user_id,
+                            last_handshake_ms: latest_handshake.saturating_mul(1000),
+                        },
+                    ))
+                    .await;
+            }
         }
 
         // Fold into server rollup: (rx, tx, peers, online, handshakes).

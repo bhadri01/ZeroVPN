@@ -135,6 +135,13 @@ async fn main() -> Result<()> {
     let app_state =
         AppState::new(pool, allocators, kek, mailer, public_url, wg_controller);
 
+    // Re-add active peers to the (possibly freshly recreated) WG interface so
+    // existing tunnels keep working across restarts without re-creating each
+    // device. Idempotent; best-effort.
+    if let Err(e) = bootstrap::reconcile_peers(&app_state.pool, &app_state.wg).await {
+        warn!(?e, "startup peer reconcile failed");
+    }
+
     // ZMQ subscriber: consumes worker events (subscribed to all topics) and
     // forwards them onto the in-process broadcast bus that WS handlers tap.
     if let Ok(sub_url) = env::var("ZEROVPN_EVENTS__SUBSCRIBER_CONNECT") {

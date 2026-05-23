@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1.7
+# Dev image for hot-reloading the Rust services (api/worker) inside a Linux
+# container. The source is bind-mounted at runtime (not COPYed), so this image
+# is just the toolchain + tools.
+#
+# Includes a userspace WireGuard backend (boringtun) so a *real* tunnel can
+# come up without the host kernel module — which is what makes this work on
+# macOS Docker Desktop.
+FROM rust:1.95.0-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        pkg-config libssl-dev ca-certificates procps iproute2 iptables \
+        wireguard-tools postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# watchexec: poll-mode file watcher (Docker Desktop bind mounts don't deliver
+# inotify events reliably, so we poll).
+RUN cargo install watchexec-cli
+# boringtun-cli: userspace WireGuard. Non-fatal — if it can't install, the
+# entrypoint falls back to the kernel module when present.
+RUN cargo install boringtun-cli || echo "WARN: boringtun-cli not installed; kernel WG only"
+
+WORKDIR /app

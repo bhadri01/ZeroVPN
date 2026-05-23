@@ -7,9 +7,62 @@ use zerovpn_db::{
     PgPool,
     repos::{devices, servers},
 };
-use zerovpn_wg::{ip_alloc::IpAllocator, keys};
+use zerovpn_wg::{WgController, ip_alloc::IpAllocator, keys};
 
+use crate::routes::devices::PERSISTENT_KEEPALIVE;
 use crate::state::IpAllocators;
+
+/// Resolve `(host, port)` from `ZEROVPN_WG__SERVER_ENDPOINT` (documented as
+/// `host:port`) with `ZEROVPN_WG__LISTEN_PORT` as the port fallback. Only a
+/// single-colon value is split, so a bare IPv6 literal is left intact.
+fn resolve_server_endpoint() -> (String, i32) {
+    let raw = std::env::var("ZEROVPN_WG__SERVER_ENDPOINT")
+        .unwrap_or_else(|_| "localhost".to_string());
+    let listen_port: i32 = std::env::var("ZEROVPN_WG__LISTEN_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(51820);
+    if raw.matches(':').count() == 1 {
+        if let Some((host, port)) = raw.split_once(':') {
+            if let Ok(p) = port.parse::<i32>() {
+                return (host.to_string(), p);
+            }
+        }
+    }
+    (raw, listen_port)
+}
+
+/// Re-add every active device's peer to the running WireGuard interface.
+///
+/// The interface is recreated empty whenever the WG container/process
+/// restarts, while runtime peer adds otherwise only happen on device
+/// create / key-rotate / unpause. Without this boot-time pass a restart
+/// silently drops every tunnel until each device is touched. Idempotent —
+/// `wg set peer` and the kernel `configure_peer` are upserts — so it is safe
+/// to run on every api start (including hot-reload restarts). No-op on the
+/// noop backend and when there are no active devices.
+pub async fn reconcile_peers(pool: &PgPool, wg: &Arc<dyn WgController>) -> anyhow::Result<()> {
+    let rows: Vec<(String, IpNetwork)> =
+        sqlx::query_as("SELECT public_key, allocated_ip FROM devices WHERE status = 'active'")
+            .fetch_all(pool)
+            .await?;
+    let total = rows.len();
+    if total == 0 {
+        return Ok(());
+    }
+    let mut restored = 0usize;
+    for (public_key, allocated_ip) in rows {
+        match wg
+            .add_peer(&public_key, allocated_ip.ip(), None, PERSISTENT_KEEPALIVE)
+            .await
+        {
+            Ok(()) => restored += 1,
+            Err(e) => warn!(?e, %public_key, "reconcile_peers: add_peer failed"),
+        }
+    }
+    info!(restored, total, "reconciled active peers onto WG interface");
+    Ok(())
+}
 
 /// Ensure at least one server row exists. If none, create a default one with
 /// a freshly-generated WG keypair, an endpoint pointing at
@@ -17,20 +70,35 @@ use crate::state::IpAllocators;
 /// hosts, fits 1000+ peers). Also writes `wg0.conf` to the shared
 /// `wg_config` volume so the WG container can bring the interface up.
 pub async fn ensure_default_server(pool: &PgPool) -> anyhow::Result<()> {
+    let (endpoint_host, listen_port) = resolve_server_endpoint();
+
     if servers::count(pool).await? > 0 {
+        // Dev convenience: re-sync the default server's endpoint from the
+        // configured value on each boot so a changing Wi-Fi/LAN IP is picked
+        // up automatically (peer configs embed this as the `Endpoint`). In
+        // prod we leave admin-edited endpoints untouched.
+        if std::env::var("ZEROVPN_ENVIRONMENT").as_deref() == Ok("dev") {
+            let res = sqlx::query(
+                "UPDATE servers SET endpoint_host = $1, endpoint_port = $2 \
+                 WHERE name = 'default'",
+            )
+            .bind(&endpoint_host)
+            .bind(listen_port)
+            .execute(pool)
+            .await?;
+            if res.rows_affected() > 0 {
+                info!(
+                    endpoint = %format!("{endpoint_host}:{listen_port}"),
+                    "dev: synced default server endpoint from env"
+                );
+            }
+        }
         return Ok(());
     }
     info!("no servers found; creating default");
 
     let private_key = keys::generate_private_key();
     let public_key = keys::derive_public_key(&private_key)?;
-
-    let endpoint_host = std::env::var("ZEROVPN_WG__SERVER_ENDPOINT")
-        .unwrap_or_else(|_| "localhost".to_string());
-    let listen_port: i32 = std::env::var("ZEROVPN_WG__LISTEN_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(51820);
 
     let cidr: IpNetwork = "10.10.0.0/22".parse().unwrap();
     let dns: IpNetwork = "10.10.0.1/32".parse().unwrap();

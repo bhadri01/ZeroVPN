@@ -55,6 +55,17 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type UserRole = "admin" | "user"
 export type DeviceOs = "ios" | "android" | "macos" | "windows" | "linux" | "other"
+export type DeviceType =
+  | "phone"
+  | "tablet"
+  | "laptop"
+  | "desktop"
+  | "tv"
+  | "router"
+  | "watch"
+  | "iot"
+  | "server"
+  | "other"
 export type DeviceStatus = "active" | "paused" | "revoked"
 export type UserStatus =
   | "active"
@@ -93,6 +104,7 @@ export interface PublicDevice {
   user_id: string
   name: string
   os: DeviceOs
+  device_type: DeviceType
   public_key: string
   allocated_ip: string
   status: DeviceStatus
@@ -101,6 +113,12 @@ export interface PublicDevice {
   allowed_ips_override: string[] | null
   dns_override: string[] | null
   last_handshake_at: string | null
+  /** Public host:port the peer last connected from, as seen by the WG
+   *  poller. `null` until the first handshake; persists as the last
+   *  endpoint after the peer goes offline. Only populated on the
+   *  list / get responses (not create / rotate). */
+  last_peer_endpoint: string | null
+  last_peer_endpoint_at: string | null
   created_at: string
   /** Presence flag: the server holds a KEK-encrypted copy of the
    *  device's WG private key. Enables re-download via
@@ -291,6 +309,7 @@ export const getDevice = (id: string) => apiFetch<PublicDevice>(`/devices/${id}`
 export const createDevice = (body: {
   name: string
   os?: DeviceOs
+  device_type?: DeviceType
   split_tunnel?: boolean
   dns_override?: string[]
   /** Optional manual IPv4 — when set, the server reserves exactly this

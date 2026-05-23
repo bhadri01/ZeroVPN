@@ -2,7 +2,7 @@ use std::net::IpAddr;
 
 use ipnetwork::IpNetwork;
 use uuid::Uuid;
-use zerovpn_core::models::{Device, DeviceOs, DeviceStatus};
+use zerovpn_core::models::{Device, DeviceOs, DeviceStatus, DeviceType};
 
 use crate::PgPool;
 
@@ -11,7 +11,7 @@ pub async fn list_for_user(pool: &PgPool, user_id: Uuid) -> sqlx::Result<Vec<Dev
     // and fall back to created_at-desc so the list still reads sensibly
     // before a user has touched the order.
     sqlx::query_as::<_, Device>(
-        r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
+        r#"SELECT id, user_id, server_id, name, os, device_type, public_key, allocated_ip, status,
                   dns_names, allowed_ips_override, dns_override,
                   last_handshake_at, created_at, private_key_encrypted
            FROM devices
@@ -59,7 +59,7 @@ pub async fn find_for_user(
     device_id: Uuid,
 ) -> sqlx::Result<Option<Device>> {
     sqlx::query_as::<_, Device>(
-        r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
+        r#"SELECT id, user_id, server_id, name, os, device_type, public_key, allocated_ip, status,
                   dns_names, allowed_ips_override, dns_override,
                   last_handshake_at, created_at, private_key_encrypted
            FROM devices
@@ -71,13 +71,32 @@ pub async fn find_for_user(
     .await
 }
 
+/// Latest observed WG peer endpoint (`host:port`) + when it was first
+/// seen, per non-revoked device for a user. Returned separately from the
+/// `Device` row — these columns are deliberately kept off the core
+/// `Device` model (mirroring the admin detail views), so the common
+/// SELECTs stay lean and the user-facing list/get handlers merge this in.
+pub async fn peer_endpoints_for_user(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> sqlx::Result<Vec<(Uuid, Option<String>, Option<time::OffsetDateTime>)>> {
+    sqlx::query_as(
+        r#"SELECT id, last_peer_endpoint, last_peer_endpoint_at
+             FROM devices
+            WHERE user_id = $1 AND status <> 'revoked'"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// Admin-only: every non-revoked device across all users. Powers the
 /// admin topology view, so devices come back in a stable order
 /// (`user_id`, then `created_at`) — the renderer groups by user, and
 /// stable ordering keeps the graph from re-laying-out on each refetch.
 pub async fn list_all_active(pool: &PgPool) -> sqlx::Result<Vec<Device>> {
     sqlx::query_as::<_, Device>(
-        r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
+        r#"SELECT id, user_id, server_id, name, os, device_type, public_key, allocated_ip, status,
                   dns_names, allowed_ips_override, dns_override,
                   last_handshake_at, created_at, private_key_encrypted
            FROM devices
@@ -90,7 +109,7 @@ pub async fn list_all_active(pool: &PgPool) -> sqlx::Result<Vec<Device>> {
 
 pub async fn list_by_server(pool: &PgPool, server_id: Uuid) -> sqlx::Result<Vec<Device>> {
     sqlx::query_as::<_, Device>(
-        r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
+        r#"SELECT id, user_id, server_id, name, os, device_type, public_key, allocated_ip, status,
                   dns_names, allowed_ips_override, dns_override,
                   last_handshake_at, created_at, private_key_encrypted
            FROM devices
@@ -116,6 +135,7 @@ pub struct NewDevice<'a> {
     pub server_id: Uuid,
     pub name: &'a str,
     pub os: DeviceOs,
+    pub device_type: DeviceType,
     pub public_key: &'a str,
     pub preshared_key_encrypted: Option<&'a [u8]>,
     pub allocated_ip: IpNetwork,
@@ -127,16 +147,17 @@ pub struct NewDevice<'a> {
 pub async fn create(pool: &PgPool, d: NewDevice<'_>) -> sqlx::Result<Uuid> {
     let id = Uuid::now_v7();
     sqlx::query(
-        r#"INSERT INTO devices (id, user_id, server_id, name, os, public_key,
+        r#"INSERT INTO devices (id, user_id, server_id, name, os, device_type, public_key,
                                 preshared_key_encrypted, allocated_ip,
                                 private_key_encrypted)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
     )
     .bind(id)
     .bind(d.user_id)
     .bind(d.server_id)
     .bind(d.name)
     .bind(d.os)
+    .bind(d.device_type)
     .bind(d.public_key)
     .bind(d.preshared_key_encrypted)
     .bind(d.allocated_ip)

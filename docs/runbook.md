@@ -41,10 +41,10 @@ make dev-bootstrap-admin EMAIL=you@example.com   # only first time
 # In three separate terminals:
 make dev-api                                # cargo run -p zerovpn-api  → 127.0.0.1:8080
 make dev-worker                             # cargo run -p zerovpn-worker → tcp://127.0.0.1:5555
-make dev-web                                # vite dev server          → http://localhost:5173
+make dev-web                                # vite dev server          → http://localhost:6173
 ```
 
-Open <http://localhost:5173> in your browser. The Vite dev server proxies `/api/*` and `/ws/*` to `127.0.0.1:8080`, so the api round-trip works transparently. MailHog stays at <http://localhost:8025>.
+Open <http://localhost:6173> in your browser. The Vite dev server proxies `/api/*` and `/ws/*` to `127.0.0.1:8080`, so the api round-trip works transparently. MailHog stays at <http://localhost:8025>.
 
 How it works:
 

@@ -49,6 +49,13 @@
     --chart-4: #c5283d;
     --chart-5: #6b6b66;
 
+    /* Per-series RX/TX line colors (user-selectable in Appearance). Default
+       RX=cobalt, TX=accent. The theme provider overrides these inline on
+       <html>; defined here only in :root (NOT .dark) so the always-dark
+       sidebar inherits the choice instead of re-pinning it. */
+    --chart-rx: var(--chart-1);
+    --chart-tx: var(--primary);
+
     /* Swiss = sharp. 2px base maps to design --r-1. */
     --radius: 2px;
 
@@ -82,8 +89,12 @@
     --popover: #111111;
     --popover-foreground: #f5f5f0;
 
-    --primary: #c6ff3d;
-    --primary-foreground: #0a0a0a;
+    /* --primary / --primary-foreground intentionally NOT set here. The
+       sidebar is force-wrapped in `.dark` (stays dark in both themes); if
+       this block pinned --primary, that nested .dark would override the
+       accent and the sidebar would never retint. Omitting them lets --primary
+       inherit from :root[data-accent] (always set on <html>), so the accent
+       reaches the sidebar. */
 
     --secondary: #161616;
     --secondary-foreground: #f5f5f0;
@@ -172,6 +183,21 @@
     --ring: #f5f5f0;
     --sidebar-primary: #f5f5f0;
     --sidebar-primary-foreground: #0a0a0a;
+}
+
+/* Active side-nav item follows the accent theme. The base SidebarMenuButton
+   paints its data-active state a fixed gray (--sidebar-accent) via a
+   zero-specificity :where() rule; this two-attribute selector wins and binds
+   the active item's bg-tint + text/icon to --primary, which the accent picker
+   swaps live. Plain CSS (not a utility class) so it can't be lost to
+   tailwind-merge or stale Fast-Refresh classNames. */
+[data-sidebar="menu-button"][data-active="true"] {
+    background-color: color-mix(in oklab, var(--primary) 12%, transparent) !important;
+    color: var(--primary) !important;
+}
+[data-sidebar="menu-button"][data-active="true"]:hover {
+    background-color: color-mix(in oklab, var(--primary) 18%, transparent) !important;
+    color: var(--primary) !important;
 }
 
 @theme inline {

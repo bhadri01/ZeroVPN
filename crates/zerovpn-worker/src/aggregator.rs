@@ -11,8 +11,9 @@
 //!
 //! Idempotent: every `rollup_*` is `INSERT ... ON CONFLICT DO UPDATE`,
 //! so re-running the same window just overwrites the bucket with the
-//! latest sum. The same task also drops `bandwidth_samples` older than
-//! 7 days; samples are only the input to aggregation so this is safe.
+//! latest sum. This task only *writes* the aggregates; pruning the raw
+//! `bandwidth_samples` past their TTL is the retention task's job (see
+//! `retention.rs`).
 //!
 //! Startup also runs a rollup immediately rather than waiting one full
 //! interval — important for dev where the worker is restarted often.

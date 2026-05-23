@@ -37,10 +37,10 @@ function formatRate(n: number, unit: "bps" | "Bps"): string {
   return `${(n / 1_000_000_000).toFixed(2)} ${g}`
 }
 
-// Swiss palette: cobalt RX, lime TX. Aligns with BandwidthChart so a
-// glance at any chart in the app reads the same way.
-const RX_COLOR = "var(--chart-1)"
-const TX_COLOR = "var(--primary)"
+// RX/TX line colors are user-selectable in Appearance (CSS vars on <html>),
+// aligned across every chart so a glance reads the same way.
+const RX_COLOR = "var(--chart-rx)"
+const TX_COLOR = "var(--chart-tx)"
 
 /**
  * Live rolling-window dual-area chart. Plots whatever `rxHistory` /

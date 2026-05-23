@@ -15,6 +15,8 @@ import { useAuth } from "@/stores/auth"
  * authenticated session and fans out events:
  *   - `stats_delta`           → liveStats store
  *   - `peer_status_changed`   → invalidate the devices query
+ *   - `handshake_change`      → patch cached `last_handshake_at` so the
+ *                               online pill flips instantly
  *
  * Lives inside `DashboardLayout` (above the route Outlet) so it survives
  * navigation between /app, /app/devices, /app/devices/:id, and /admin/*.
@@ -103,11 +105,31 @@ export function LiveStatsProvider() {
           void qc.invalidateQueries({ queryKey: ["device", event.device_id] })
           break
         }
-        case "handshake_change":
-          if (visible) {
-            void qc.invalidateQueries({ queryKey: ["device", event.device_id] })
-          }
+        case "handshake_change": {
+          // A handshake just landed — the peer is connected *now*. Patch
+          // the cached `last_handshake_at` directly (connState() reads
+          // exactly this field) so the online pill flips on the next
+          // render, with no refetch round-trip. We apply this even while
+          // hidden: it's a one-field edit on a small array, and it means
+          // the pill is already correct when the user returns to the tab.
+          //
+          // The previous version only invalidated `["device", id]`, so the
+          // list views — dashboard, Devices grid, user topology — never
+          // updated when a mobile peer first handshook; the pill stayed
+          // "offline" until an unrelated refetch happened. We now patch
+          // every cache that renders a connection pill.
+          const iso = new Date(event.last_handshake_ms).toISOString()
+          const patchList = (prev?: PublicDevice[]) =>
+            prev?.map((d) =>
+              d.id === event.device_id ? { ...d, last_handshake_at: iso } : d,
+            )
+          qc.setQueryData<PublicDevice[]>(["devices"], patchList)
+          qc.setQueryData<PublicDevice[]>(["admin", "devices"], patchList)
+          qc.setQueryData<PublicDevice>(["device", event.device_id], (prev) =>
+            prev ? { ...prev, last_handshake_at: iso } : prev,
+          )
           break
+        }
         case "server_health":
           // Admin-only event (filtered server-side). Always apply; the
           // 5-second cadence is cheap and the sidebar panel reads from

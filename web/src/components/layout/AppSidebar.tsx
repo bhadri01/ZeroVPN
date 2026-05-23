@@ -158,7 +158,11 @@ function NavList({ entries }: { entries: NavEntry[] }) {
               className={cn(
                 "relative h-8 rounded-none text-[13px]",
                 isActive &&
-                  "before:bg-primary before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:content-['']",
+                  // Accent left bar. The active item's bg-tint + accent
+                  // text/icon are applied via the
+                  // [data-sidebar=menu-button][data-active=true] rule in
+                  // index.css (reliably beats the base gray + tracks --primary).
+                  "font-medium before:bg-primary before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:content-['']",
               )}
             >
               <NavLink to={entry.to} end={entry.end} onClick={closeIfMobile}>
@@ -252,7 +256,7 @@ function ServerStats() {
             Real I/O
           </span>
           <span className="text-foreground">
-            <span className="text-status-online">R</span> {formatBytes(diskRead)}
+            <span className="text-primary">R</span> {formatBytes(diskRead)}
             <span className="text-muted-foreground px-1">·</span>
             <span className="text-primary">W</span> {formatBytes(diskWrite)}
           </span>
@@ -273,7 +277,7 @@ function ServerStats() {
                 go bits → bytes, then format with formatBytes. No "/s"
                 suffix — keeps the row scannable and matches the Real I/O
                 row's compact "R 12 KB · W 4 KB" style. */}
-            <span className="text-status-online">↓</span>{" "}
+            <span className="text-primary">↓</span>{" "}
             {formatBytes(netRx / 8)}
             <span className="text-muted-foreground px-1">·</span>
             <span className="text-primary">↑</span>{" "}

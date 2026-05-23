@@ -1,4 +1,4 @@
-use std::{net::IpAddr, sync::Arc};
+use std::{collections::HashMap, net::IpAddr, sync::Arc};
 
 use askama::Template;
 use axum::{
@@ -14,9 +14,8 @@ use time::OffsetDateTime;
 use tracing::info;
 use utoipa::ToSchema;
 use uuid::Uuid;
-use zerovpn_core::models::{Device, DeviceOs, DeviceStatus};
+use zerovpn_core::models::{Device, DeviceOs, DeviceStatus, DeviceType};
 use zerovpn_db::repos::{audit, devices, servers};
-use zerovpn_obfs::AmneziaParams;
 use zerovpn_wg::{config, ip_alloc::IpAllocator, keys, qr};
 
 use crate::{
@@ -35,6 +34,9 @@ pub struct CreateBody {
     pub name: String,
     #[garde(skip)]
     pub os: Option<DeviceOs>,
+    /// Device form factor (phone, tablet, laptop, …). Independent of `os`.
+    #[garde(skip)]
+    pub device_type: Option<DeviceType>,
     /// When true, the generated config restricts AllowedIPs to RFC1918
     /// private subnets — the user's other traffic exits via their LAN.
     #[garde(skip)]
@@ -75,6 +77,7 @@ pub struct PublicDevice {
     pub user_id: Uuid,
     pub name: String,
     pub os: DeviceOs,
+    pub device_type: DeviceType,
     pub public_key: String,
     #[schema(value_type = String, example = "10.10.0.5")]
     pub allocated_ip: IpAddr,
@@ -87,6 +90,16 @@ pub struct PublicDevice {
     pub last_handshake_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    /// Public `host:port` the peer last connected from, as observed by the
+    /// WG poller. `None` until the device's first handshake; persists as
+    /// the *last* endpoint after the peer goes offline. Not part of the
+    /// core `Device` model — the list/get handlers merge it in (see
+    /// `devices::peer_endpoints_for_user`). `None` on create/rotate/admin
+    /// responses, which don't fetch it.
+    pub last_peer_endpoint: Option<String>,
+    /// Wall-clock time `last_peer_endpoint` was first observed.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_peer_endpoint_at: Option<OffsetDateTime>,
     /// Presence flag only — the device row holds a KEK-encrypted copy of
     /// the WG private key, so the user can re-download the .conf later
     /// via `GET /devices/{id}/conf`. The actual key bytes are never
@@ -106,6 +119,7 @@ impl From<Device> for PublicDevice {
             user_id: d.user_id,
             name: d.name,
             os: d.os,
+            device_type: d.device_type,
             public_key: d.public_key,
             allocated_ip: d.allocated_ip.ip(),
             status: d.status,
@@ -115,15 +129,21 @@ impl From<Device> for PublicDevice {
             dns_override,
             last_handshake_at: d.last_handshake_at,
             created_at: d.created_at,
+            // Endpoint columns aren't on the core Device row; handlers that
+            // want them merge them in after the conversion.
+            last_peer_endpoint: None,
+            last_peer_endpoint_at: None,
             private_key_stored,
         }
     }
 }
 
-/// RFC1918 + IPv6 ULA — used when `split_tunnel = true` so only private
-/// subnets route through the tunnel.
-const SPLIT_TUNNEL_ALLOWED_IPS: &str =
-    "10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fd00::/8";
+/// The VPN's own subnet — used when `split_tunnel = true` so only traffic
+/// to the VPN server (`10.10.0.1`) and other peers routes through the
+/// tunnel; everything else (the public internet) uses the client's normal
+/// interface. Must stay in sync with the server CIDR allocated in
+/// `bootstrap.rs` (`10.10.0.0/22`).
+const SPLIT_TUNNEL_ALLOWED_IPS: &str = "10.10.0.0/22";
 
 #[utoipa::path(
     get,
@@ -140,7 +160,22 @@ pub async fn list(
     CurrentUser(user): CurrentUser,
 ) -> ApiResult<impl IntoResponse> {
     let rows = devices::list_for_user(&state.pool, user.id).await?;
-    let out: Vec<PublicDevice> = rows.into_iter().map(Into::into).collect();
+    let mut out: Vec<PublicDevice> = rows.into_iter().map(Into::into).collect();
+    // Merge in the WG peer endpoint (latest host:port the poller saw).
+    // Kept off the core Device model, so fetched once for the user and
+    // zipped onto each card here.
+    let endpoints: HashMap<Uuid, (Option<String>, Option<OffsetDateTime>)> =
+        devices::peer_endpoints_for_user(&state.pool, user.id)
+            .await?
+            .into_iter()
+            .map(|(id, ep, at)| (id, (ep, at)))
+            .collect();
+    for d in &mut out {
+        if let Some((ep, at)) = endpoints.get(&d.id) {
+            d.last_peer_endpoint = ep.clone();
+            d.last_peer_endpoint_at = *at;
+        }
+    }
     Ok(Json(out))
 }
 
@@ -165,7 +200,18 @@ pub async fn get(
     let d = devices::find_for_user(&state.pool, user.id, id)
         .await?
         .ok_or(ApiError::NotFound)?;
-    Ok(Json(PublicDevice::from(d)))
+    let mut pd = PublicDevice::from(d);
+    // Merge in the latest WG peer endpoint (see `list`). ≤5 rows per user,
+    // so a single fetch + find is cheaper than its own indexed query.
+    if let Some((_, ep, at)) = devices::peer_endpoints_for_user(&state.pool, user.id)
+        .await?
+        .into_iter()
+        .find(|(eid, _, _)| *eid == id)
+    {
+        pd.last_peer_endpoint = ep;
+        pd.last_peer_endpoint_at = at;
+    }
+    Ok(Json(pd))
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -289,8 +335,6 @@ pub async fn create(
         None
     };
 
-    let amnezia = AmneziaParams::random();
-
     // Validate optional DNS overrides up-front so we never persist a half-
     // valid request. We also keep the parsed IPs for the conf below.
     let dns_override_parsed: Option<Vec<std::net::IpAddr>> = match body.dns_override.as_ref() {
@@ -341,6 +385,7 @@ pub async fn create(
             server_id: server.id,
             name: &body.name,
             os: body.os.unwrap_or(DeviceOs::Other),
+            device_type: body.device_type.unwrap_or(DeviceType::Other),
             public_key: &public_key,
             preshared_key_encrypted: None, // will encrypt with KEK in a follow-up
             allocated_ip: allocated_cidr,
@@ -422,17 +467,12 @@ pub async fn create(
         address: &address_str,
         dns: &dns_str,
         mtu: Some(server.mtu as u16),
-        amnezia: Some(config::AmneziaParams {
-            jc: amnezia.jc,
-            jmin: amnezia.jmin,
-            jmax: amnezia.jmax,
-            s1: amnezia.s1,
-            s2: amnezia.s2,
-            h1: amnezia.h1,
-            h2: amnezia.h2,
-            h3: amnezia.h3,
-            h4: amnezia.h4,
-        }),
+        // Obfuscation disabled: emit a vanilla WireGuard config so the
+        // official WireGuard clients accept it and it matches the vanilla
+        // server runtime. Re-enable via AmneziaWG (shared, interface-global
+        // params written to both client and server) when the AmneziaWG
+        // server runtime is wired up.
+        amnezia: None,
         server_public_key: &server.public_key,
         preshared_key: None,
         allowed_ips: &allowed_ips,
@@ -650,24 +690,17 @@ pub async fn rotate_keys(
         Some(list) if !list.is_empty() => list.join(", "),
         _ => "0.0.0.0/0, ::/0".to_string(),
     };
-    let amnezia = AmneziaParams::random();
-
     let cfg = config::PeerConfig {
         private_key: &private_key,
         address: &address_str,
         dns: &dns_str,
         mtu: Some(server.mtu as u16),
-        amnezia: Some(config::AmneziaParams {
-            jc: amnezia.jc,
-            jmin: amnezia.jmin,
-            jmax: amnezia.jmax,
-            s1: amnezia.s1,
-            s2: amnezia.s2,
-            h1: amnezia.h1,
-            h2: amnezia.h2,
-            h3: amnezia.h3,
-            h4: amnezia.h4,
-        }),
+        // Obfuscation disabled: emit a vanilla WireGuard config so the
+        // official WireGuard clients accept it and it matches the vanilla
+        // server runtime. Re-enable via AmneziaWG (shared, interface-global
+        // params written to both client and server) when the AmneziaWG
+        // server runtime is wired up.
+        amnezia: None,
         server_public_key: &server.public_key,
         preshared_key: None,
         allowed_ips: &allowed_ips,
@@ -758,6 +791,7 @@ pub async fn delete(
 pub struct PatchBody {
     pub name: Option<String>,
     pub os: Option<DeviceOs>,
+    pub device_type: Option<DeviceType>,
     pub allowed_ips_override: Option<Vec<String>>,
     pub dns_override: Option<Vec<String>>,
 }
@@ -887,24 +921,17 @@ pub async fn redownload_conf(
         Some(list) if !list.is_empty() => list.join(", "),
         _ => "0.0.0.0/0, ::/0".to_string(),
     };
-    let amnezia = AmneziaParams::random();
-
     let cfg = config::PeerConfig {
         private_key: &private_key,
         address: &address_str,
         dns: &dns_str,
         mtu: Some(server.mtu as u16),
-        amnezia: Some(config::AmneziaParams {
-            jc: amnezia.jc,
-            jmin: amnezia.jmin,
-            jmax: amnezia.jmax,
-            s1: amnezia.s1,
-            s2: amnezia.s2,
-            h1: amnezia.h1,
-            h2: amnezia.h2,
-            h3: amnezia.h3,
-            h4: amnezia.h4,
-        }),
+        // Obfuscation disabled: emit a vanilla WireGuard config so the
+        // official WireGuard clients accept it and it matches the vanilla
+        // server runtime. Re-enable via AmneziaWG (shared, interface-global
+        // params written to both client and server) when the AmneziaWG
+        // server runtime is wired up.
+        amnezia: None,
         server_public_key: &server.public_key,
         preshared_key: None,
         allowed_ips: &allowed_ips,
@@ -993,6 +1020,7 @@ pub async fn patch(
         r#"UPDATE devices
               SET name = COALESCE($3, name),
                   os = COALESCE($4, os),
+                  device_type = COALESCE($7, device_type),
                   allowed_ips_override = $5,
                   dns_override = $6
             WHERE user_id = $1 AND id = $2"#,
@@ -1003,6 +1031,7 @@ pub async fn patch(
     .bind(body.os)
     .bind(body.allowed_ips_override.as_deref())
     .bind(dns_override_inet.as_deref())
+    .bind(body.device_type)
     .execute(&state.pool)
     .await?;
 

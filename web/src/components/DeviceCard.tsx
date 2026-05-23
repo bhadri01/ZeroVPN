@@ -28,6 +28,18 @@ import { useLiveStats } from "@/stores/liveStats"
  *  pulled by an hour-old spike. */
 const CHART_WINDOW = 30
 
+/** Strip the `:port` from a WG `host:port` endpoint, leaving just the IP.
+ *  Handles IPv6's bracketed form (`[2001:db8::1]:51820` → `2001:db8::1`)
+ *  and plain IPv4 (`203.0.113.5:51820` → `203.0.113.5`). */
+function endpointHost(endpoint: string): string {
+  if (endpoint.startsWith("[")) {
+    const close = endpoint.indexOf("]")
+    return close > 0 ? endpoint.slice(1, close) : endpoint
+  }
+  const lastColon = endpoint.lastIndexOf(":")
+  return lastColon > 0 ? endpoint.slice(0, lastColon) : endpoint
+}
+
 /** Pill the header shows — combines connection state (handshake-derived)
  *  with peer state (admin lifecycle) so a paused or revoked device
  *  always wins over the bare online/offline label. */
@@ -116,11 +128,16 @@ export function DeviceCard({
   const totalRx = hasEverHandshook ? (live?.totalRx ?? 0) : 0
   const totalTx = hasEverHandshook ? (live?.totalTx ?? 0) : 0
 
+  // WAN endpoint IP only — the port is noise on the card.
+  const peerHost = d.last_peer_endpoint
+    ? endpointHost(d.last_peer_endpoint)
+    : null
+
   return (
     <div
       {...divProps}
       className={cn(
-        "zv-panel group/card relative flex cursor-pointer flex-col transition-colors",
+        "zv-panel group/card relative flex cursor-pointer flex-col overflow-hidden transition-colors",
         // Drop-target highlight (when a sibling drag is hovering this
         // card). The data-dragging="1" lift styling is handled in CSS
         // (`.zv-panel[data-dragging="1"]` rule in index.css) so the
@@ -164,6 +181,21 @@ export function DeviceCard({
           <span className="text-muted-foreground font-mono text-xs">
             {d.os} · {d.allocated_ip}
           </span>
+          {/* WAN endpoint the peer connects from. Always rendered (with a
+              dim placeholder when unknown) so cards keep a uniform height
+              across the grid. Truncates on long IPv6 endpoints. */}
+          <span
+            className="text-muted-foreground/60 truncate font-mono text-[11px]"
+            title={
+              peerHost
+                ? d.last_peer_endpoint_at
+                  ? `Last connected from ${peerHost} · seen ${new Date(d.last_peer_endpoint_at).toLocaleString()}`
+                  : `Last connected from ${peerHost}`
+                : "No endpoint observed yet"
+            }
+          >
+            via {peerHost ?? "—"}
+          </span>
         </Link>
         <div className="flex items-center gap-1">
           <StatusPill status={rowPill(d)} />
@@ -195,7 +227,13 @@ export function DeviceCard({
         />
       </div>
 
-      <div className="-mb-4 px-1">
+      {/* Fixed-height, clipped box. The chart sits cleanly above the footer
+          instead of bleeding into it — the previous `-mb-4` pulled the
+          footer up over the sparkline's lower 16px, which read as the
+          chart "breaking" into the footer row. `overflow-hidden` + a
+          locked height also stops recharts' ResponsiveContainer from
+          nudging the card's height as frames stream in. */}
+      <div className="h-14 overflow-hidden px-1">
         <MiniAreaChart rxHistory={rxHistory} txHistory={txHistory} height={56} />
       </div>
 

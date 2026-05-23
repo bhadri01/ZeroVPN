@@ -10,6 +10,8 @@ type ThemeProviderProps = {
   defaultTheme?: Theme
   storageKey?: string
   accentStorageKey?: string
+  chartRxStorageKey?: string
+  chartTxStorageKey?: string
   disableTransitionOnChange?: boolean
 }
 
@@ -19,6 +21,12 @@ type ThemeProviderState = {
   setTheme: (theme: Theme) => void
   accent: Accent
   setAccent: (accent: Accent) => void
+  // Chart line colors. A hex string, or the literal "accent" (= follow the
+  // accent / --primary). Applied as --chart-rx / --chart-tx on <html>.
+  rxColor: string
+  setRxColor: (color: string) => void
+  txColor: string
+  setTxColor: (color: string) => void
 }
 
 const COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)"
@@ -93,6 +101,8 @@ export function ThemeProvider({
   defaultTheme = "system",
   storageKey = "zerovpn-theme",
   accentStorageKey = "zerovpn-accent",
+  chartRxStorageKey = "zerovpn-chart-rx",
+  chartTxStorageKey = "zerovpn-chart-tx",
   disableTransitionOnChange = true,
   ...props
 }: ThemeProviderProps) {
@@ -134,6 +144,42 @@ export function ThemeProvider({
   React.useEffect(() => {
     document.documentElement.setAttribute("data-accent", accent)
   }, [accent])
+
+  // Chart line colors (RX/TX) — user-selectable, applied as CSS vars on
+  // <html> so every chart (var(--chart-rx)/var(--chart-tx)) picks them up.
+  // The literal "accent" means "follow the accent" -> var(--primary).
+  const [rxColor, setRxColorState] = React.useState<string>(
+    () => localStorage.getItem(chartRxStorageKey) || "#3D5BFF"
+  )
+  const [txColor, setTxColorState] = React.useState<string>(
+    () => localStorage.getItem(chartTxStorageKey) || "accent"
+  )
+  const setRxColor = React.useCallback(
+    (next: string) => {
+      localStorage.setItem(chartRxStorageKey, next)
+      setRxColorState(next)
+    },
+    [chartRxStorageKey]
+  )
+  const setTxColor = React.useCallback(
+    (next: string) => {
+      localStorage.setItem(chartTxStorageKey, next)
+      setTxColorState(next)
+    },
+    [chartTxStorageKey]
+  )
+  React.useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--chart-rx",
+      rxColor === "accent" ? "var(--primary)" : rxColor
+    )
+  }, [rxColor])
+  React.useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--chart-tx",
+      txColor === "accent" ? "var(--primary)" : txColor
+    )
+  }, [txColor])
 
   const applyTheme = React.useCallback(
     (nextTheme: Theme) => {
@@ -247,8 +293,22 @@ export function ThemeProvider({
       setTheme,
       accent,
       setAccent,
+      rxColor,
+      setRxColor,
+      txColor,
+      setTxColor,
     }),
-    [theme, resolvedTheme, setTheme, accent, setAccent]
+    [
+      theme,
+      resolvedTheme,
+      setTheme,
+      accent,
+      setAccent,
+      rxColor,
+      setRxColor,
+      txColor,
+      setTxColor,
+    ]
   )
 
   return (

@@ -110,6 +110,21 @@ const ACCENT_SWATCHES: { value: Accent; label: string; preview: string }[] = [
   { value: "ink", label: "Ink", preview: "#0A0A0A" },
 ]
 
+// RX/TX chart-line color options. "accent" follows the accent (--primary);
+// the rest are fixed hues. The active swatch gets the same accent highlight
+// (zv-accent-swatch--on) as the accent picker.
+const CHART_PALETTE: { value: string; label: string; preview: string }[] = [
+  { value: "accent", label: "Accent", preview: "var(--primary)" },
+  { value: "#3D5BFF", label: "Cobalt", preview: "#3D5BFF" },
+  { value: "#06B6D4", label: "Cyan", preview: "#06B6D4" },
+  { value: "#1F8A3F", label: "Green", preview: "#1F8A3F" },
+  { value: "#C6FF3D", label: "Lime", preview: "#C6FF3D" },
+  { value: "#FF6A1F", label: "Orange", preview: "#FF6A1F" },
+  { value: "#FF2E88", label: "Magenta", preview: "#FF2E88" },
+  { value: "#A855F7", label: "Purple", preview: "#A855F7" },
+  { value: "#C5283D", label: "Red", preview: "#C5283D" },
+]
+
 export function SettingsPage() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -260,8 +275,63 @@ export function SettingsPage() {
 
 // ── Appearance ────────────────────────────────────────────────────────
 
+// Shared swatch grid for the RX/TX chart-line color pickers. Mirrors the
+// accent picker so the active selection reads the same way (accent highlight).
+function ChartColorPicker({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  // Live preview of the actual line color (resolves "accent" → the accent).
+  const previewColor = value === "accent" ? "var(--primary)" : value
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Sample showing how the line renders in charts. */}
+      <div className="border-border/60 bg-muted/15 flex h-9 items-center border px-3">
+        <span
+          className="h-[3px] w-full rounded-full"
+          style={{ background: previewColor }}
+          aria-hidden
+        />
+      </div>
+      <div className="flex flex-wrap gap-2">
+      {CHART_PALETTE.map((opt) => {
+        const isActive = opt.value === value
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={["zv-accent-swatch", isActive && "zv-accent-swatch--on"]
+              .filter(Boolean)
+              .join(" ")}
+            aria-pressed={isActive}
+            aria-label={opt.label}
+            title={opt.label}
+          >
+            <span
+              className="zv-accent-swatch__chip"
+              style={{ background: opt.preview }}
+              aria-hidden
+            >
+              {isActive && <IconCheck size={12} strokeWidth={3} />}
+            </span>
+            <span className="text-foreground/90 font-mono text-[11px]">
+              {opt.label}
+            </span>
+          </button>
+        )
+      })}
+      </div>
+    </div>
+  )
+}
+
 function AppearanceSection() {
-  const { theme, setTheme, accent, setAccent } = useTheme()
+  const { theme, setTheme, accent, setAccent, rxColor, setRxColor, txColor, setTxColor } =
+    useTheme()
   return (
     <div className="flex flex-col gap-6">
       <Panel title="Theme" sub="Light, dark, or follow the OS">
@@ -320,6 +390,20 @@ function AppearanceSection() {
           Stored locally per browser. Switching takes effect immediately
           without reloading.
         </p>
+      </Panel>
+
+      <Panel
+        title="RX line color"
+        sub="Download / received series across every traffic chart"
+      >
+        <ChartColorPicker value={rxColor} onChange={setRxColor} />
+      </Panel>
+
+      <Panel
+        title="TX line color"
+        sub="Upload / transmitted series across every traffic chart"
+      >
+        <ChartColorPicker value={txColor} onChange={setTxColor} />
       </Panel>
     </div>
   )

@@ -17,10 +17,11 @@ interface Props {
   height?: number
 }
 
-// Swiss palette: cobalt-blue RX, lime TX. Pulled via CSS vars so the
-// chart re-skins automatically on theme switch.
-const RX_COLOR = "var(--chart-1)"
-const TX_COLOR = "var(--primary)"
+// RX/TX line colors are user-selectable in Appearance and applied as CSS
+// vars on <html>, so the chart re-skins automatically on theme/accent/color
+// change.
+const RX_COLOR = "var(--chart-rx)"
+const TX_COLOR = "var(--chart-tx)"
 
 /**
  * Per-bucket RX/TX bar chart. Each bar is the bytes that flowed *within*

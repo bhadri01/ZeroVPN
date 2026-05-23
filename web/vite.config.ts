@@ -12,7 +12,14 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 6173,
+    host: true,
+    // Poll for file changes when running inside a container on a bind mount
+    // (Docker Desktop doesn't deliver inotify events). Off by default so
+    // native dev keeps native fs-event watching.
+    watch: process.env.VITE_USE_POLLING
+      ? { usePolling: true, interval: 300 }
+      : undefined,
     // Proxy api + websocket to the native `cargo run -p zerovpn-api`
     // process. The frontend hits `/api/v1/...` (same-origin) so we forward
     // those requests to the api on its host port. WS upgrades over the same

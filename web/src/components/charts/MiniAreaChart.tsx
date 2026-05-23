@@ -7,9 +7,9 @@ interface Props {
   height?: number
 }
 
-// Swiss palette — cobalt RX, lime TX, matched to BandwidthChart.
-const RX_COLOR = "var(--chart-1)"
-const TX_COLOR = "var(--primary)"
+// RX/TX colors are user-selectable in Appearance (CSS vars on <html>).
+const RX_COLOR = "var(--chart-rx)"
+const TX_COLOR = "var(--chart-tx)"
 
 // Headroom above the rolling-window peak so the trace never touches the top.
 const PEAK_HEADROOM = 1.15

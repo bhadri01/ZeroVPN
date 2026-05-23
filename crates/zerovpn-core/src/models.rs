@@ -53,6 +53,26 @@ pub enum DeviceOs {
     Other,
 }
 
+/// Device form factor — the physical kind of device, independent of its OS
+/// (e.g. an Android tablet is `os = Android`, `device_type = Tablet`).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "device_type", rename_all = "snake_case")]
+pub enum DeviceType {
+    Phone,
+    Tablet,
+    Laptop,
+    Desktop,
+    Tv,
+    Router,
+    Watch,
+    Iot,
+    Server,
+    Other,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, ToSchema)]
 pub struct User {
     pub id: Uuid,
@@ -108,6 +128,7 @@ pub struct Device {
     pub server_id: Uuid,
     pub name: String,
     pub os: DeviceOs,
+    pub device_type: DeviceType,
     pub public_key: String,
     /// Peer's allocated address as a host prefix ("10.10.0.5/32" or "fd00::5/128").
     #[schema(value_type = String, example = "10.10.0.5/32")]

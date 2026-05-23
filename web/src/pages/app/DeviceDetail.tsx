@@ -139,6 +139,11 @@ export function DeviceDetailPage() {
     queryKey: ["device", id],
     queryFn: () => getDevice(id),
     enabled: id.length > 0,
+    // The online/offline pill is derived from `last_handshake_at`, which the
+    // worker advances as the peer re-handshakes. A WS `handshake_change`
+    // event invalidates this query for an instant flip; this poll is the
+    // fallback so the status still self-corrects if the socket drops.
+    refetchInterval: 20_000,
   })
   const serverQ = useQuery({
     queryKey: ["me", "server"],

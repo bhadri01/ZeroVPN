@@ -124,6 +124,28 @@ services:
     security_opt:
       - no-new-privileges:true
     mem_limit: 192m
+    # --- Real-WG stats capture (shell/kernel backend) -------------------
+    # By default the worker is on the `backend` bridge (above) and the WG
+    # stats poller is disabled (ZEROVPN_WG__BACKEND=noop). To capture peer
+    # endpoints, connection sessions, handshakes and per-peer bandwidth, the
+    # poller runs `wg show <iface> dump`, which needs (a) CAP_NET_ADMIN and
+    # (b) visibility of the WG interface's network namespace.
+    #
+    # On a Linux host running the tunnel (the `wg` service, network_mode:
+    # host → wg0 lives in the host netns), enable capture by REPLACING the
+    # `networks: [backend]` block above with the host netns and adding the
+    # cap, then set ZEROVPN_WG__BACKEND=kernel (or shell) in .env:
+    #
+    #   network_mode: "service:wg"     # share wg's (host) netns; see wg0
+    #   cap_add: [NET_ADMIN]
+    #   # security_opt no-new-privileges must be dropped for the cap to apply
+    #
+    # Trade-off: in that netns the worker no longer resolves db/redis/api by
+    # service name. db and redis already publish to host loopback
+    # (127.0.0.1:55432, 127.0.0.1:56379), so point ZEROVPN_DATABASE_URL /
+    # the redis URL at those, and have the api subscribe to the worker's ZMQ
+    # over the host instead of `worker:5555`. Verify api↔worker connectivity
+    # after the switch — that link is the main thing this move breaks.
 
   db:
     image: postgres:18-alpine

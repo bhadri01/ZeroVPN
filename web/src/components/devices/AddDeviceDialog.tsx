@@ -35,6 +35,7 @@ import {
   ApiError,
   type CreatedDevice,
   type DeviceOs,
+  type DeviceType,
   type DnsCheck,
   checkDnsName,
   createDevice,
@@ -82,6 +83,7 @@ export function AddDeviceDialog({
   const [step, setStep] = useState<1 | 2>(1)
   const [name, setName] = useState("")
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
+  const [deviceType, setDeviceType] = useState<DeviceType>("other")
   // Split tunnel defaults ON now: most users only need the VPN for
   // reaching peer devices on the WG subnet, not for routing all their
   // traffic. The pre-set CIDR is the server's subnet, so this is also
@@ -187,6 +189,7 @@ export function AddDeviceDialog({
       const created = await createDevice({
         name: name.trim(),
         os: osChoice,
+        device_type: deviceType,
         split_tunnel: splitTunnel || undefined,
         dns_override: dns.length > 0 ? dns : undefined,
         allocated_ip:
@@ -232,6 +235,7 @@ export function AddDeviceDialog({
     setStep(1)
     setName("")
     setOsChoice("other")
+    setDeviceType("other")
     setSplitTunnel(false)
     setDnsInput("")
     setIpMode("auto")
@@ -300,6 +304,38 @@ export function AddDeviceDialog({
                 ).map((o) => (
                   <SelectItem key={o} value={o}>
                     {o}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label className="zv-eyebrow">Device type</Label>
+            <Select
+              value={deviceType}
+              onValueChange={(v) => setDeviceType(v as DeviceType)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(
+                  [
+                    ["phone", "Phone"],
+                    ["tablet", "Tablet"],
+                    ["laptop", "Laptop"],
+                    ["desktop", "Desktop"],
+                    ["tv", "TV"],
+                    ["router", "Router"],
+                    ["watch", "Watch"],
+                    ["iot", "IoT"],
+                    ["server", "Server"],
+                    ["other", "Other"],
+                  ] as [DeviceType, string][]
+                ).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
                   </SelectItem>
                 ))}
               </SelectContent>

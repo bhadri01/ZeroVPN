@@ -108,7 +108,10 @@ function toneFor(status: DeviceStatus, online: boolean, hasTraffic: boolean) {
   if (status === "revoked") return "revoked"
   if (status === "paused") return "paused"
   if (!online) return "idle"
-  return hasTraffic ? "live" : "idle"
+  // Connected counts as "online" even with no traffic right now, so a live
+  // tunnel still draws an active edge/ring; "live" is reserved for a peer
+  // actually transmitting (drives the animated flow + rate label).
+  return hasTraffic ? "live" : "online"
 }
 
 /** Stable angle derived from device id — keeps positions consistent across
@@ -125,7 +128,7 @@ interface LaidOutPeer {
   device: PublicDevice
   x: number
   y: number
-  tone: "live" | "idle" | "paused" | "revoked"
+  tone: "live" | "online" | "idle" | "paused" | "revoked"
   rateBps: number
   /** Position of the user this device hangs off (where the edge starts). */
   userX: number
@@ -137,9 +140,12 @@ interface LaidOutUser {
   label: string
   x: number
   y: number
-  /** How many of this user's devices are currently online/transmitting —
-   *  drives the user-node tone the same way `connState` drives device tone. */
+  /** How many of this user's devices are currently transmitting (online +
+   *  traffic) — drives the animated flow on the hub→user edge. */
   liveCount: number
+  /** How many are connected (online), regardless of traffic — drives the
+   *  "active" (colored) edge + user-node ring. */
+  onlineCount: number
   peerCount: number
 }
 
@@ -498,9 +504,11 @@ export function LiveTopology({
       const y = override?.y ?? computedY
       const label = userMap?.get(userId)?.label ?? `user · ${userId.slice(0, 6)}`
       let liveCount = 0
+      let onlineCount = 0
       for (const d of userDevices) {
+        if (connState(d) !== "online") continue
+        onlineCount += 1
         if (
-          connState(d) === "online" &&
           ((rates.get(d.id)?.rxBps ?? 0) + (rates.get(d.id)?.txBps ?? 0)) > 1024
         ) {
           liveCount += 1
@@ -512,6 +520,7 @@ export function LiveTopology({
         x,
         y,
         liveCount,
+        onlineCount,
         peerCount: userDevices.length,
       }
     })
@@ -646,7 +655,7 @@ export function LiveTopology({
                 x2={u.x}
                 y2={u.y}
                 className={
-                  u.liveCount > 0 ? "zv-topo-edge-live" : "zv-topo-edge"
+                  u.onlineCount > 0 ? "zv-topo-edge-live" : "zv-topo-edge"
                 }
                 strokeWidth={1.1 * strokeScale}
               />
@@ -668,6 +677,7 @@ export function LiveTopology({
           {/* user → device edges + per-device flow particles */}
           {placed.map((p) => {
             const isLive = p.tone === "live"
+            const connected = p.tone === "live" || p.tone === "online"
             return (
               <g key={`e-${p.device.id}`}>
                 <line
@@ -675,7 +685,7 @@ export function LiveTopology({
                   y1={p.userY}
                   x2={p.x}
                   y2={p.y}
-                  className={isLive ? "zv-topo-edge-live" : "zv-topo-edge"}
+                  className={connected ? "zv-topo-edge-live" : "zv-topo-edge"}
                   strokeWidth={0.8 * strokeScale}
                 />
                 {isLive && (
@@ -737,7 +747,7 @@ export function LiveTopology({
             metrics stay anchored to the corner under any zoom level */}
         <g transform={`translate(${vbW - 200}, 20)`} className="zv-topo-meta">
           <text fontSize="9">
-            PEERS · {placed.filter((p) => p.tone === "live").length}/
+            PEERS · {placed.filter((p) => p.tone === "live" || p.tone === "online").length}/
             {devices.filter((d) => d.status !== "revoked").length}
           </text>
           <text fontSize="9" y={12}>
@@ -933,9 +943,9 @@ function UserNode({
   user: LaidOutUser
   onPointerDown: (e: React.PointerEvent<SVGGElement>) => void
 }) {
-  const tone = user.liveCount > 0 ? "live" : "idle"
+  // Connected (any device online) lights the ring; traffic isn't required.
   const strokeClass =
-    tone === "live" ? "zv-topo-peer-live" : "zv-topo-peer-idle"
+    user.onlineCount > 0 ? "zv-topo-peer-live" : "zv-topo-peer-idle"
   return (
     <g
       transform={`translate(${user.x}, ${user.y})`}
@@ -969,7 +979,7 @@ function PeerNode({
   const Shape = shapeFor(peer.device.os)
   const Brand = iconFor(peer.device.os)
   const strokeClass =
-    peer.tone === "live"
+    peer.tone === "live" || peer.tone === "online"
       ? "zv-topo-peer-live"
       : peer.tone === "paused"
         ? "zv-topo-peer-paused"

@@ -53,6 +53,21 @@ mkdir -p .dev-native/wg .dev-native/dnsmasq
 export ZEROVPN_WG__SERVER_CONFIG_PATH="$PWD/.dev-native/wg/wg0.conf"
 export ZEROVPN_WG__DNSMASQ_HOSTS_FILE="$PWD/.dev-native/dnsmasq/zerovpn-peers.conf"
 
+# Peer configs embed the server's `Endpoint`, which other devices on the
+# network must be able to reach — `localhost` only works from this Mac. When
+# the configured endpoint is localhost/empty, substitute the host's current
+# Wi-Fi/LAN IP (en0, then en1) so e.g. a phone on the same network can connect.
+# Set ZEROVPN_WG__SERVER_ENDPOINT explicitly in .env to override.
+endpoint_host="${ZEROVPN_WG__SERVER_ENDPOINT:-localhost}"
+endpoint_host="${endpoint_host%%:*}"
+if [[ -z "$endpoint_host" || "$endpoint_host" == "localhost" || "$endpoint_host" == "127.0.0.1" ]]; then
+    lan_ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+    if [[ -n "$lan_ip" ]]; then
+        export ZEROVPN_WG__SERVER_ENDPOINT="${lan_ip}:${ZEROVPN_WG__LISTEN_PORT:-51820}"
+        echo "dev-native: WG endpoint -> ${ZEROVPN_WG__SERVER_ENDPOINT}" >&2
+    fi
+fi
+
 if [[ $# -eq 0 ]]; then
     echo "Usage: $0 <command> [args...]" >&2
     exit 1

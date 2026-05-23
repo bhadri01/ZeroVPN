@@ -1,0 +1,142 @@
+# Dev-container overlay — run api/worker/web in Linux containers with
+# hot-reload and a real (userspace) WireGuard tunnel.
+#
+#   make up-dev      # build + start
+#   make logs-dev    # tail
+#   make down-dev    # stop
+#
+# Equivalent raw command:
+#   LAN_IP=$(ipconfig getifaddr en0) \
+#     docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#                    --profile dev up -d --build
+#
+# The prod api/worker/frontend/caddy are pushed to the `prod` profile here so
+# they don't start in dev; the *-dev services below replace them. Infra
+# (db/redis/dnsmasq/mailhog) still comes from docker-compose.yml.
+
+services:
+  # ── Disable the prod-shaped services in dev ────────────────────────────────
+  api:
+    profiles: [prod]
+  worker:
+    profiles: [prod]
+  frontend:
+    profiles: [prod]
+  caddy:
+    profiles: [prod]
+
+  # ── API + WireGuard server (hot-reload) ────────────────────────────────────
+  api-dev:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.dev
+    profiles: [dev]
+    env_file: .env
+    environment:
+      ZEROVPN_ENVIRONMENT: dev
+      ZEROVPN_BIND_ADDRESS: 0.0.0.0:8080
+      ZEROVPN_WG__BACKEND: shell          # `wg set` against the local wg0
+      ZEROVPN_WG__INTERFACE: wg0
+      ZEROVPN_WG__SERVER_CONFIG_PATH: /wg/wg0.conf
+      # Endpoint the client configs advertise — your Mac's LAN IP so a phone
+      # on the same Wi-Fi can reach it. Passed in by `make up-dev`.
+      ZEROVPN_WG__SERVER_ENDPOINT: ${LAN_IP:-localhost}:51820
+      WG_QUICK_USERSPACE_IMPLEMENTATION: boringtun-cli
+      # The worker shares THIS container's network namespace (see worker-dev's
+      # `network_mode`), so its ZMQ publisher is reachable here on loopback —
+      # not via the `worker` DNS alias, which no longer exists in dev.
+      ZEROVPN_EVENTS__SUBSCRIBER_CONNECT: tcp://127.0.0.1:5555
+      CARGO_TERM_COLOR: always
+    entrypoint: ["bash", "/usr/local/bin/dev-entrypoint-api.sh"]
+    volumes:
+      - .:/app
+      - cargo_registry:/usr/local/cargo/registry
+      - target_api:/app/target
+      - wg_config:/wg
+      # Shared with worker-dev so the worker can read the userspace WireGuard
+      # UAPI socket (boringtun fallback). Harmless with the kernel backend.
+      - wg_run:/run/wireguard
+      - ./deploy/dev-entrypoint-api.sh:/usr/local/bin/dev-entrypoint-api.sh:ro
+    ports:
+      - "127.0.0.1:18080:8080"   # api, for host debugging
+      - "51820:51820/udp"        # WireGuard — reachable from the LAN
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    networks:
+      backend:
+        aliases: [api]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Worker (hot-reload) ────────────────────────────────────────────────────
+  # The worker's wg_poller reads live peer stats via `wg show wg0 dump`, which
+  # only works in the network namespace where wg0 actually lives — the api-dev
+  # container (its entrypoint runs `wg-quick up`). A separate container can't
+  # see that interface, which is why the device page showed no chart/status.
+  # So we drop the worker INTO api-dev's network namespace and give it
+  # NET_ADMIN (the WireGuard netlink GET is privileged). With a shared
+  # namespace its ZMQ publisher (0.0.0.0:5555) is reachable by the api at
+  # 127.0.0.1:5555 — see api-dev's SUBSCRIBER_CONNECT override above.
+  worker-dev:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.dev
+    profiles: [dev]
+    env_file: .env
+    environment:
+      ZEROVPN_ENVIRONMENT: dev
+      ZEROVPN_EVENTS__PUBLISHER_BIND: tcp://0.0.0.0:5555
+      ZEROVPN_WG__BACKEND: shell        # poll the real wg0 in api-dev's netns
+      ZEROVPN_WG__INTERFACE: wg0
+      CARGO_TERM_COLOR: always
+    command: ["watchexec", "--restart", "--poll", "1s", "-w", "crates", "--", "cargo", "run", "-p", "zerovpn-worker"]
+    # Share api-dev's network namespace so wg0 + the api's loopback are visible.
+    network_mode: "service:api-dev"
+    cap_add: [NET_ADMIN]
+    volumes:
+      - .:/app
+      - cargo_registry:/usr/local/cargo/registry
+      - target_worker:/app/target
+      # Same shared dir as api-dev — lets `wg show` reach the userspace UAPI
+      # socket when wg-quick falls back to boringtun.
+      - wg_run:/run/wireguard
+    depends_on:
+      db:
+        condition: service_healthy
+      api-dev:
+        condition: service_started
+
+  # ── Web (Vite dev server, hot-reload) ──────────────────────────────────────
+  web-dev:
+    image: node:24-bookworm-slim
+    profiles: [dev]
+    working_dir: /app
+    environment:
+      VITE_API_PROXY: http://api-dev:8080
+      VITE_USE_POLLING: "true"            # see vite.config.ts
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    command:
+      - sh
+      - -lc
+      - corepack enable && corepack prepare pnpm@9.15.4 --activate && pnpm install && pnpm dev --host 0.0.0.0
+    volumes:
+      - ./web:/app
+      - web_node_modules:/app/node_modules
+    ports:
+      - "6173:6173"
+    networks: [backend]
+    depends_on:
+      api-dev:
+        condition: service_started
+
+volumes:
+  cargo_registry:
+  target_api:
+  target_worker:
+  web_node_modules:
+  wg_run:

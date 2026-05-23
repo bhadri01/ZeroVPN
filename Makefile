@@ -6,6 +6,10 @@ SHELL := /bin/bash
 # are gated by compose profiles.
 COMPOSE     := docker compose
 COMPOSE_DEV := $(COMPOSE) --profile dev
+# Dev *containers*: run api/worker/web in Linux with hot-reload + a real
+# (userspace) WireGuard tunnel. The overlay gates the prod api/worker/frontend/
+# caddy behind the `prod` profile so only the *-dev services run.
+COMPOSE_DEVCTR := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml --profile dev
 
 .PHONY: help
 help: ## Show this help
@@ -40,6 +44,26 @@ up-prod: ## Start the prod stack (core only — no MailHog; uses real SMTP from 
 down: ## Stop the stack
 	$(COMPOSE_DEV) down
 
+# ── Dev containers (api + worker + web in Linux, real WireGuard) ─────────────
+.PHONY: up-dev
+up-dev: ## Dev containers: run api/worker/web in Linux with hot-reload + real WG
+	LAN_IP="$$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo 127.0.0.1)" \
+		$(COMPOSE_DEVCTR) up -d --build
+	@echo ""
+	@echo "Dev containers up (first build/compile takes a few minutes — watch logs):"
+	@echo "  Web (Vite)   http://localhost:6173"
+	@echo "  API (debug)  http://localhost:18080"
+	@echo "  WireGuard    udp/51820 on this host's LAN IP"
+	@echo "  Logs:        make logs-dev"
+
+.PHONY: down-dev
+down-dev: ## Stop the dev containers
+	$(COMPOSE_DEVCTR) down
+
+.PHONY: logs-dev
+logs-dev: ## Tail dev-container logs
+	$(COMPOSE_DEVCTR) logs -f --tail=120
+
 # ── Native dev loop ─────────────────────────────────────────────────────────
 # Run db/redis/dnsmasq/mailhog in docker, but run api/worker/frontend
 # natively for fast iteration (cargo incremental, Vite HMR). The api +
@@ -55,7 +79,7 @@ dev: ## Native dev: start infra in docker, leave api/worker/frontend for cargo +
 	@echo "Infra up. In separate terminals run:"
 	@echo "  make dev-api      # native zerovpn-api on http://localhost:8080"
 	@echo "  make dev-worker   # native zerovpn-worker on tcp://localhost:5555"
-	@echo "  make dev-web      # Vite HMR on http://localhost:5173"
+	@echo "  make dev-web      # Vite HMR on http://localhost:6173"
 
 .PHONY: dev-api
 dev-api: ## Run the api natively against the dockerized infra
