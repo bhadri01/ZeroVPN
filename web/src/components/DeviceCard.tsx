@@ -5,7 +5,9 @@ import {
   IconGripVertical,
 } from "@tabler/icons-react"
 import {
+  useEffect,
   useMemo,
+  useState,
   type HTMLAttributes,
   type PointerEventHandler,
   type ReactNode,
@@ -13,11 +15,18 @@ import {
 import { Link } from "react-router"
 
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
-import { RelativeTime } from "@/components/RelativeTime"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import { WithTooltip } from "@/components/ui/with-tooltip"
+import { useNow } from "@/hooks/useNow"
 import type { PublicDevice } from "@/lib/api"
-import { connState, peerState } from "@/lib/deviceState"
+import { formatAgo, formatDateTime } from "@/lib/datetime"
+import {
+  connState,
+  endpointHost,
+  peerState,
+  type ConnState,
+  type PeerState,
+} from "@/lib/deviceState"
 import { compactBytes, formatBps } from "@/lib/units"
 import { cn } from "@/lib/utils"
 import { useLiveStats } from "@/stores/liveStats"
@@ -28,27 +37,21 @@ import { useLiveStats } from "@/stores/liveStats"
  *  pulled by an hour-old spike. */
 const CHART_WINDOW = 30
 
-/** Strip the `:port` from a WG `host:port` endpoint, leaving just the IP.
- *  Handles IPv6's bracketed form (`[2001:db8::1]:51820` → `2001:db8::1`)
- *  and plain IPv4 (`203.0.113.5:51820` → `203.0.113.5`). */
-function endpointHost(endpoint: string): string {
-  if (endpoint.startsWith("[")) {
-    const close = endpoint.indexOf("]")
-    return close > 0 ? endpoint.slice(1, close) : endpoint
-  }
-  const lastColon = endpoint.lastIndexOf(":")
-  return lastColon > 0 ? endpoint.slice(0, lastColon) : endpoint
-}
+/** How long a previously-active peer can go without moving a byte before
+ *  we treat it as disconnected. Peer configs ship `PersistentKeepalive =
+ *  25s`, so a live peer's rx advances at least that often; ~3× that gives
+ *  a robust, flicker-free drop signal that's far quicker than waiting out
+ *  the ~3-min WireGuard handshake window. See `DeviceLive.lastSeenTs`. */
+const ACTIVITY_STALE_MS = 75_000
 
-/** Pill the header shows — combines connection state (handshake-derived)
- *  with peer state (admin lifecycle) so a paused or revoked device
- *  always wins over the bare online/offline label. */
-function rowPill(d: PublicDevice): PillStatus {
-  const c = connState(d)
-  const p = peerState(d)
+/** Pill the header shows — combines connection state with peer state
+ *  (admin lifecycle) so a paused or revoked device always wins over the
+ *  bare online/offline label. Takes the *effective* connection state so
+ *  the caller can fold in faster-than-handshake drop detection. */
+function rowPill(conn: ConnState, p: PeerState): PillStatus {
   if (p === "revoked") return "revoked"
   if (p === "paused") return "paused"
-  return c
+  return conn
 }
 
 export interface DeviceCardProps extends HTMLAttributes<HTMLDivElement> {
@@ -77,13 +80,15 @@ export interface DeviceCardProps extends HTMLAttributes<HTMLDivElement> {
 
 /** Single, shared visual representation of a device — used by the Finder
  *  results grid and the Devices grid view. Always shows: name, OS, IP,
- *  status pill, live RX/TX rates, a mini RX/TX history chart, and a
- *  footer with last-handshake + cumulative bytes.
+ *  WAN endpoint, status pill, cumulative RX/TX totals (the headline
+ *  blocks), a mini RX/TX history chart, and a footer with last-handshake
+ *  plus the live RX/TX I/O rate.
  *
- *  Live rates are gated on `connState(d) === "online"` (recent handshake)
- *  rather than just `status === "active"` so a device that hasn't
- *  handshook in 3 minutes shows "—" instead of the stale rate the
- *  store still holds from before it dropped.
+ *  The live rate (now in the footer) is gated on `connState(d) === "online"`
+ *  (recent handshake) rather than just `status === "active"` so a device
+ *  that hasn't handshook in 3 minutes shows "—" instead of the stale rate
+ *  the store still holds from before it dropped. Totals show whenever the
+ *  device has ever handshook.
  *
  *  All standard `<div>` attributes pass through to the root, so callers
  *  can attach drag handlers, data-attributes for drag visuals, refs,
@@ -105,8 +110,38 @@ export function DeviceCard({
   // We refuse to surface any of that until we have a real handshake on
   // record. Once the device has ever connected, the counters reflect
   // real traffic from that point on.
+  // 1 Hz tick so the relative "last seen" label counts up live and the
+  // staleness check below re-evaluates every second (handshake-window
+  // expiry + keepalive drop both surface within ~1s, no event needed).
+  const now = useNow()
+
+  // Timestamp the tab last (re)gained focus. While hidden we stop
+  // receiving stats, so `lastSeenTs` goes stale for peers that are still
+  // up; without this guard, refocusing would flash a live device
+  // "offline" until its next keepalive lands. We only trust the drop
+  // signal once stats have had a full staleness window to flow in again.
+  const [visibleSince, setVisibleSince] = useState(() => Date.now())
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== "hidden") setVisibleSince(Date.now())
+    }
+    document.addEventListener("visibilitychange", onVis)
+    return () => document.removeEventListener("visibilitychange", onVis)
+  }, [])
+
   const hasEverHandshook = d.last_handshake_at != null
-  const isOnline = hasEverHandshook && connState(d) === "online"
+  // Connectivity = the coarse handshake window, refined by keepalive
+  // activity. A live peer's rx ticks every ~25s (PersistentKeepalive); if
+  // we've seen activity and it's since gone stale, the peer dropped — flip
+  // offline now instead of waiting out the full handshake window. When
+  // we've never seen activity (just connected, or no keepalive) we fall
+  // back to the handshake gate, so this never produces a false "offline".
+  const lastSeenTs = live?.lastSeenTs ?? 0
+  const settledAfterFocus = now - visibleSince > ACTIVITY_STALE_MS
+  const activityStale =
+    lastSeenTs > 0 && now - lastSeenTs > ACTIVITY_STALE_MS && settledAfterFocus
+  const isOnline =
+    hasEverHandshook && connState(d) === "online" && !activityStale
   const rxBps = isOnline ? (live?.rxBps ?? 0) : 0
   const txBps = isOnline ? (live?.txBps ?? 0) : 0
   // Slice histories to the last N frames before feeding the chart. When
@@ -189,7 +224,7 @@ export function DeviceCard({
             title={
               peerHost
                 ? d.last_peer_endpoint_at
-                  ? `Last connected from ${peerHost} · seen ${new Date(d.last_peer_endpoint_at).toLocaleString()}`
+                  ? `Last connected from ${peerHost} · seen ${formatDateTime(d.last_peer_endpoint_at)}`
                   : `Last connected from ${peerHost}`
                 : "No endpoint observed yet"
             }
@@ -198,7 +233,7 @@ export function DeviceCard({
           </span>
         </Link>
         <div className="flex items-center gap-1">
-          <StatusPill status={rowPill(d)} />
+          <StatusPill status={rowPill(isOnline ? "online" : "offline", peerState(d))} />
           {actions}
           {showOpenLink && !actions && (
             <WithTooltip label="Open device">
@@ -214,15 +249,17 @@ export function DeviceCard({
         </div>
       </div>
 
+      {/* Prominent blocks show cumulative totals (the headline number);
+          the live I/O rate moves to the footer. */}
       <div className="grid grid-cols-2 gap-3 px-4 pb-3">
         <RateBlock
-          label="↓ RX"
-          value={isOnline ? formatBps(rxBps) : "—"}
+          label="↓ RX TOTAL"
+          value={hasEverHandshook ? compactBytes(totalRx) : "—"}
           color="text-status-online"
         />
         <RateBlock
-          label="↑ TX"
-          value={isOnline ? formatBps(txBps) : "—"}
+          label="↑ TX TOTAL"
+          value={hasEverHandshook ? compactBytes(totalTx) : "—"}
           color="text-primary"
         />
       </div>
@@ -240,16 +277,26 @@ export function DeviceCard({
       <div className="border-border bg-muted/40 flex items-center justify-between gap-3 border-t px-4 py-2.5 font-mono text-[11px]">
         <span className="text-muted-foreground inline-flex items-center gap-1.5">
           <span className="bg-status-paused size-1 rounded-full" aria-hidden />
-          <RelativeTime value={d.last_handshake_at} fallback="Never" />
+          <WithTooltip
+            label={
+              d.last_handshake_at
+                ? formatDateTime(d.last_handshake_at)
+                : "Never connected"
+            }
+          >
+            <span className="cursor-default whitespace-nowrap">
+              {formatAgo(d.last_handshake_at, now, "Never")}
+            </span>
+          </WithTooltip>
         </span>
         <span className="text-muted-foreground inline-flex items-center gap-2 tabular-nums">
           <span className="inline-flex items-center gap-0.5">
             <IconArrowDown className="size-2.5" />
-            {hasEverHandshook ? compactBytes(totalRx) : "—"}
+            {isOnline ? formatBps(rxBps) : "—"}
           </span>
           <span className="inline-flex items-center gap-0.5">
             <IconArrowUp className="size-2.5" />
-            {hasEverHandshook ? compactBytes(totalTx) : "—"}
+            {isOnline ? formatBps(txBps) : "—"}
           </span>
         </span>
       </div>

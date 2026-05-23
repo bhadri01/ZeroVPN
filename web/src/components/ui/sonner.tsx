@@ -11,7 +11,9 @@ import { Toaster as Sonner, type ToasterProps } from "sonner"
 
 import { useTheme } from "@/components/theme-provider"
 import { getMyPreferences } from "@/lib/api"
+import { setDateTimePrefs } from "@/lib/datetime"
 import { setNotifyConfig } from "@/lib/notify"
+import { setUnitsPref } from "@/lib/units"
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { resolvedTheme } = useTheme()
@@ -38,6 +40,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
       browserNotifications: prefsQ.data.browser_notifications,
       position: prefsQ.data.toast_position,
     })
+    // Apply display-formatting prefs app-wide (units / date / time). The
+    // Toaster mounts once near the root and already owns the preferences
+    // query, so it doubles as the global preferences applier.
+    setUnitsPref(prefsQ.data.units)
+    setDateTimePrefs(prefsQ.data.date_format, prefsQ.data.time_format)
   }, [prefsQ.data])
 
   return (

@@ -719,21 +719,19 @@
      columns. The value is the sum of the row's grid-template-columns
      plus a little padding so the last sticky cell never visually
      overlaps the rightmost data cell at full width. */
-  min-width: 1196px;
+  min-width: 1080px;
 }
 .zv-list-row {
   display: grid;
   grid-template-columns:
     32px                  /* drag grip                */
     minmax(160px, 1.4fr)  /* name + status dot        */
-    72px                  /* OS                       */
     120px                 /* VPN IP                   */
-    minmax(120px, 1fr)    /* allowed IPs              */
-    minmax(110px, 0.9fr)  /* DNS                      */
+    minmax(140px, 1fr)    /* via (WAN endpoint)       */
     110px                 /* status pill(s)           */
     140px                 /* activity chart           */
-    90px                  /* TX                       */
-    90px                  /* RX                       */
+    100px                 /* total TX                 */
+    100px                 /* total RX                 */
     96px                  /* last seen                */
     64px;                 /* actions (sticky)         */
   align-items: center;

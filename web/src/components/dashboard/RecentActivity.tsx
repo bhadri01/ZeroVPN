@@ -3,6 +3,7 @@ import { IconActivity, IconArrowUpRight } from "@tabler/icons-react"
 import { Link } from "react-router"
 
 import { adminListAudit, type AuditRow } from "@/lib/api"
+import { formatTime } from "@/lib/datetime"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useEventTail, type TailLine } from "@/stores/eventTail"
 import { useAuth } from "@/stores/auth"
@@ -24,7 +25,7 @@ function fmtTime(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms <= 0) return "—"
   const d = new Date(ms)
   if (Number.isNaN(d.getTime())) return "—"
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  return formatTime(d)
 }
 
 /** Compact relative-time string. Guards against NaN / undefined so the

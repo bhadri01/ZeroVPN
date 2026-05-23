@@ -3,6 +3,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { formatDateTime } from "@/lib/datetime"
 
 const UNITS: Array<{ ms: number; one: string; many: string }> = [
   { ms: 365 * 24 * 60 * 60 * 1000, one: "year", many: "years" },
@@ -29,7 +30,7 @@ function relative(when: Date | string | number | null | undefined): string {
       return past ? `${n} ${unit} ago` : `in ${n} ${unit}`
     }
   }
-  return d.toLocaleString()
+  return formatDateTime(d)
 }
 
 export function RelativeTime({
@@ -44,10 +45,7 @@ export function RelativeTime({
   }
   const d = value instanceof Date ? value : new Date(value)
   const text = relative(d)
-  const absolute = d.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  })
+  const absolute = formatDateTime(d)
   return (
     <Tooltip>
       <TooltipTrigger asChild>

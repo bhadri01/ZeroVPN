@@ -34,3 +34,15 @@ export function peerState(d: PublicDevice): PeerState {
       return "revoked"
   }
 }
+
+/** Strip the `:port` from a WG `host:port` endpoint, leaving just the IP.
+ *  Handles IPv6's bracketed form (`[2001:db8::1]:51820` → `2001:db8::1`)
+ *  and plain IPv4 (`203.0.113.5:51820` → `203.0.113.5`). */
+export function endpointHost(endpoint: string): string {
+  if (endpoint.startsWith("[")) {
+    const close = endpoint.indexOf("]")
+    return close > 0 ? endpoint.slice(1, close) : endpoint
+  }
+  const lastColon = endpoint.lastIndexOf(":")
+  return lastColon > 0 ? endpoint.slice(0, lastColon) : endpoint
+}

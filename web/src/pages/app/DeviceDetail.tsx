@@ -101,6 +101,7 @@ import {
   unpauseDevice,
 } from "@/lib/api"
 import { connState } from "@/lib/deviceState"
+import { formatDate } from "@/lib/datetime"
 import { formatBps } from "@/lib/units"
 import { cn } from "@/lib/utils"
 import { useLiveStats } from "@/stores/liveStats"
@@ -1652,7 +1653,7 @@ function formatDayLabel(day: string): string {
     .slice(0, 10)
   if (day === yToday) return "Today"
   if (day === yesterday) return "Yesterday"
-  return day
+  return formatDate(day)
 }
 
 function ConfigEditForm({

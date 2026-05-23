@@ -31,19 +31,16 @@ import {
   DevicesLoadingSkeleton,
   type ViewMode,
 } from "@/components/devices/DevicesLoadingSkeleton"
-import { FleetSummary } from "@/components/devices/FleetSummary"
-import { sumHistoriesRightAligned } from "@/components/devices/helpers"
 import { EmptyState } from "@/components/EmptyState"
 import { FilterDropdown } from "@/components/FilterDropdown"
 import { PageStagger, StaggerItem } from "@/components/motion"
-import { fmtRel, PageHead, Panel } from "@/components/swiss"
+import { fmtRel, PageHead, Panel, Pill } from "@/components/swiss"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
 import { WithTooltip } from "@/components/ui/with-tooltip"
 import { Sheet, SheetTrigger } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import {
-  type DeviceOs,
   type PublicDevice,
   deleteDevice,
   listDevices,
@@ -53,10 +50,12 @@ import {
 } from "@/lib/api"
 import {
   connState,
+  endpointHost,
   peerState,
   type ConnState,
   type PeerState,
 } from "@/lib/deviceState"
+import { compactBytes } from "@/lib/units"
 import { useLiveStats } from "@/stores/liveStats"
 
 /** Frames of live history rendered in each list-row sparkline. Matches
@@ -132,13 +131,6 @@ export function DevicesPage() {
   const [unpauseId, setUnpauseId] = useState<string | null>(null)
 
   const liveDevices = useLiveStats((s) => s.devices)
-  const rates = useMemo(() => {
-    const m = new Map<string, { rxBps: number; txBps: number }>()
-    for (const [id, d] of Object.entries(liveDevices)) {
-      m.set(id, { rxBps: d.rxBps, txBps: d.txBps })
-    }
-    return m
-  }, [liveDevices])
 
   const pauseM = useMutation({
     mutationFn: (id: string) => pauseDevice(id),
@@ -306,13 +298,15 @@ export function DevicesPage() {
   const toggleConn = (v: ConnState) =>
     setConnFilter((prev) => {
       const next = new Set(prev)
-      next.has(v) ? next.delete(v) : next.add(v)
+      if (next.has(v)) next.delete(v)
+      else next.add(v)
       return next
     })
   const togglePeer = (v: PeerState) =>
     setPeerFilter((prev) => {
       const next = new Set(prev)
-      next.has(v) ? next.delete(v) : next.add(v)
+      if (next.has(v)) next.delete(v)
+      else next.add(v)
       return next
     })
   const clearFilters = () => {
@@ -377,51 +371,6 @@ export function DevicesPage() {
     onReorderFiltered(newVisible)
   }
 
-  // Throughput summary scoped to the *currently filtered* device set,
-  // and then narrowed again to devices that are actually `online` — an
-  // offline or never-handshaked device cannot be transmitting, so any
-  // rate the WS store still holds for it is stale and must not be
-  // surfaced as live data.
-  const onlineFilteredIds = useMemo(
-    () => filtered.filter(({ c }) => c === "online").map(({ d }) => d.id),
-    [filtered],
-  )
-  const filteredTotalRxBps = useMemo(() => {
-    let s = 0
-    for (const id of onlineFilteredIds) s += rates.get(id)?.rxBps ?? 0
-    return s
-  }, [onlineFilteredIds, rates])
-  const filteredTotalTxBps = useMemo(() => {
-    let s = 0
-    for (const id of onlineFilteredIds) s += rates.get(id)?.txBps ?? 0
-    return s
-  }, [onlineFilteredIds, rates])
-  const filteredRxHistory = useMemo(
-    () => sumHistoriesRightAligned(onlineFilteredIds, liveDevices, "rxHistory", 32),
-    [onlineFilteredIds, liveDevices],
-  )
-  const filteredTxHistory = useMemo(
-    () => sumHistoriesRightAligned(onlineFilteredIds, liveDevices, "txHistory", 32),
-    [onlineFilteredIds, liveDevices],
-  )
-
-  // OS breakdown of the *currently filtered* fleet — fixed, useful at-a-
-  // glance composition view that the table itself doesn't surface
-  // visually. Counts per OS plus how many of each are currently online,
-  // sorted by total descending so the biggest cohorts read first.
-  const osBreakdown = useMemo(() => {
-    const acc = new Map<DeviceOs, { os: DeviceOs; total: number; online: number }>()
-    for (const { d, c } of filtered) {
-      const cur = acc.get(d.os) ?? { os: d.os, total: 0, online: 0 }
-      cur.total += 1
-      if (c === "online") cur.online += 1
-      acc.set(d.os, cur)
-    }
-    const rows = Array.from(acc.values()).sort((a, b) => b.total - a.total)
-    const peak = rows[0]?.total ?? 0
-    return { rows, peak }
-  }, [filtered])
-
   return (
     <PageStagger>
       <StaggerItem>
@@ -451,22 +400,17 @@ export function DevicesPage() {
       </StaggerItem>
 
       <StaggerItem>
-      <FleetSummary
-        devices={devices}
-        filteredCount={filtered.length}
-        counts={counts}
-        totalRxBps={filteredTotalRxBps}
-        totalTxBps={filteredTotalTxBps}
-        rxHistory={filteredRxHistory}
-        txHistory={filteredTxHistory}
-        osBreakdown={osBreakdown}
-        loading={devicesQ.isLoading}
-      />
-      </StaggerItem>
-
-      <StaggerItem>
       <Panel
         flush
+        title={
+          devicesQ.data ? (
+            <Pill tone="neutral" dot={false}>
+              {visibleRows.length === devices.length
+                ? `${devices.length} ${devices.length === 1 ? "device" : "devices"}`
+                : `${visibleRows.length} of ${devices.length}`}
+            </Pill>
+          ) : undefined
+        }
         right={
           <>
             <ViewModeToggle value={viewMode} onChange={setViewMode} />
@@ -556,14 +500,12 @@ export function DevicesPage() {
             <div className="zv-list-row zv-list-head">
               <div className="zv-cell" aria-hidden />
               <div className="zv-cell">Name</div>
-              <div className="zv-cell">OS</div>
               <div className="zv-cell">VPN IP</div>
-              <div className="zv-cell">Allowed IPs</div>
-              <div className="zv-cell">DNS</div>
+              <div className="zv-cell">Via</div>
               <div className="zv-cell">Status</div>
               <div className="zv-cell">Activity</div>
-              <div className="zv-cell zv-num">TX</div>
-              <div className="zv-cell zv-num">RX</div>
+              <div className="zv-cell zv-num">Total TX</div>
+              <div className="zv-cell zv-num">Total RX</div>
               <div className="zv-cell">Last seen</div>
               <div className="zv-cell zv-cell-sticky-right" aria-hidden />
             </div>
@@ -576,7 +518,6 @@ export function DevicesPage() {
               layoutScroll
             >
               {visibleRows.map(({ d, c, p }) => {
-                const live = rates.get(d.id) ?? { rxBps: 0, txBps: 0 }
                 // Tail of the live history for the row's sparkline. Same
                 // online-gate logic as DeviceCard: a device that hasn't
                 // handshook (or just dropped offline) gets empty arrays
@@ -590,14 +531,12 @@ export function DevicesPage() {
                 const rowTx = isOnlineForChart
                   ? (liveEntry?.txHistory ?? []).slice(-LIST_CHART_WINDOW)
                   : []
-                const isSplit =
-                  d.allowed_ips_override !== null &&
-                  d.allowed_ips_override !== undefined &&
-                  d.allowed_ips_override.length > 0
-                const dnsDisplay =
-                  d.dns_override && d.dns_override.length > 0
-                    ? d.dns_override.join(", ")
-                    : "server default"
+                // Cumulative totals — same gate the card uses: a device
+                // that's never handshook reads zero regardless of any
+                // stale counters the worker may have produced.
+                const hasEverHandshook = d.last_handshake_at != null
+                const totalRx = hasEverHandshook ? (liveEntry?.totalRx ?? 0) : 0
+                const totalTx = hasEverHandshook ? (liveEntry?.totalTx ?? 0) : 0
                 const rowStatus = rowPill(c, p)
                 return (
                   <SortableListRow
@@ -606,11 +545,10 @@ export function DevicesPage() {
                     rowStatus={rowStatus}
                     connState={c}
                     peerState={p}
-                    isSplit={isSplit}
-                    dnsDisplay={dnsDisplay}
                     rxHistory={rowRx}
                     txHistory={rowTx}
-                    live={live}
+                    totalRx={totalRx}
+                    totalTx={totalTx}
                     isDragging={dragId === d.id}
                     onDragStart={() => setDragId(d.id)}
                     onDragEnd={handleDragRelease}
@@ -776,11 +714,10 @@ function SortableListRow({
   rowStatus,
   connState: c,
   peerState: p,
-  isSplit,
-  dnsDisplay,
   rxHistory,
   txHistory,
-  live,
+  totalRx,
+  totalTx,
   isDragging,
   onDragStart,
   onDragEnd,
@@ -791,17 +728,19 @@ function SortableListRow({
   rowStatus: PillStatus
   connState: ConnState
   peerState: PeerState
-  isSplit: boolean
-  dnsDisplay: string
   rxHistory: number[]
   txHistory: number[]
-  live: { rxBps: number; txBps: number }
+  totalRx: number
+  totalTx: number
   isDragging: boolean
   onDragStart: () => void
   onDragEnd: () => void
   onDoubleClick: () => void
   actions: React.ReactNode
 }) {
+  const peerHost = d.last_peer_endpoint
+    ? endpointHost(d.last_peer_endpoint)
+    : null
   const controls = useDragControls()
   return (
     <Reorder.Item
@@ -837,19 +776,12 @@ function SortableListRow({
           {d.name}
         </Link>
       </div>
-      <div className="zv-cell text-muted-foreground">{d.os}</div>
       <div className="zv-cell font-mono">{d.allocated_ip}</div>
       <div
         className="zv-cell text-muted-foreground truncate font-mono"
-        title={isSplit ? d.allowed_ips_override!.join(", ") : "0.0.0.0/0, ::/0"}
+        title={peerHost ?? "No endpoint observed yet"}
       >
-        {isSplit ? d.allowed_ips_override!.join(", ") : "0.0.0.0/0, ::/0"}
-      </div>
-      <div
-        className="zv-cell text-muted-foreground truncate font-mono"
-        title={dnsDisplay}
-      >
-        {dnsDisplay}
+        {peerHost ?? "—"}
       </div>
       <div className="zv-cell">
         <div className="inline-flex items-center gap-1.5">
@@ -869,15 +801,15 @@ function SortableListRow({
         </div>
       </div>
       <div className="zv-cell zv-num">
-        {c === "online" ? (
-          formatRate(live.txBps)
+        {d.last_handshake_at != null ? (
+          compactBytes(totalTx)
         ) : (
           <span className="text-muted-foreground/50">—</span>
         )}
       </div>
       <div className="zv-cell zv-num">
-        {c === "online" ? (
-          formatRate(live.rxBps)
+        {d.last_handshake_at != null ? (
+          compactBytes(totalRx)
         ) : (
           <span className="text-muted-foreground/50">—</span>
         )}
@@ -1027,13 +959,6 @@ function RowActions({
       </DropdownMenuContent>
     </DropdownMenu>
   )
-}
-
-function formatRate(bps: number): string {
-  if (bps < 1_000) return `${Math.round(bps)} bps`
-  if (bps < 1_000_000) return `${(bps / 1_000).toFixed(1)} kbps`
-  if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`
-  return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
 }
 
 function formatLastSeen(iso: string | null): string {

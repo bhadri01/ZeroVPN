@@ -1,6 +1,7 @@
 import { create } from "zustand"
 
 import type { Event } from "@/lib/wire"
+import { formatTime } from "@/lib/datetime"
 import { formatBps } from "@/lib/units"
 
 const TAIL_CAP = 60
@@ -50,7 +51,7 @@ function toLine(event: Event): TailLine | null {
         kind: event.type,
         tone: "info",
         deviceId: event.device_id,
-        text: `device.handshake · ${event.device_id.slice(0, 8)} · ${new Date(event.last_handshake_ms).toLocaleTimeString()}`,
+        text: `device.handshake · ${event.device_id.slice(0, 8)} · ${formatTime(event.last_handshake_ms)}`,
       }
     case "dns_updated":
       return {

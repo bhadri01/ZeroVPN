@@ -8,6 +8,8 @@ import {
   YAxis,
 } from "recharts"
 
+import { formatBps } from "@/lib/units"
+
 interface Props {
   rxHistory: number[]
   txHistory: number[]
@@ -17,24 +19,14 @@ interface Props {
    * - "rx" | "tx": render only one series
    */
   variant?: "combined" | "rx" | "tx"
-  /** "bps" prints kbps/Mbps; "Bps" prints kB/s/MB/s. Default "bps". */
+  /** @deprecated Throughput units now follow the user's `units` preference
+   *  (via `formatBps`). Kept for call-site compatibility; ignored. */
   unit?: "bps" | "Bps"
   /** When set, renders an X axis with relative-time tick labels
    *  ("-5m", "-4m", … "now"). Pass the *intended* window in seconds —
    *  the labels are computed from that, not from the array length, so
    *  the axis stays stable as the chart fills up. */
   windowSec?: number
-}
-
-function formatRate(n: number, unit: "bps" | "Bps"): string {
-  const u = unit === "Bps" ? "B/s" : "bps"
-  const k = unit === "Bps" ? "kB/s" : "kbps"
-  const m = unit === "Bps" ? "MB/s" : "Mbps"
-  const g = unit === "Bps" ? "GB/s" : "Gbps"
-  if (n < 1_000) return `${Math.round(n)} ${u}`
-  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)} ${k}`
-  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)} ${m}`
-  return `${(n / 1_000_000_000).toFixed(2)} ${g}`
 }
 
 // RX/TX line colors are user-selectable in Appearance (CSS vars on <html>),
@@ -59,7 +51,6 @@ export function NetworkMonitorChart({
   txHistory,
   height = 220,
   variant = "combined",
-  unit = "bps",
   windowSec,
 }: Props) {
   const data = useMemo(() => {
@@ -152,7 +143,7 @@ export function NetworkMonitorChart({
           <XAxis dataKey="i" hide />
         )}
         <YAxis
-          tickFormatter={(v: number) => formatRate(v, unit).replace(" ", "")}
+          tickFormatter={(v: number) => formatBps(v).replace(" ", "")}
           stroke="var(--muted-foreground)"
           fontSize={10}
           tickLine={false}
@@ -165,7 +156,7 @@ export function NetworkMonitorChart({
           }
           formatter={(v: unknown, name: unknown) =>
             [
-              formatRate(typeof v === "number" ? v : Number(v) || 0, unit),
+              formatBps(typeof v === "number" ? v : Number(v) || 0),
               String(name).toUpperCase(),
             ] as [string, string]
           }

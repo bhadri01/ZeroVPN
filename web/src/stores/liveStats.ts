@@ -8,12 +8,25 @@ import { create } from "zustand"
 // sizes.
 const HISTORY_CAP = 1800
 
+// The sidebar host-health sparklines (Real I/O, Net I/O) only ever show a
+// short rolling window, so we cap their histories far tighter than the
+// device charts above. At the ~5 s server_health cadence, 60 frames ≈ 5 min
+// — enough to read the recent trend without the trace stacking ever-denser
+// (and unbounded memory) until a page refresh.
+const SERVER_HEALTH_HISTORY = 60
+
 export interface DeviceLive {
   rxBps: number
   txBps: number
   rxHistory: number[]
   txHistory: number[]
   lastTs: number
+  /** Last tick at which this device actually moved bytes (rx or tx > 0).
+   *  Persistent-keepalive (25s) keeps a *connected* peer's rx ticking, so
+   *  this advancing within the last ~minute is a much faster liveness
+   *  signal than the ~2-min WireGuard handshake. Stale → the peer dropped.
+   *  0 until the first byte of activity is seen. */
+  lastSeenTs: number
   peakRx: number
   peakTx: number
   totalRx: number
@@ -135,6 +148,7 @@ const empty = (): DeviceLive => ({
   rxHistory: [],
   txHistory: [],
   lastTs: 0,
+  lastSeenTs: 0,
   peakRx: 0,
   peakTx: 0,
   totalRx: 0,
@@ -220,10 +234,13 @@ function buildAggregateFromDevices(
   }
 }
 
-function pushCapped(arr: number[], next: number): number[] {
-  if (arr.length < HISTORY_CAP) return [...arr, next]
-  // rotate without spreading the whole array twice
-  const out = arr.slice(1)
+function pushCapped(arr: number[], next: number, cap: number = HISTORY_CAP): number[] {
+  if (arr.length < cap) return [...arr, next]
+  // Keep the most recent (cap - 1) frames, then append — yields exactly
+  // `cap`. Slicing from `arr.length - cap + 1` (rather than a fixed `1`)
+  // also trims an array that's already over `cap`, e.g. after the cap is
+  // lowered or a hot-reload leaves an oversized history in place.
+  const out = arr.slice(arr.length - cap + 1)
   out.push(next)
   return out
 }
@@ -260,6 +277,10 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
           rxHistory: pushCapped(cur.rxHistory, rxBps),
           txHistory: pushCapped(cur.txHistory, txBps),
           lastTs: at,
+          // Advance the liveness watermark only on real byte movement —
+          // keepalive ticks count, idle zero-rate ticks don't. A frozen
+          // value is how the card detects a drop ahead of the handshake.
+          lastSeenTs: rxBps > 0 || txBps > 0 ? at : cur.lastSeenTs,
           peakRx: Math.max(cur.peakRx, rxBps),
           peakTx: Math.max(cur.peakTx, txBps),
           totalRx: cur.totalRx + rxBps,
@@ -351,6 +372,7 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
           rxHistory,
           txHistory,
           lastTs,
+          lastSeenTs: cur.lastSeenTs,
           peakRx,
           peakTx,
           totalRx: cur.totalRx,
@@ -415,12 +437,12 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
             activePeers,
             diskReadBps,
             diskWriteBps,
-            diskReadHistory: pushCapped(cur.diskReadHistory, diskReadBps),
-            diskWriteHistory: pushCapped(cur.diskWriteHistory, diskWriteBps),
+            diskReadHistory: pushCapped(cur.diskReadHistory, diskReadBps, SERVER_HEALTH_HISTORY),
+            diskWriteHistory: pushCapped(cur.diskWriteHistory, diskWriteBps, SERVER_HEALTH_HISTORY),
             netRxBps,
             netTxBps,
-            netRxHistory: pushCapped(cur.netRxHistory, netRxBps),
-            netTxHistory: pushCapped(cur.netTxHistory, netTxBps),
+            netRxHistory: pushCapped(cur.netRxHistory, netRxBps, SERVER_HEALTH_HISTORY),
+            netTxHistory: pushCapped(cur.netTxHistory, netTxBps, SERVER_HEALTH_HISTORY),
             uptimeSec,
             lastTs: at,
           },

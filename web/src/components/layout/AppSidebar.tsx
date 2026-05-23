@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/stores/auth"
-import { formatBytes } from "@/lib/units"
+import { formatBps, formatBytes } from "@/lib/units"
 import { useLiveStats } from "@/stores/liveStats"
 
 type NavEntry = {
@@ -278,10 +278,10 @@ function ServerStats() {
                 suffix — keeps the row scannable and matches the Real I/O
                 row's compact "R 12 KB · W 4 KB" style. */}
             <span className="text-primary">↓</span>{" "}
-            {formatBytes(netRx / 8)}
+            {formatBps(netRx)}
             <span className="text-muted-foreground px-1">·</span>
             <span className="text-primary">↑</span>{" "}
-            {formatBytes(netTx / 8)}
+            {formatBps(netTx)}
           </span>
         </div>
       </div>

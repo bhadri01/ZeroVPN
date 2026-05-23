@@ -15,7 +15,9 @@ import { useLocation, useNavigate } from "react-router"
 import { toast } from "sonner"
 
 import { PageStagger, StaggerItem } from "@/components/motion"
+import { formatDateWith, formatTimeWith } from "@/lib/datetime"
 import { EASING, TIMING, useReducedMotion } from "@/lib/motion"
+import { formatBpsWith } from "@/lib/units"
 import { useTheme, type Accent } from "@/components/theme-provider"
 import { Eyebrow, PageHead, Panel, Seg } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
@@ -437,6 +439,7 @@ function PreferencesSection() {
     )
   }
   const p = prefsQ.data
+  const now = new Date()
 
   return (
     <div className="flex flex-col gap-6">
@@ -449,35 +452,50 @@ function PreferencesSection() {
             label="Throughput units"
             hint="Bandwidth and live rates"
           >
-            <Seg<UnitsPref>
-              value={p.units}
-              options={[
-                { value: "bps", label: "bits/s" },
-                { value: "Bps", label: "bytes/s" },
-              ]}
-              onChange={(v) => m.mutate({ units: v })}
-            />
+            <div className="flex flex-col items-start gap-1.5 sm:items-end">
+              <Seg<UnitsPref>
+                value={p.units}
+                options={[
+                  { value: "bps", label: "bits/s" },
+                  { value: "Bps", label: "bytes/s" },
+                ]}
+                onChange={(v) => m.mutate({ units: v })}
+              />
+              <span className="text-muted-foreground font-mono text-[11px]">
+                e.g. {formatBpsWith(12_000_000, p.units)}
+              </span>
+            </div>
           </PrefRow>
           <PrefRow label="Date format" hint="Tables and exports">
-            <Seg<DateFormatPref>
-              value={p.date_format}
-              options={[
-                { value: "iso", label: "ISO" },
-                { value: "us", label: "US" },
-                { value: "eu", label: "EU" },
-              ]}
-              onChange={(v) => m.mutate({ date_format: v })}
-            />
+            <div className="flex flex-col items-start gap-1.5 sm:items-end">
+              <Seg<DateFormatPref>
+                value={p.date_format}
+                options={[
+                  { value: "iso", label: "ISO" },
+                  { value: "us", label: "US" },
+                  { value: "eu", label: "EU" },
+                ]}
+                onChange={(v) => m.mutate({ date_format: v })}
+              />
+              <span className="text-muted-foreground font-mono text-[11px]">
+                e.g. {formatDateWith(now, p.date_format)}
+              </span>
+            </div>
           </PrefRow>
           <PrefRow label="Time format" hint="Timestamps">
-            <Seg<TimeFormatPref>
-              value={p.time_format}
-              options={[
-                { value: "h24", label: "24h" },
-                { value: "h12", label: "12h" },
-              ]}
-              onChange={(v) => m.mutate({ time_format: v })}
-            />
+            <div className="flex flex-col items-start gap-1.5 sm:items-end">
+              <Seg<TimeFormatPref>
+                value={p.time_format}
+                options={[
+                  { value: "h24", label: "24h" },
+                  { value: "h12", label: "12h" },
+                ]}
+                onChange={(v) => m.mutate({ time_format: v })}
+              />
+              <span className="text-muted-foreground font-mono text-[11px]">
+                e.g. {formatTimeWith(now, p.time_format)}
+              </span>
+            </div>
           </PrefRow>
         </div>
       </Panel>
