@@ -86,6 +86,15 @@ async fn main() -> Result<()> {
         .await
         .context("build ip allocators")?;
 
+    // Regenerate the CoreDNS hosts file from current device DNS names.
+    // Best-effort: the resolver volume can be empty after a fresh deploy or
+    // a restart with no intervening DNS-name change, which would leave
+    // `*.vpn.local` unresolvable until the next edit. Don't fail boot if the
+    // resolver volume isn't mounted (dev without the dnsmasq container).
+    if let Err(e) = routes::dns::sync_dnsmasq(&pool).await {
+        warn!(?e, "startup DNS hosts-file sync failed (non-fatal)");
+    }
+
     let kek_b64 = env::var("ZEROVPN_KEK").context("ZEROVPN_KEK is required")?;
     let kek = zerovpn_auth::kek::Kek::from_b64(&kek_b64)
         .map_err(|e| anyhow::anyhow!("invalid KEK: {e}"))?;
@@ -193,6 +202,13 @@ async fn main() -> Result<()> {
                     "/devices/dns-check",
                     get(routes::dns::check_availability),
                 )
+                // App one-tap connect/provision. Static path, must precede
+                // the `/devices/{id}` catch-all so "connect" isn't parsed as
+                // a device UUID.
+                .route(
+                    "/devices/connect",
+                    post(routes::devices::connect),
+                )
                 .route(
                     "/devices/{id}",
                     get(routes::devices::get)
@@ -208,10 +224,6 @@ async fn main() -> Result<()> {
                 .route(
                     "/devices/{id}/conf",
                     get(routes::devices::redownload_conf),
-                )
-                .route(
-                    "/devices/{id}/stored-key",
-                    axum::routing::delete(routes::devices::clear_stored_key),
                 )
                 .route("/devices/{id}/dns", axum::routing::put(routes::dns::set))
                 .route("/devices/{id}/events", get(routes::devices::events))

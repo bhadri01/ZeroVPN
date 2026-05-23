@@ -32,6 +32,7 @@ import { toast } from "sonner"
 import { BandwidthChart } from "@/components/charts/BandwidthChart"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
+import { EditDeviceDialog } from "@/components/devices/EditDeviceDialog"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { RelativeTime } from "@/components/RelativeTime"
 import {
@@ -53,15 +54,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   Sheet,
   SheetContent,
@@ -71,7 +64,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Switch } from "@/components/ui/switch"
 import {
   Tabs,
   TabsContent,
@@ -92,9 +84,7 @@ import {
   getDevice,
   listDeviceEvents,
   meServer,
-  patchDevice,
   pauseDevice,
-  clearStoredDeviceKey,
   redownloadDeviceConf,
   rotateDeviceKeys,
   setDeviceDns,
@@ -106,7 +96,6 @@ import { formatBps } from "@/lib/units"
 import { cn } from "@/lib/utils"
 import { useLiveStats } from "@/stores/liveStats"
 
-const FULL_TUNNEL_PRESET = ["0.0.0.0/0", "::/0"]
 const KEEPALIVE_SECS = 25
 
 // Fixed suffix the server's DNS regex requires. Mirrors the
@@ -177,13 +166,6 @@ export function DeviceDetailPage() {
     refetchInterval: range === "24h" ? 30_000 : 5 * 60_000,
   })
 
-  // Edit mode for the Configuration panel — flips between read-only view
-  // and an inline form so the panel keeps its shape either way.
-  const [editing, setEditing] = useState(false)
-  const [tunnel, setTunnel] = useState<"full" | "split">("full")
-  const [splitCidrs, setSplitCidrs] = useState("")
-  const [customDns, setCustomDns] = useState("")
-  const [splitTunnelOn, setSplitTunnelOn] = useState(false)
   const [revokeOpen, setRevokeOpen] = useState(false)
   // Pause is reversible but still kicks the live tunnel for the user, so
   // we gate it (and unpause) behind explicit confirms — same pattern the
@@ -202,93 +184,10 @@ export function DeviceDetailPage() {
   // alias. Existing names are listed inline with per-row delete buttons.
   const [dnsAddOpen, setDnsAddOpen] = useState(false)
   const [dnsInput, setDnsInput] = useState("")
-  // Server-stored-key toggles. Disabling = delete the encrypted column.
-  // Enabling = piggy-back on the rotate flow with `store_private_key: true`
-  // since the server needs a fresh key to encrypt (the original was never
-  // saved on zero-knowledge devices).
-  const [clearKeyOpen, setClearKeyOpen] = useState(false)
-  const [enableKeyOpen, setEnableKeyOpen] = useState(false)
-  // Rename + OS edit dialog. The name + OS are presentational metadata
-  // (no impact on the running tunnel), so editing is a simple two-field
-  // form gated behind a pencil button in the page header.
+  // Edit-metadata dialog (name / OS / device type). Gated behind the
+  // pencil button in the page header; the shared dialog seeds + saves
+  // itself, so this page only owns the open flag.
   const [renameOpen, setRenameOpen] = useState(false)
-  const [nameInput, setNameInput] = useState("")
-  const [osInput, setOsInput] = useState<DeviceOs>("other")
-
-  // Seed edit-form state from the live device payload whenever it changes.
-  useEffect(() => {
-    if (!deviceQ.data) return
-    const d = deviceQ.data
-    const isFull =
-      !d.allowed_ips_override ||
-      d.allowed_ips_override.length === 0 ||
-      (d.allowed_ips_override.length === 2 &&
-        FULL_TUNNEL_PRESET.every((p) => d.allowed_ips_override?.includes(p)))
-    setTunnel(isFull ? "full" : "split")
-    setSplitTunnelOn(!isFull)
-    setSplitCidrs(isFull ? "" : (d.allowed_ips_override ?? []).join(", "))
-    setCustomDns((d.dns_override ?? []).join(", "))
-  }, [deviceQ.data])
-
-  // Re-seed the rename form whenever the dialog opens so the user sees
-  // the device's current name/OS, not a stale value from a prior edit.
-  useEffect(() => {
-    if (renameOpen && deviceQ.data) {
-      setNameInput(deviceQ.data.name)
-      setOsInput(deviceQ.data.os)
-    }
-  }, [renameOpen, deviceQ.data])
-
-  const renameM = useMutation({
-    mutationFn: () => {
-      const next = nameInput.trim()
-      if (!next || next.length > 64) {
-        throw new ApiError(422, "validation", "Name must be 1–64 characters")
-      }
-      const body: { name?: string; os?: DeviceOs } = {}
-      if (next !== deviceQ.data?.name) body.name = next
-      if (osInput !== deviceQ.data?.os) body.os = osInput
-      if (!body.name && !body.os) return Promise.resolve({ status: "noop" })
-      return patchDevice(id, body)
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["device", id] })
-      void qc.invalidateQueries({ queryKey: ["devices"] })
-      setRenameOpen(false)
-      toast.success("Device updated")
-    },
-    onError: (e: unknown) => {
-      if (e instanceof ApiError) toast.error(e.message)
-    },
-  })
-
-  const saveConfigM = useMutation({
-    mutationFn: () => {
-      const allowed_ips_override =
-        tunnel === "full"
-          ? FULL_TUNNEL_PRESET
-          : splitCidrs
-              .split(",")
-              .map((s) => s.trim())
-              .filter((s) => s.length > 0)
-      const dnsList = customDns
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
-      return patchDevice(id, {
-        allowed_ips_override,
-        dns_override: dnsList.length === 0 ? null : dnsList,
-      })
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["device", id] })
-      setEditing(false)
-      toast.success("Saved — re-download .conf to apply")
-    },
-    onError: (e: unknown) => {
-      if (e instanceof ApiError) toast.error(e.message)
-    },
-  })
 
   const pauseM = useMutation({
     mutationFn: () => pauseDevice(id),
@@ -331,14 +230,9 @@ export function DeviceDetailPage() {
     },
   })
   const rotateM = useMutation({
-    // The `vars` carry the storage opt-in: undefined → inherit current
-    // setting; true/false → explicit override (used by the "Enable
-    // server-stored key" action which always wants `true`).
-    mutationFn: (opts: { store_private_key?: boolean } | undefined) =>
-      rotateDeviceKeys(id, opts ?? {}),
+    mutationFn: () => rotateDeviceKeys(id),
     onSuccess: (data) => {
       setRotateConfirmOpen(false)
-      setEnableKeyOpen(false)
       // Push the fresh config + QR into the same query cache the peer-
       // configuration dialog reads from, so the open dialog updates
       // instantly without needing a separate reveal modal.
@@ -353,21 +247,6 @@ export function DeviceDetailPage() {
         setRotated(data)
       }
       toast.success("Keys rotated — save the new config")
-    },
-    onError: (e: unknown) => {
-      if (e instanceof ApiError) toast.error(e.message)
-    },
-  })
-  const clearKeyM = useMutation({
-    mutationFn: () => clearStoredDeviceKey(id),
-    onSuccess: () => {
-      setClearKeyOpen(false)
-      // The stored-key cache is now stale (server returned no body).
-      // Drop it so the peer-config dialog falls back to "no working
-      // config" the next time it opens.
-      qc.removeQueries({ queryKey: ["device", id, "conf"] })
-      void qc.invalidateQueries({ queryKey: ["device", id] })
-      toast.info("Server is no longer storing this device's key")
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)
@@ -420,10 +299,7 @@ export function DeviceDetailPage() {
     0,
   )
 
-  const allowedIpsForDisplay =
-    d.allowed_ips_override && d.allowed_ips_override.length > 0
-      ? d.allowed_ips_override.join(", ")
-      : "0.0.0.0/0, ::/0"
+  const allowedIpsForDisplay = "0.0.0.0/0, ::/0"
   const dnsForDisplay =
     d.dns_override && d.dns_override.length > 0
       ? d.dns_override.join(", ")
@@ -539,8 +415,9 @@ export function DeviceDetailPage() {
       </KpiStrip>
       </StaggerItem>
 
-      {/* Row 1 (1.4fr × 1fr): Bandwidth | Configuration */}
-      <StaggerItem className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+      {/* Bandwidth — full width now that Configuration lives in the header
+          "Edit" dialog (peer config + QR stay in the "Config" dialog). */}
+      <StaggerItem>
         <Panel
           title="Bandwidth"
           sub={`device · ${range}`}
@@ -560,71 +437,6 @@ export function DeviceDetailPage() {
             </p>
           ) : (
             <BandwidthChart buckets={bwQ.data?.buckets ?? []} height={220} />
-          )}
-        </Panel>
-
-        <Panel
-          title="Configuration"
-          sub="WireGuard"
-          right={
-            isRevoked ? null : editing ? (
-              <>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setEditing(false)}
-                  disabled={saveConfigM.isPending}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => saveConfigM.mutate()}
-                  disabled={saveConfigM.isPending}
-                >
-                  {saveConfigM.isPending ? "Saving…" : "Save"}
-                </Button>
-              </>
-            ) : (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setEditing(true)}
-              >
-                <IconPencil size={12} />
-                Edit
-              </Button>
-            )
-          }
-        >
-          {!editing ? (
-            <ConfigReadOnly
-              vpnIp={d.allocated_ip}
-              publicKey={d.public_key}
-              hub={endpoint || "—"}
-              allowedIps={allowedIpsForDisplay}
-              dns={dnsForDisplay}
-              splitTunnel={tunnel === "split"}
-              privateKeyStored={d.private_key_stored}
-              onClearStoredKey={() => setClearKeyOpen(true)}
-              onEnableStoredKey={() => setEnableKeyOpen(true)}
-              clearing={clearKeyM.isPending}
-              isRevoked={isRevoked}
-            />
-          ) : (
-            <ConfigEditForm
-              tunnel={tunnel}
-              splitTunnelOn={splitTunnelOn}
-              setSplitTunnelOn={(v) => {
-                setSplitTunnelOn(v)
-                setTunnel(v ? "split" : "full")
-              }}
-              splitCidrs={splitCidrs}
-              setSplitCidrs={setSplitCidrs}
-              customDns={customDns}
-              setCustomDns={setCustomDns}
-              serverDnsHint={serverDns}
-            />
           )}
         </Panel>
       </StaggerItem>
@@ -752,7 +564,6 @@ export function DeviceDetailPage() {
           dnsForDisplay,
           endpoint,
         })}
-        privateKeyStored={d.private_key_stored}
         onReissue={() => {
           // Keep the peer-config dialog open behind the confirm — when
           // the user confirms, rotateM.onSuccess writes the fresh config
@@ -834,112 +645,15 @@ export function DeviceDetailPage() {
         description="A fresh keypair is generated server-side. The current .conf on your device stops working immediately — you'll need to import the new one or re-scan the QR."
         confirmLabel="Re-issue"
         pending={rotateM.isPending}
-        onConfirm={() => rotateM.mutate(undefined)}
+        onConfirm={() => rotateM.mutate()}
       />
 
-      {/* Rename + OS — purely presentational metadata, so no tunnel impact.
-          Submit is a no-op when neither field actually changed. */}
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit device</DialogTitle>
-            <DialogDescription>
-              Update the device's name or operating system. These are
-              labels — the WireGuard tunnel keeps working unchanged.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="rename-input" className="zv-eyebrow">
-                Name
-              </Label>
-              <Input
-                id="rename-input"
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                maxLength={64}
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !renameM.isPending) {
-                    e.preventDefault()
-                    renameM.mutate()
-                  }
-                }}
-              />
-              <p className="text-muted-foreground font-mono text-[11px]">
-                1–64 characters.
-              </p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label className="zv-eyebrow">Operating system</Label>
-              <Select
-                value={osInput}
-                onValueChange={(v) => setOsInput(v as DeviceOs)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(
-                    [
-                      "ios",
-                      "android",
-                      "macos",
-                      "windows",
-                      "linux",
-                      "other",
-                    ] as DeviceOs[]
-                  ).map((o) => (
-                    <SelectItem key={o} value={o}>
-                      {o}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setRenameOpen(false)}
-              disabled={renameM.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => renameM.mutate()}
-              disabled={
-                renameM.isPending ||
-                nameInput.trim().length === 0 ||
-                nameInput.trim().length > 64 ||
-                (nameInput.trim() === d.name && osInput === d.os)
-              }
-            >
-              {renameM.isPending ? "Saving…" : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <ConfirmDialog
-        open={clearKeyOpen}
-        onOpenChange={setClearKeyOpen}
-        title="Stop storing the private key?"
-        description="The server's KEK-encrypted copy is deleted. Your tunnel keeps working, but the .conf can't be re-downloaded later — only re-issued. Save your existing config now if you don't already have it."
-        confirmLabel="Stop storing"
-        destructive
-        pending={clearKeyM.isPending}
-        onConfirm={() => clearKeyM.mutate()}
-      />
-
-      <ConfirmDialog
-        open={enableKeyOpen}
-        onOpenChange={setEnableKeyOpen}
-        title="Enable server-stored key?"
-        description="To start storing the private key the server needs a fresh one — your current key was never saved (zero-knowledge default). Re-issuing rotates the keypair AND opts the new one into KEK-encrypted storage. The old .conf stops working immediately."
-        confirmLabel="Re-issue & store"
-        pending={rotateM.isPending}
-        onConfirm={() => rotateM.mutate({ store_private_key: true })}
+      {/* Name / OS / device type — purely presentational metadata, so no
+          tunnel impact. Shared with the list + grid 3-dot menus. */}
+      <EditDeviceDialog
+        device={deviceQ.data ?? null}
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
       />
 
       {/* Rotated-config reveal: shows the new QR + wg-conf in the same
@@ -965,9 +679,9 @@ export function DeviceDetailPage() {
           {rotated && (
             <div className="space-y-4">
               <div className="border-border grid gap-0 border md:grid-cols-[auto_1fr]">
-                <div className="border-border bg-card flex aspect-square shrink-0 items-center justify-center md:aspect-auto md:w-[180px] md:border-r">
+                <div className="border-border bg-card flex aspect-square shrink-0 items-center justify-center p-3 md:aspect-auto md:w-[300px] md:border-r">
                   <span
-                    className="block size-[148px] [&>svg]:size-full"
+                    className="block size-[256px] max-w-full [&>svg]:size-full"
                     dangerouslySetInnerHTML={{ __html: rotated.qr_svg }}
                   />
                 </div>
@@ -1013,134 +727,6 @@ export function DeviceDetailPage() {
         </DialogContent>
       </Dialog>
     </PageStagger>
-  )
-}
-
-function ConfigReadOnly({
-  vpnIp,
-  publicKey,
-  hub,
-  allowedIps,
-  dns,
-  splitTunnel,
-  privateKeyStored,
-  onClearStoredKey,
-  onEnableStoredKey,
-  clearing,
-  isRevoked,
-}: {
-  vpnIp: string
-  publicKey: string
-  hub: string
-  allowedIps: string
-  dns: string
-  splitTunnel: boolean
-  privateKeyStored: boolean
-  onClearStoredKey: () => void
-  onEnableStoredKey: () => void
-  clearing: boolean
-  isRevoked: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-3">
-      <ConfigRow label="VPN IP" value={vpnIp} mono />
-      <ConfigRow label="Public key" value={publicKey} mono truncate />
-      <ConfigRow label="Hub" value={hub || "—"} mono />
-      <ConfigRow label="Allowed IPs" value={allowedIps} mono />
-      <ConfigRow label="DNS" value={dns} mono />
-      <div className="grid grid-cols-2 gap-3 pt-1">
-        <div className="flex flex-col gap-1">
-          <Eyebrow>Split tunnel</Eyebrow>
-          <span className="text-foreground font-mono text-[13px]">
-            {splitTunnel ? "On" : "Off"}
-          </span>
-        </div>
-        <div className="flex flex-col gap-1">
-          <Eyebrow>Persistent keepalive</Eyebrow>
-          <span className="text-foreground font-mono text-[13px]">
-            {KEEPALIVE_SECS}s
-          </span>
-        </div>
-      </div>
-
-      {/* Server-side private-key storage opt-in. Read-only state plus an
-          action affordance — enabling requires a fresh keypair, so the
-          "enable" path routes through the rotate flow. Disabling just
-          drops the encrypted column. */}
-      <div className="border-border bg-muted/20 flex items-center gap-3 border p-3">
-        <div className="flex-1">
-          <Eyebrow>Server-stored private key</Eyebrow>
-          <div className="mt-0.5 flex items-baseline gap-2">
-            <span
-              className={[
-                "font-mono text-[13px] font-medium",
-                privateKeyStored ? "text-status-online" : "text-muted-foreground",
-              ].join(" ")}
-            >
-              {privateKeyStored ? "Enabled" : "Disabled"}
-            </span>
-            <span className="text-muted-foreground font-mono text-[10px]">
-              {privateKeyStored
-                ? "KEK-encrypted on the server · enables re-download"
-                : "zero-knowledge · re-issue keys to enable"}
-            </span>
-          </div>
-        </div>
-        {!isRevoked &&
-          (privateKeyStored ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onClearStoredKey}
-              disabled={clearing}
-            >
-              {clearing ? "Working…" : "Stop storing"}
-            </Button>
-          ) : (
-            <Button size="sm" variant="ghost" onClick={onEnableStoredKey}>
-              <IconRefresh size={12} />
-              Enable
-            </Button>
-          ))}
-      </div>
-    </div>
-  )
-}
-
-function ConfigRow({
-  label,
-  value,
-  mono,
-  truncate,
-  copyable = true,
-}: {
-  label: string
-  value: string
-  mono?: boolean
-  truncate?: boolean
-  copyable?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <Eyebrow>{label}</Eyebrow>
-      <div className="flex items-center gap-2">
-        <div
-          className={[
-            "text-foreground min-w-0 flex-1 text-[13px]",
-            mono && "font-mono",
-            truncate && "truncate",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          title={truncate ? value : undefined}
-        >
-          {value}
-        </div>
-        {copyable && value && value !== "—" && (
-          <CopyIcon value={value} />
-        )}
-      </div>
-    </div>
   )
 }
 
@@ -1550,15 +1136,6 @@ function EventMetadata({
     if (typeof to === "string") return <span>now {to}</span>
     return null
   }
-  if (action === "device.created") {
-    const split = metadata.split_tunnel === true
-    const stored = metadata.private_key_stored === true
-    const parts: string[] = []
-    if (split) parts.push("split tunnel")
-    if (stored) parts.push("key stored")
-    if (parts.length === 0) return null
-    return <span>{parts.join(" · ")}</span>
-  }
   if (action === "device.updated") {
     // Free-form patch payload — collapse to a "details" toggle so the
     // row stays scannable but full data is one click away.
@@ -1656,79 +1233,6 @@ function formatDayLabel(day: string): string {
   return formatDate(day)
 }
 
-function ConfigEditForm({
-  tunnel,
-  splitTunnelOn,
-  setSplitTunnelOn,
-  splitCidrs,
-  setSplitCidrs,
-  customDns,
-  setCustomDns,
-  serverDnsHint,
-}: {
-  tunnel: "full" | "split"
-  splitTunnelOn: boolean
-  setSplitTunnelOn: (v: boolean) => void
-  splitCidrs: string
-  setSplitCidrs: (v: string) => void
-  customDns: string
-  setCustomDns: (v: string) => void
-  serverDnsHint: string
-}) {
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="border-border flex items-center gap-3 border p-3">
-        <Switch
-          checked={splitTunnelOn}
-          onCheckedChange={setSplitTunnelOn}
-          id="dd-split-tunnel"
-        />
-        <Label
-          htmlFor="dd-split-tunnel"
-          className="flex flex-1 cursor-pointer flex-col gap-0.5"
-        >
-          <span className="text-sm font-medium">Split tunnel</span>
-          <span className="text-muted-foreground font-mono text-[11px]">
-            Only listed CIDRs route through the tunnel.
-          </span>
-        </Label>
-      </div>
-
-      {tunnel === "split" && (
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="dd-cidrs" className="zv-eyebrow">
-            Allowed CIDRs
-          </Label>
-          <Input
-            id="dd-cidrs"
-            value={splitCidrs}
-            onChange={(e) => setSplitCidrs(e.target.value)}
-            placeholder="10.0.0.0/8, 192.168.0.0/16"
-            className="font-mono"
-          />
-        </div>
-      )}
-
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="dd-dns" className="zv-eyebrow">
-          Custom DNS · optional
-        </Label>
-        <Input
-          id="dd-dns"
-          value={customDns}
-          onChange={(e) => setCustomDns(e.target.value)}
-          placeholder={serverDnsHint || "1.1.1.1, 1.0.0.1"}
-          className="font-mono"
-        />
-        <p className="text-muted-foreground font-mono text-[11px]">
-          Leave blank for server default
-          {serverDnsHint ? ` (${serverDnsHint})` : ""}.
-        </p>
-      </div>
-    </div>
-  )
-}
-
 function Dash() {
   return <span className="text-muted-foreground/40">—</span>
 }
@@ -1750,7 +1254,6 @@ function PeerConfigDialog({
   peerName,
   defaultOs,
   placeholderConfig,
-  privateKeyStored,
   onReissue,
   reissuing,
 }: {
@@ -1759,27 +1262,22 @@ function PeerConfigDialog({
   deviceId: string
   peerName: string
   defaultOs: DeviceOs
-  /** Rendered wg-conf that uses the `(held on device — not stored)`
-   *  placeholder for the private key. Shown when the server doesn't have
-   *  an encrypted copy, so the file is still scannable for the user to
-   *  splice their own key in. */
+  /** Fallback wg-conf rendered from public fields, shown only while the
+   *  real server-stored config is still loading. */
   placeholderConfig: string
-  privateKeyStored: boolean
   onReissue: () => void
   reissuing: boolean
 }) {
   const initialTab = osToTab(defaultOs)
 
-  // When the server holds an encrypted copy of the private key, fetch
-  // the real .conf (+ QR) so we can show the working file and a scannable
-  // QR. We gate on `open` so the dialog doesn't trigger fetches the
-  // moment the page loads. Cached short-lived — the underlying key
-  // doesn't change unless the user re-issues, and rotation invalidates
-  // the ["device", id] query which also bumps `privateKeyStored`.
+  // The server always holds an encrypted copy of the private key, so fetch
+  // the real .conf (+ QR) whenever the dialog opens. Gated on `open` so the
+  // page load doesn't trigger it. Cached short-lived — the key only changes
+  // on re-issue, which invalidates this query's cache.
   const confQ = useQuery({
     queryKey: ["device", deviceId, "conf"],
     queryFn: () => redownloadDeviceConf(deviceId),
-    enabled: open && privateKeyStored,
+    enabled: open,
     staleTime: 60_000,
   })
 
@@ -1789,7 +1287,7 @@ function PeerConfigDialog({
   // to a "re-issue to get one" call-to-action.
   const realConfig = confQ.data?.config
   const realQrSvg = confQ.data?.qr_svg
-  const loadingReal = privateKeyStored && confQ.isLoading
+  const loadingReal = confQ.isLoading
   // The placeholder is only useful as something to download when we
   // actually have a real config; otherwise it'd just be a broken file.
   const effectiveConfig = realConfig ?? placeholderConfig
@@ -1829,24 +1327,13 @@ function PeerConfigDialog({
               offering a placeholder file that wouldn't actually connect. */}
           {hasWorkingConfig ? null : loadingReal ? (
             <div className="border-border bg-muted/40 text-muted-foreground border px-3 py-2 font-mono text-[11px]">
-              Loading server-stored config…
+              Loading config…
             </div>
-          ) : privateKeyStored && confQ.isError ? (
+          ) : confQ.isError ? (
             <div className="border-destructive/40 bg-destructive/5 text-destructive border px-3 py-2 font-mono text-[11px]">
-              Couldn't fetch the stored config. Re-issue keys for a fresh
-              one.
+              Couldn't fetch the config. Re-issue keys for a fresh one.
             </div>
-          ) : (
-            <div className="border-border bg-muted/30 px-3 py-2 font-mono text-[11px] leading-relaxed">
-              <span className="text-foreground font-medium">
-                Private key isn't stored server-side.
-              </span>{" "}
-              We can't show you a working configuration — click{" "}
-              <strong className="text-foreground">Re-issue keys</strong>{" "}
-              to generate a fresh keypair you can save. The old config
-              will stop working immediately.
-            </div>
-          )}
+          ) : null}
 
           {hasWorkingConfig && (
           <Tabs defaultValue={initialTab} className="flex min-h-0 flex-1 flex-col">
@@ -1949,7 +1436,6 @@ function PeerConfigDialog({
             <MobileQrSlot
               qrSvg={realQrSvg}
               loading={loadingReal}
-              privateKeyStored={privateKeyStored}
               onReissue={onReissue}
             />
             <p className="text-muted-foreground font-mono text-[11px] leading-relaxed">
@@ -1967,7 +1453,6 @@ function PeerConfigDialog({
             <MobileQrSlot
               qrSvg={realQrSvg}
               loading={loadingReal}
-              privateKeyStored={privateKeyStored}
               onReissue={onReissue}
             />
             <p className="text-muted-foreground font-mono text-[11px] leading-relaxed">
@@ -1982,8 +1467,7 @@ function PeerConfigDialog({
         </div>
 
         <SheetFooter className="border-border mt-0 flex flex-row flex-wrap justify-end gap-2 border-t p-4">
-          {/* Download is only meaningful once we have a real config —
-              without a valid private key the .conf wouldn't connect. */}
+          {/* Download is only meaningful once we have a real config. */}
           {hasWorkingConfig && (
             <Button
               size="sm"
@@ -2064,25 +1548,22 @@ function ConfigBlock({
   )
 }
 
-/** Mobile-tab QR slot. Shows the real server-rendered QR when the
- *  private key is stored, a loading placeholder while fetching, or a
- *  "no QR until you re-issue" call-to-action otherwise. Tightly scoped
- *  for Android / iOS tabs — desktop platforms get the .conf file alone
- *  since scanning a QR isn't the typical hand-off there. */
+/** Mobile-tab QR slot. Shows the real server-rendered QR (the private key
+ *  is always stored), a loading placeholder while fetching, or a re-issue
+ *  call-to-action if the fetch failed. Scoped to Android / iOS tabs —
+ *  desktop platforms get the .conf file alone. */
 function MobileQrSlot({
   qrSvg,
   loading,
-  privateKeyStored,
   onReissue,
 }: {
   qrSvg: string | undefined
   loading: boolean
-  privateKeyStored: boolean
   onReissue: () => void
 }) {
   return (
     <div className="flex flex-col items-center gap-2">
-      <div className="border-border bg-card text-muted-foreground flex size-[180px] items-center justify-center border p-2 text-center font-mono text-[10px] leading-tight">
+      <div className="border-border bg-card text-muted-foreground flex size-[280px] max-w-full items-center justify-center border p-3 text-center font-mono text-[10px] leading-tight">
         {loading ? (
           <span>loading QR…</span>
         ) : qrSvg ? (
@@ -2090,17 +1571,11 @@ function MobileQrSlot({
             className="block size-full [&>svg]:size-full"
             dangerouslySetInnerHTML={{ __html: qrSvg }}
           />
-        ) : privateKeyStored ? (
-          <span>QR unavailable — try again</span>
         ) : (
-          <span>
-            No QR stored.
-            <br />
-            Re-issue to get one.
-          </span>
+          <span>QR unavailable — try again</span>
         )}
       </div>
-      {!privateKeyStored && !qrSvg && (
+      {!loading && !qrSvg && (
         <Button size="sm" variant="outline" onClick={onReissue}>
           <IconRefresh size={14} />
           Re-issue keys

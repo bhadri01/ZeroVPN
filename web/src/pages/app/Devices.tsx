@@ -5,6 +5,7 @@ import {
   IconGripVertical,
   IconLayoutGrid,
   IconLayoutList,
+  IconPencil,
   IconPlayerPause,
   IconPlayerPlay,
   IconPlus,
@@ -21,6 +22,7 @@ import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { DeviceCard } from "@/components/DeviceCard"
 import { AddDeviceDialog } from "@/components/devices/AddDeviceDialog"
+import { EditDeviceDialog } from "@/components/devices/EditDeviceDialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -129,6 +131,9 @@ export function DevicesPage() {
   // pending device id while their respective dialog is open.
   const [pauseId, setPauseId] = useState<string | null>(null)
   const [unpauseId, setUnpauseId] = useState<string | null>(null)
+  // Device whose metadata (name / OS / type) is being edited, or null when
+  // the edit dialog is closed. Holds the row so the dialog can seed itself.
+  const [editDevice, setEditDevice] = useState<PublicDevice | null>(null)
 
   const liveDevices = useLiveStats((s) => s.devices)
 
@@ -556,6 +561,7 @@ export function DevicesPage() {
                     actions={
                       <RowActions
                         device={d}
+                        onEdit={() => setEditDevice(d)}
                         onPause={() => setPauseId(d.id)}
                         onUnpause={() => setUnpauseId(d.id)}
                         onRevoke={() => setRevokeId(d.id)}
@@ -593,6 +599,7 @@ export function DevicesPage() {
                 actions={
                   <RowActions
                     device={d}
+                    onEdit={() => setEditDevice(d)}
                     onPause={() => setPauseId(d.id)}
                     onUnpause={() => setUnpauseId(d.id)}
                     onRevoke={() => setRevokeId(d.id)}
@@ -635,6 +642,14 @@ export function DevicesPage() {
         confirmLabel="Resume"
         pending={unpauseM.isPending}
         onConfirm={() => unpauseId && unpauseM.mutate(unpauseId)}
+      />
+
+      <EditDeviceDialog
+        device={editDevice}
+        open={editDevice != null}
+        onOpenChange={(o) => {
+          if (!o) setEditDevice(null)
+        }}
       />
     </PageStagger>
   )
@@ -904,12 +919,14 @@ function GridDragCard({
  */
 function RowActions({
   device,
+  onEdit,
   onPause,
   onUnpause,
   onRevoke,
   pending,
 }: {
   device: PublicDevice
+  onEdit: () => void
   onPause: () => void
   onUnpause: () => void
   onRevoke: () => void
@@ -934,6 +951,10 @@ function RowActions({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[10rem]">
+        <DropdownMenuItem onSelect={onEdit}>
+          <IconPencil />
+          Edit
+        </DropdownMenuItem>
         {canPause && (
           <DropdownMenuItem onSelect={onPause} disabled={pending}>
             <IconPlayerPause />

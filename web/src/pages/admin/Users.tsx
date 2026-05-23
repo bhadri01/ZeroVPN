@@ -568,7 +568,7 @@ export function UsersPage() {
         open={bulkDeleteOpen}
         onOpenChange={setBulkDeleteOpen}
         title={`Delete ${selectedIds.size} selected user${selectedIds.size === 1 ? "" : "s"}?`}
-        description="Soft-deletes each account: PII nulled, devices revoked, sessions killed. Audit history is preserved. The action cannot be undone from the UI."
+        description="Permanently deletes each account and ALL their data — peers removed and every device, session, log, and preference purged from the database. This is irreversible."
         confirmLabel={`Delete ${selectedIds.size}`}
         destructive
         pending={bulkDeleteM.isPending}

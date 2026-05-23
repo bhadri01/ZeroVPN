@@ -179,7 +179,6 @@ export function AdminDeviceDetailPage() {
               <Kpi
                 label="Created"
                 value={<RelativeTime value={d.created_at} />}
-                footL={d.private_key_stored ? "key stored on server" : "zero-knowledge key"}
               />
             </KpiStrip>
           </StaggerItem>
@@ -231,16 +230,6 @@ export function AdminDeviceDetailPage() {
                 <div className="flex flex-col gap-1.5">
                   <Eyebrow>Allocated IP</Eyebrow>
                   <CopyableCode value={d.allocated_ip} />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Eyebrow>Allowed IPs override</Eyebrow>
-                  {d.allowed_ips_override && d.allowed_ips_override.length > 0 ? (
-                    <CopyableCode value={d.allowed_ips_override.join(", ")} />
-                  ) : (
-                    <p className="text-muted-foreground font-mono text-xs">
-                      none · full-tunnel default
-                    </p>
-                  )}
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <Eyebrow>DNS override</Eyebrow>

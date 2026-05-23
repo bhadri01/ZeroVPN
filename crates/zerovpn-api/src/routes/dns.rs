@@ -169,7 +169,10 @@ pub async fn check_availability(
     }))
 }
 
-async fn sync_dnsmasq(pool: &zerovpn_db::PgPool) -> anyhow::Result<()> {
+/// Regenerate the CoreDNS hosts file from every active device's DNS names.
+/// Called on each DNS-name change and once at startup (see `main.rs`) so the
+/// resolver is correct even after a restart with no intervening edit.
+pub(crate) async fn sync_dnsmasq(pool: &zerovpn_db::PgPool) -> anyhow::Result<()> {
     let path: PathBuf = std::env::var("ZEROVPN_WG__DNSMASQ_HOSTS_FILE")
         .unwrap_or_else(|_| "/etc/dnsmasq.d/zerovpn-peers.conf".to_string())
         .into();

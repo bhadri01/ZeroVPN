@@ -703,16 +703,19 @@ export function UserDetailPage() {
         }
       />
 
-      <ConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title={`Delete ${u?.email ?? "user"}?`}
-        description="Soft-deletes the account: PII is nulled, every device is revoked, and active sessions are killed. The audit history stays intact. This cannot be undone from the UI."
-        confirmLabel="Delete"
-        destructive
-        pending={deleteM.isPending}
-        onConfirm={() => deleteM.mutate()}
-      />
+      {u && (
+        <ConfirmDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          title={`Delete ${u.email}?`}
+          description="Permanently deletes this user and ALL of their data — every device/peer is removed and all sessions, logs, bandwidth history, and preferences are purged from the database. This is irreversible."
+          confirmLabel="Delete permanently"
+          destructive
+          confirmText={u.email}
+          pending={deleteM.isPending}
+          onConfirm={() => deleteM.mutate()}
+        />
+      )}
 
       {u && (
         <QuotaDialog

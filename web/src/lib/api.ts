@@ -110,7 +110,6 @@ export interface PublicDevice {
   status: DeviceStatus
   server_id: string
   dns_names: string[]
-  allowed_ips_override: string[] | null
   dns_override: string[] | null
   last_handshake_at: string | null
   /** Public host:port the peer last connected from, as seen by the WG
@@ -120,11 +119,6 @@ export interface PublicDevice {
   last_peer_endpoint: string | null
   last_peer_endpoint_at: string | null
   created_at: string
-  /** Presence flag: the server holds a KEK-encrypted copy of the
-   *  device's WG private key. Enables re-download via
-   *  `GET /devices/{id}/conf`. The key itself is never exposed by
-   *  list / get responses. */
-  private_key_stored: boolean
 }
 
 export interface CreatedDevice {
@@ -310,15 +304,10 @@ export const createDevice = (body: {
   name: string
   os?: DeviceOs
   device_type?: DeviceType
-  split_tunnel?: boolean
   dns_override?: string[]
   /** Optional manual IPv4 — when set, the server reserves exactly this
    *  address. Omit to let the allocator pick the next free slot. */
   allocated_ip?: string
-  /** When true, the server encrypts the generated WG private key with
-   *  its KEK and persists it on the device row so the user can re-
-   *  download the .conf later. Default false (zero-knowledge). */
-  store_private_key?: boolean
 }) =>
   apiFetch<CreatedDevice>("/devices", {
     method: "POST",
@@ -327,8 +316,8 @@ export const createDevice = (body: {
 
 /** Re-render the device's .conf from the server's stored private key.
  *  Returns the same shape as `createDevice` so the existing "device
- *  created" dialog UI can render it. Requires the device to have been
- *  created with `store_private_key: true`. */
+ *  created" dialog UI can render it. The key is always stored, so this
+ *  works for any non-revoked device. */
 export const redownloadDeviceConf = (id: string) =>
   apiFetch<CreatedDevice>(`/devices/${id}/conf`)
 
@@ -337,7 +326,7 @@ export const patchDevice = (
   body: {
     name?: string
     os?: DeviceOs
-    allowed_ips_override?: string[] | null
+    device_type?: DeviceType
     dns_override?: string[] | null
   },
 ) =>
@@ -358,29 +347,12 @@ export const unpauseDevice = (id: string) =>
 /** Regenerate the device's keypair server-side. Returns the same shape
  *  as `createDevice` — the device row, a freshly rendered wg-conf with
  *  the new private key, and a QR SVG. The old config stops working the
- *  moment this call returns; the user must re-import / re-scan.
- *
- *  Optional `store_private_key` overrides the device's existing opt-in:
- *   - `true`  → store (KEK-encrypt) the rotated key on the server
- *   - `false` → don't store, and clear any prior stored key
- *   - omit    → keep whatever the device was already doing */
-export const rotateDeviceKeys = (
-  id: string,
-  opts: { store_private_key?: boolean } = {},
-) =>
+ *  moment this call returns; the user must re-import / re-scan. The new
+ *  key is always stored (KEK-encrypted) for later re-download. */
+export const rotateDeviceKeys = (id: string) =>
   apiFetch<CreatedDevice>(`/devices/${id}/rotate-keys`, {
     method: "POST",
-    body: JSON.stringify(opts),
   })
-
-/** Stop storing the device's encrypted private key on the server. The
- *  tunnel keeps working — only the recovery path (re-download .conf
- *  without rotating) is gone. */
-export const clearStoredDeviceKey = (id: string) =>
-  apiFetch<{ status: string; private_key_stored: boolean }>(
-    `/devices/${id}/stored-key`,
-    { method: "DELETE" },
-  )
 
 /** Persist the user's preferred device order. The server bulk-assigns
  *  `display_order` so the arrangement reflects on every signed-in
@@ -672,9 +644,7 @@ interface AdminDeviceDetail {
   allocated_ip: string
   public_key: string
   dns_names: string[]
-  allowed_ips_override: string[] | null
   dns_override: string[] | null
-  private_key_stored: boolean
   last_handshake_at: string | null
   last_peer_endpoint: string | null
   last_peer_endpoint_at: string | null
@@ -760,8 +730,9 @@ export const adminDisableUser2FA = (id: string) =>
     method: "POST",
   })
 
-/** Soft-delete the user: PII nulled, devices revoked, sessions killed.
- *  The row stays in the DB so audit history continues to resolve. */
+/** Permanently delete the user and ALL their data: peers removed, and
+ *  every row tied to the user (devices, sessions, logs, bandwidth,
+ *  preferences, …) purged from the DB. Irreversible. */
 export const adminDeleteUser = (id: string) =>
   apiFetch<{ status: string }>(`/admin/users/${id}`, {
     method: "DELETE",

@@ -64,6 +64,28 @@ if wg-quick up "$CONF"; then
     iptables -A FORWARD -i "$IFACE" -j ACCEPT 2>/dev/null || true
     iptables -A FORWARD -o "$IFACE" -j ACCEPT 2>/dev/null || true
     iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || true
+
+    # DNS: peers are handed 10.10.0.1 as their resolver, but nothing listens
+    # on it here. Forward those queries to the CoreDNS (`dnsmasq`) container —
+    # it serves *.vpn.local from the shared hosts file and forwards public
+    # names upstream. api-dev shares the backend bridge with CoreDNS, so we
+    # resolve it by service name (or use ZEROVPN_WG__DNS_FORWARD_IP if set).
+    # Without this a full-tunnel peer can't resolve anything → "no internet".
+    DNS_FWD="${ZEROVPN_WG__DNS_FORWARD_IP:-}"
+    if [[ -z "$DNS_FWD" ]]; then
+        DNS_FWD="$(getent hosts dnsmasq 2>/dev/null | awk '{print $1; exit}')"
+    fi
+    if [[ -n "$DNS_FWD" ]]; then
+        echo "[wg] forwarding peer DNS ${IFACE} 10.10.0.1:53 -> ${DNS_FWD}:53 (CoreDNS)"
+        for proto in udp tcp; do
+            iptables -t nat -A PREROUTING -i "$IFACE" -d 10.10.0.1 -p "$proto" --dport 53 \
+                -j DNAT --to-destination "${DNS_FWD}:53" 2>/dev/null || true
+            iptables -t nat -A POSTROUTING -d "$DNS_FWD" -p "$proto" --dport 53 \
+                -j MASQUERADE 2>/dev/null || true
+        done
+    else
+        echo "[wg] WARN: could not resolve CoreDNS; *.vpn.local will not resolve"
+    fi
     wg show "$IFACE" 2>/dev/null || true
 else
     echo "[wg] WARN: 'wg-quick up' failed — api still runs, but no live tunnel"

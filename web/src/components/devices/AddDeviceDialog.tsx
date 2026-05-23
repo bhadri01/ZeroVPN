@@ -30,7 +30,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
 import {
   ApiError,
   type CreatedDevice,
@@ -65,8 +64,6 @@ export function AddDeviceDialog({
     staleTime: 5 * 60_000,
   })
   const serverCidr = serverInfoQ.data?.cidr
-  const serverDns = serverInfoQ.data?.dns_servers ?? []
-  const serverDnsDefault = serverDns.join(", ")
 
   // Existing devices for the inline name-uniqueness check. Shares the
   // same query key the parent table uses, so cache is reused — no extra
@@ -84,35 +81,11 @@ export function AddDeviceDialog({
   const [name, setName] = useState("")
   const [osChoice, setOsChoice] = useState<DeviceOs>("other")
   const [deviceType, setDeviceType] = useState<DeviceType>("other")
-  // Split tunnel defaults ON now: most users only need the VPN for
-  // reaching peer devices on the WG subnet, not for routing all their
-  // traffic. The pre-set CIDR is the server's subnet, so this is also
-  // accurate (not just an arbitrary RFC1918 mask).
-  const [splitTunnel, setSplitTunnel] = useState(true)
-  // Pre-fill the custom DNS with the server's default resolver so the
-  // box shows what they'll actually get when they leave it alone, and
-  // is editable if they want to point at 1.1.1.1 / a corp DNS / etc.
-  const [dnsInput, setDnsInput] = useState("")
-  useEffect(() => {
-    if (serverDnsDefault && dnsInput === "") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setDnsInput(serverDnsDefault)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverDnsDefault])
   const [ipMode, setIpMode] = useState<IpMode>("auto")
   const [ipInput, setIpInput] = useState("")
   const [dnsPrefix, setDnsPrefix] = useState("")
   const [dnsTouched, setDnsTouched] = useState(false)
-  // Default OFF — preserves the historical zero-knowledge guarantee.
-  const [storePrivateKey, setStorePrivateKey] = useState(false)
   const [result, setResult] = useState<CreatedDevice | null>(null)
-
-  const dnsLooksValid = useMemo(() => {
-    if (!dnsInput.trim()) return true
-    const parts = dnsInput.split(",").map((s) => s.trim()).filter(Boolean)
-    return parts.every((p) => /^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+$/.test(p))
-  }, [dnsInput])
 
   const userSlug = useMemo(
     () => dnsLabelSlug(user?.email?.split("@")[0] ?? ""),
@@ -182,19 +155,12 @@ export function AddDeviceDialog({
 
   const addM = useMutation({
     mutationFn: async () => {
-      const dns = dnsInput
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
       const created = await createDevice({
         name: name.trim(),
         os: osChoice,
         device_type: deviceType,
-        split_tunnel: splitTunnel || undefined,
-        dns_override: dns.length > 0 ? dns : undefined,
         allocated_ip:
           ipMode === "custom" && ipInput.trim() ? ipInput.trim() : undefined,
-        store_private_key: storePrivateKey || undefined,
       })
       if (dnsFqdn) {
         try {
@@ -225,7 +191,6 @@ export function AddDeviceDialog({
     name.trim().length > 0 &&
     name.trim().length <= 64 &&
     !nameTaken &&
-    dnsLooksValid &&
     ipLooksValid &&
     dnsPrefixLocallyValid &&
     dnsNameAvailable &&
@@ -236,11 +201,8 @@ export function AddDeviceDialog({
     setName("")
     setOsChoice("other")
     setDeviceType("other")
-    setSplitTunnel(false)
-    setDnsInput("")
     setIpMode("auto")
     setIpInput("")
-    setStorePrivateKey(false)
     setResult(null)
     setDnsPrefix("")
     setDnsTouched(false)
@@ -289,57 +251,68 @@ export function AddDeviceDialog({
             </p>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <Label className="zv-eyebrow">Operating system</Label>
-            <Select
-              value={osChoice}
-              onValueChange={(v) => setOsChoice(v as DeviceOs)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(
-                  ["ios", "android", "macos", "windows", "linux", "other"] as DeviceOs[]
-                ).map((o) => (
-                  <SelectItem key={o} value={o}>
-                    {o}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {/* OS + device type share one row — both are short single-select
+              labels, so stacking them wasted vertical space. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label className="zv-eyebrow">Operating system</Label>
+              <Select
+                value={osChoice}
+                onValueChange={(v) => setOsChoice(v as DeviceOs)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(
+                    [
+                      ["ios", "iOS"],
+                      ["android", "Android"],
+                      ["macos", "macOS"],
+                      ["windows", "Windows"],
+                      ["linux", "Linux"],
+                      ["other", "Other"],
+                    ] as [DeviceOs, string][]
+                  ).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          <div className="flex flex-col gap-1.5">
-            <Label className="zv-eyebrow">Device type</Label>
-            <Select
-              value={deviceType}
-              onValueChange={(v) => setDeviceType(v as DeviceType)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(
-                  [
-                    ["phone", "Phone"],
-                    ["tablet", "Tablet"],
-                    ["laptop", "Laptop"],
-                    ["desktop", "Desktop"],
-                    ["tv", "TV"],
-                    ["router", "Router"],
-                    ["watch", "Watch"],
-                    ["iot", "IoT"],
-                    ["server", "Server"],
-                    ["other", "Other"],
-                  ] as [DeviceType, string][]
-                ).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex flex-col gap-1.5">
+              <Label className="zv-eyebrow">Device type</Label>
+              <Select
+                value={deviceType}
+                onValueChange={(v) => setDeviceType(v as DeviceType)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(
+                    [
+                      ["phone", "Phone"],
+                      ["tablet", "Tablet"],
+                      ["laptop", "Laptop"],
+                      ["desktop", "Desktop"],
+                      ["tv", "TV"],
+                      ["router", "Router"],
+                      ["watch", "Watch"],
+                      ["iot", "IoT"],
+                      ["server", "Server"],
+                      ["other", "Other"],
+                    ] as [DeviceType, string][]
+                  ).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -478,72 +451,6 @@ export function AddDeviceDialog({
             )}
           </div>
 
-          <div className="border-border flex items-center gap-3 border p-3">
-            <Switch
-              checked={splitTunnel}
-              onCheckedChange={setSplitTunnel}
-              id="split-tunnel"
-            />
-            <Label
-              htmlFor="split-tunnel"
-              className="flex flex-1 cursor-pointer flex-col gap-0.5"
-            >
-              <span className="text-sm font-medium">Split tunnel</span>
-              <span className="text-muted-foreground font-mono text-[11px]">
-                {serverCidr
-                  ? `Only ${serverCidr} routes through the tunnel — the rest of your traffic exits via your LAN. Default ON.`
-                  : "Only the WG subnet routes through the tunnel — the rest of your traffic exits via your LAN. Default ON."}
-              </span>
-            </Label>
-          </div>
-
-          <div className="border-border flex items-center gap-3 border p-3">
-            <Switch
-              checked={storePrivateKey}
-              onCheckedChange={setStorePrivateKey}
-              id="store-key"
-            />
-            <Label
-              htmlFor="store-key"
-              className="flex flex-1 cursor-pointer flex-col gap-0.5"
-            >
-              <span className="text-sm font-medium">
-                Store private key on server
-              </span>
-              <span className="text-muted-foreground font-mono text-[11px]">
-                Encrypted with the server's KEK and saved on the device row
-                so you can re-download the .conf later from any device.
-                Trades the zero-knowledge default for convenience. Default OFF.
-              </span>
-            </Label>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="dev-dns" className="zv-eyebrow">
-              Custom DNS{" "}
-              <span className="text-muted-foreground/70 normal-case">
-                · optional
-              </span>
-            </Label>
-            <Input
-              id="dev-dns"
-              value={dnsInput}
-              onChange={(e) => setDnsInput(e.target.value)}
-              placeholder="1.1.1.1, 1.0.0.1"
-              className="font-mono"
-              aria-invalid={!dnsLooksValid}
-            />
-            <p className="text-muted-foreground font-mono text-[11px]">
-              Comma-separated IPv4/IPv6 resolvers. Leave blank to use the
-              server's defaults.
-              {!dnsLooksValid && (
-                <span className="text-destructive ml-2">
-                  one or more entries don't look like an IP
-                </span>
-              )}
-            </p>
-          </div>
-
         </div>
           <SheetFooter className="border-border flex-row justify-end gap-2 border-t">
             <SheetClose asChild>
@@ -600,9 +507,9 @@ function Step2Result({
         </p>
 
         <div className="border-border grid gap-0 border md:grid-cols-[auto_1fr]">
-          <div className="border-border bg-card flex aspect-square shrink-0 items-center justify-center md:aspect-auto md:w-[180px] md:border-r">
+          <div className="border-border bg-card flex aspect-square shrink-0 items-center justify-center p-3 md:aspect-auto md:w-[300px] md:border-r">
             <span
-              className="block size-[148px] [&>svg]:size-full"
+              className="block size-[256px] max-w-full [&>svg]:size-full"
               dangerouslySetInnerHTML={{ __html: result.qr_svg }}
             />
           </div>

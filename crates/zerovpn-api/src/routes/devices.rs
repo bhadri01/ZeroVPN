@@ -37,10 +37,6 @@ pub struct CreateBody {
     /// Device form factor (phone, tablet, laptop, …). Independent of `os`.
     #[garde(skip)]
     pub device_type: Option<DeviceType>,
-    /// When true, the generated config restricts AllowedIPs to RFC1918
-    /// private subnets — the user's other traffic exits via their LAN.
-    #[garde(skip)]
-    pub split_tunnel: Option<bool>,
     /// Optional custom DNS resolvers. Each must parse as an IPv4 or IPv6
     /// address; rejected if any entry is malformed.
     #[garde(skip)]
@@ -52,13 +48,6 @@ pub struct CreateBody {
     /// isn't inside the server's CIDR.
     #[garde(skip)]
     pub allocated_ip: Option<String>,
-    /// When true, the API encrypts the generated WG private key with
-    /// the server KEK and persists it on the device row, enabling later
-    /// re-download of the .conf via `GET /devices/{id}/conf`. Default
-    /// false (zero-knowledge — the key only appears in the create-time
-    /// response, then it's gone).
-    #[garde(skip)]
-    pub store_private_key: Option<bool>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -84,7 +73,6 @@ pub struct PublicDevice {
     pub status: DeviceStatus,
     pub server_id: Uuid,
     pub dns_names: Vec<String>,
-    pub allowed_ips_override: Option<Vec<String>>,
     pub dns_override: Option<Vec<String>>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub last_handshake_at: Option<OffsetDateTime>,
@@ -100,11 +88,6 @@ pub struct PublicDevice {
     /// Wall-clock time `last_peer_endpoint` was first observed.
     #[serde(with = "time::serde::rfc3339::option")]
     pub last_peer_endpoint_at: Option<OffsetDateTime>,
-    /// Presence flag only — the device row holds a KEK-encrypted copy of
-    /// the WG private key, so the user can re-download the .conf later
-    /// via `GET /devices/{id}/conf`. The actual key bytes are never
-    /// exposed by this endpoint.
-    pub private_key_stored: bool,
 }
 
 impl From<Device> for PublicDevice {
@@ -113,7 +96,6 @@ impl From<Device> for PublicDevice {
             .dns_override
             .as_ref()
             .map(|v| v.iter().map(|n| n.ip().to_string()).collect());
-        let private_key_stored = d.private_key_encrypted.is_some();
         Self {
             id: d.id,
             user_id: d.user_id,
@@ -125,7 +107,6 @@ impl From<Device> for PublicDevice {
             status: d.status,
             server_id: d.server_id,
             dns_names: d.dns_names,
-            allowed_ips_override: d.allowed_ips_override,
             dns_override,
             last_handshake_at: d.last_handshake_at,
             created_at: d.created_at,
@@ -133,17 +114,15 @@ impl From<Device> for PublicDevice {
             // want them merge them in after the conversion.
             last_peer_endpoint: None,
             last_peer_endpoint_at: None,
-            private_key_stored,
         }
     }
 }
 
-/// The VPN's own subnet — used when `split_tunnel = true` so only traffic
-/// to the VPN server (`10.10.0.1`) and other peers routes through the
-/// tunnel; everything else (the public internet) uses the client's normal
-/// interface. Must stay in sync with the server CIDR allocated in
-/// `bootstrap.rs` (`10.10.0.0/22`).
-const SPLIT_TUNNEL_ALLOWED_IPS: &str = "10.10.0.0/22";
+/// Split-tunnel AllowedIPs: every device routes only the VPN's own subnet
+/// through the tunnel (peers + the gateway/DNS at 10.10.0.1); all other
+/// traffic uses the client's normal interface. Single value used by every
+/// config the API renders. Must match the server CIDR in `bootstrap.rs`.
+const DEFAULT_ALLOWED_IPS: &str = "10.10.0.0/22";
 
 #[utoipa::path(
     get,
@@ -321,19 +300,12 @@ pub async fn create(
     let public_key = keys::derive_public_key(&private_key)
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    // Opt-in: encrypt the private key with the server KEK so the user can
-    // re-download the .conf later. Default behaviour stays zero-knowledge.
-    let store_private = body.store_private_key.unwrap_or(false);
-    let private_key_encrypted: Option<Vec<u8>> = if store_private {
-        Some(
-            state
-                .kek
-                .encrypt(private_key.as_bytes())
-                .map_err(|e| ApiError::Internal(format!("encrypt private key: {e}")))?,
-        )
-    } else {
-        None
-    };
+    // The private key is always stored (KEK-encrypted) on the device row so
+    // the user can re-download the .conf later from any client.
+    let private_key_encrypted = state
+        .kek
+        .encrypt(private_key.as_bytes())
+        .map_err(|e| ApiError::Internal(format!("encrypt private key: {e}")))?;
 
     // Validate optional DNS overrides up-front so we never persist a half-
     // valid request. We also keep the parsed IPs for the conf below.
@@ -355,17 +327,6 @@ pub async fn create(
         _ => None,
     };
 
-    let split_tunnel = body.split_tunnel.unwrap_or(false);
-    let allowed_ips_override_vec: Option<Vec<String>> = if split_tunnel {
-        Some(
-            SPLIT_TUNNEL_ALLOWED_IPS
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect(),
-        )
-    } else {
-        None
-    };
     let dns_override_inet: Option<Vec<IpNetwork>> = dns_override_parsed.as_ref().map(|v| {
         v.iter()
             .map(|ip| {
@@ -389,7 +350,7 @@ pub async fn create(
             public_key: &public_key,
             preshared_key_encrypted: None, // will encrypt with KEK in a follow-up
             allocated_ip: allocated_cidr,
-            private_key_encrypted: private_key_encrypted.as_deref(),
+            private_key_encrypted: Some(&private_key_encrypted),
         },
     )
     .await
@@ -402,22 +363,17 @@ pub async fn create(
         }
     };
 
-    // Apply per-device overrides chosen at create-time. We do this after
-    // insert so the column is a plain UPDATE — keeps `NewDevice` minimal.
-    if allowed_ips_override_vec.is_some() || dns_override_inet.is_some() {
-        sqlx::query(
-            r#"UPDATE devices
-                  SET allowed_ips_override = $3,
-                      dns_override         = $4
-                WHERE user_id = $1 AND id = $2"#,
-        )
-        .bind(user.id)
-        .bind(device_id)
-        .bind(allowed_ips_override_vec.as_deref())
-        .bind(dns_override_inet.as_deref())
-        .execute(&state.pool)
-        .await
-        .map_err(|e| ApiError::Internal(format!("apply create overrides: {e}")))?;
+    // Apply the optional DNS override after insert (plain UPDATE keeps
+    // `NewDevice` minimal). AllowedIPs is always full-tunnel now, so there's
+    // no allowed_ips_override to write.
+    if let Some(dns) = dns_override_inet.as_deref() {
+        sqlx::query(r#"UPDATE devices SET dns_override = $3 WHERE user_id = $1 AND id = $2"#)
+            .bind(user.id)
+            .bind(device_id)
+            .bind(dns)
+            .execute(&state.pool)
+            .await
+            .map_err(|e| ApiError::Internal(format!("apply create overrides: {e}")))?;
     }
 
     audit::record(
@@ -430,9 +386,7 @@ pub async fn create(
             metadata: json!({
                 "name": body.name,
                 "server": server.name,
-                "split_tunnel": split_tunnel,
                 "dns_override": body.dns_override,
-                "private_key_stored": store_private,
             }),
             ip: None,
         },
@@ -456,11 +410,7 @@ pub async fn create(
     };
     let endpoint_str = format!("{}:{}", server.endpoint_host, server.endpoint_port);
     let address_str = format!("{}/32", ip);
-    let allowed_ips = if split_tunnel {
-        SPLIT_TUNNEL_ALLOWED_IPS.to_string()
-    } else {
-        "0.0.0.0/0, ::/0".to_string()
-    };
+    let allowed_ips = DEFAULT_ALLOWED_IPS.to_string();
 
     let cfg = config::PeerConfig {
         private_key: &private_key,
@@ -573,16 +523,6 @@ pub async fn reorder(
     Ok(Json(json!({ "status": "ok", "updated": n })))
 }
 
-/// Optional body for rotate-keys. The single field flips the opt-in to
-/// server-side private-key storage for the rotated key. Omit / null →
-/// inherit the device's current setting; `true` → start storing (or
-/// keep storing); `false` → stop storing.
-#[derive(Debug, Deserialize, Default, ToSchema)]
-pub struct RotateBody {
-    #[serde(default)]
-    pub store_private_key: Option<bool>,
-}
-
 /// the public key on the row, updates the running WG interface, and
 /// returns the rendered config + QR so the user can scan the new
 /// credentials on their device. Mirrors the `create` response shape so
@@ -594,7 +534,6 @@ pub struct RotateBody {
     params(
         ("id" = Uuid, Path, description = "Device UUID"),
     ),
-    request_body(content = RotateBody, description = "Optional; flips server-side private-key storage", content_type = "application/json"),
     responses(
         (status = 200, description = "New keypair, conf, and QR (shown ONCE)", body = CreatedDevice),
         (status = 404, description = "Not found / not owned"),
@@ -606,9 +545,7 @@ pub async fn rotate_keys(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Path(id): Path<Uuid>,
-    body: Option<Json<RotateBody>>,
 ) -> ApiResult<impl IntoResponse> {
-    let store_override = body.and_then(|Json(b)| b.store_private_key);
     let device = devices::find_for_user(&state.pool, user.id, id)
         .await?
         .ok_or(ApiError::NotFound)?;
@@ -630,24 +567,13 @@ pub async fn rotate_keys(
         return Err(ApiError::NotFound);
     }
 
-    // Decide whether the new private key gets stored: explicit flag wins,
-    // else inherit the device's current opt-in. Storing means KEK-
-    // encrypting and writing; "not storing" means clearing the column so
-    // there's no stale ciphertext lying around.
-    let should_store = match store_override {
-        Some(v) => v,
-        None => device.private_key_encrypted.is_some(),
-    };
-    if should_store {
-        let encrypted = state
-            .kek
-            .encrypt(private_key.as_bytes())
-            .map_err(|e| ApiError::Internal(format!("encrypt rotated key: {e}")))?;
-        devices::set_private_key_encrypted(&state.pool, user.id, id, Some(&encrypted))
-            .await?;
-    } else if device.private_key_encrypted.is_some() {
-        devices::set_private_key_encrypted(&state.pool, user.id, id, None).await?;
-    }
+    // The private key is always stored (KEK-encrypted) so the user can
+    // re-download the .conf later.
+    let encrypted = state
+        .kek
+        .encrypt(private_key.as_bytes())
+        .map_err(|e| ApiError::Internal(format!("encrypt rotated key: {e}")))?;
+    devices::set_private_key_encrypted(&state.pool, user.id, id, Some(&encrypted)).await?;
 
     // Swap the peer on the running WG interface. Best-effort — DB is the
     // source of truth; if WG control is a no-op (dev) the new config will
@@ -686,10 +612,7 @@ pub async fn rotate_keys(
     };
     let endpoint_str = format!("{}:{}", server.endpoint_host, server.endpoint_port);
     let address_str = format!("{}/32", device.allocated_ip.ip());
-    let allowed_ips = match device.allowed_ips_override.as_ref() {
-        Some(list) if !list.is_empty() => list.join(", "),
-        _ => "0.0.0.0/0, ::/0".to_string(),
-    };
+    let allowed_ips = DEFAULT_ALLOWED_IPS.to_string();
     let cfg = config::PeerConfig {
         private_key: &private_key,
         address: &address_str,
@@ -792,62 +715,7 @@ pub struct PatchBody {
     pub name: Option<String>,
     pub os: Option<DeviceOs>,
     pub device_type: Option<DeviceType>,
-    pub allowed_ips_override: Option<Vec<String>>,
     pub dns_override: Option<Vec<String>>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct StoredKeyAck {
-    #[schema(example = "ok")]
-    pub status: &'static str,
-    pub private_key_stored: bool,
-}
-
-/// Stop storing the device's encrypted private key on the server. The
-/// device keeps working — only the recovery path (re-download .conf
-/// without rotating) is removed. To re-enable storage on a device that
-/// was previously cleared, rotate keys with `{"store_private_key":true}`.
-#[utoipa::path(
-    delete,
-    path = "/devices/{id}/stored-key",
-    tag = "Devices",
-    params(
-        ("id" = Uuid, Path, description = "Device UUID"),
-    ),
-    responses(
-        (status = 200, description = "Stored key cleared (idempotent)", body = StoredKeyAck),
-        (status = 404, description = "Not found / not owned"),
-    ),
-    security(("session_cookie" = [])),
-)]
-pub async fn clear_stored_key(
-    State(state): State<AppState>,
-    CurrentUser(user): CurrentUser,
-    Path(id): Path<Uuid>,
-) -> ApiResult<impl IntoResponse> {
-    let device = devices::find_for_user(&state.pool, user.id, id)
-        .await?
-        .ok_or(ApiError::NotFound)?;
-    if device.private_key_encrypted.is_none() {
-        // Already clear — return 200 so the client can be liberal in what
-        // it sends. The audit entry is the only visible side-effect.
-        return Ok(Json(json!({ "status": "ok", "private_key_stored": false })));
-    }
-    devices::set_private_key_encrypted(&state.pool, user.id, id, None).await?;
-    audit::record(
-        &state.pool,
-        audit::AuditEntry {
-            actor_user_id: Some(user.id),
-            action: "device.stored_key_cleared",
-            target_type: Some("device"),
-            target_id: Some(id),
-            metadata: json!({ "name": device.name }),
-            ip: None,
-        },
-    )
-    .await?;
-    info!(user_id = %user.id, device_id = %id, "stored key cleared");
-    Ok(Json(json!({ "status": "ok", "private_key_stored": false })))
 }
 
 /// Re-render the device's .conf from the server-stored private key.
@@ -917,10 +785,7 @@ pub async fn redownload_conf(
     };
     let endpoint_str = format!("{}:{}", server.endpoint_host, server.endpoint_port);
     let address_str = format!("{}/32", device.allocated_ip.ip());
-    let allowed_ips = match device.allowed_ips_override.as_ref() {
-        Some(list) if !list.is_empty() => list.join(", "),
-        _ => "0.0.0.0/0, ::/0".to_string(),
-    };
+    let allowed_ips = DEFAULT_ALLOWED_IPS.to_string();
     let cfg = config::PeerConfig {
         private_key: &private_key,
         address: &address_str,
@@ -964,6 +829,372 @@ pub async fn redownload_conf(
     }))
 }
 
+// ── App one-tap connect ───────────────────────────────────────────────────
+
+/// Connect/provision request from the mobile/desktop app's "Connect" button.
+///
+/// - `device_id` **absent** → provision: the server generates the keypair,
+///   stores it KEK-encrypted (so later reconnects can re-serve the profile),
+///   registers the peer, and returns the connection profile.
+/// - `device_id` **present** → reconnect: re-serve that device's profile and
+///   re-assert the peer on the live interface, without creating a new row.
+///   If the id is unknown or points at a revoked device, the server falls
+///   back to provisioning a fresh one (and returns the new `device_id`), so
+///   a stale id never blocks Connect — check `reused` to tell which happened.
+///
+/// The app authenticates with the same session it gets from the normal
+/// login flow (no separate token system). Keep `device_id` from the latest
+/// response in local secure storage and send it back on every later Connect
+/// so the user accumulates exactly one device, not one per tap.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ConnectBody {
+    /// Existing device to reconnect. Omit on first connect.
+    pub device_id: Option<Uuid>,
+    /// Display name for a newly provisioned device (e.g. the OS hostname).
+    /// Ignored on reconnect; defaults to a label derived from os/type.
+    pub name: Option<String>,
+    pub os: Option<DeviceOs>,
+    pub device_type: Option<DeviceType>,
+}
+
+/// Structured WireGuard parameters the native client brings the tunnel up
+/// with directly — no `.conf` parsing required. (`config`/`qr_svg` on the
+/// envelope carry the same data for manual import / QR.)
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WgProfile {
+    /// Client private key (server-generated for this flow).
+    pub private_key: String,
+    /// Interface address in CIDR form.
+    #[schema(example = "10.10.0.5/32")]
+    pub address: String,
+    pub dns: Vec<String>,
+    pub server_public_key: String,
+    /// Server `host:port` to dial.
+    #[schema(example = "vpn.example.com:51820")]
+    pub endpoint: String,
+    pub allowed_ips: Vec<String>,
+    pub mtu: u16,
+    pub persistent_keepalive: u16,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConnectResponse {
+    pub device: PublicDevice,
+    /// Structured params for the native client.
+    pub profile: WgProfile,
+    /// Full rendered `.conf` (manual import / desktop WireGuard app).
+    pub config: String,
+    /// QR of the `.conf` for camera-based import.
+    pub qr_svg: String,
+    /// `true` when an existing device was reused (reconnect), `false` when a
+    /// new device was provisioned.
+    pub reused: bool,
+}
+
+/// Default display name when the app doesn't send one — readable and stable,
+/// e.g. "macOS laptop", "Android phone", "iOS".
+fn default_device_name(os: DeviceOs, dt: DeviceType) -> String {
+    let os_label = match os {
+        DeviceOs::Ios => "iOS",
+        DeviceOs::Android => "Android",
+        DeviceOs::Macos => "macOS",
+        DeviceOs::Windows => "Windows",
+        DeviceOs::Linux => "Linux",
+        DeviceOs::Other => "Device",
+    };
+    let dt_label = match dt {
+        DeviceType::Phone => "phone",
+        DeviceType::Tablet => "tablet",
+        DeviceType::Laptop => "laptop",
+        DeviceType::Desktop => "desktop",
+        DeviceType::Tv => "TV",
+        DeviceType::Router => "router",
+        DeviceType::Watch => "watch",
+        DeviceType::Iot => "IoT",
+        DeviceType::Server => "server",
+        DeviceType::Other => "",
+    };
+    if dt_label.is_empty() {
+        os_label.to_string()
+    } else {
+        format!("{os_label} {dt_label}")
+    }
+}
+
+/// Build the structured profile + rendered `.conf` + QR from already-resolved
+/// connection parameters. Shared by the connect handler's provision and
+/// reconnect branches so the WG-render path lives in exactly one place.
+fn render_profile(
+    private_key: &str,
+    address: &str,
+    dns: &[String],
+    server_public_key: &str,
+    endpoint: &str,
+    allowed_ips: &[String],
+    mtu: u16,
+) -> ApiResult<(WgProfile, String, String)> {
+    let dns_joined = dns.join(", ");
+    let allowed_joined = allowed_ips.join(", ");
+    let cfg = config::PeerConfig {
+        private_key,
+        address,
+        dns: &dns_joined,
+        mtu: Some(mtu),
+        amnezia: None,
+        server_public_key,
+        preshared_key: None,
+        allowed_ips: &allowed_joined,
+        endpoint,
+        keepalive: PERSISTENT_KEEPALIVE,
+    };
+    let config = cfg
+        .render()
+        .map_err(|e| ApiError::Internal(format!("render conf: {e}")))?;
+    let qr_svg =
+        qr::render_svg(&config).map_err(|e| ApiError::Internal(format!("render qr: {e}")))?;
+    let profile = WgProfile {
+        private_key: private_key.to_string(),
+        address: address.to_string(),
+        dns: dns.to_vec(),
+        server_public_key: server_public_key.to_string(),
+        endpoint: endpoint.to_string(),
+        allowed_ips: allowed_ips.to_vec(),
+        mtu,
+        persistent_keepalive: PERSISTENT_KEEPALIVE,
+    };
+    Ok((profile, config, qr_svg))
+}
+
+/// Split-tunnel AllowedIPs (the VPN subnet) — the default for an
+/// app-provisioned device. Mirrors `DEFAULT_ALLOWED_IPS`.
+fn default_allowed_ips() -> Vec<String> {
+    vec!["10.10.0.0/22".to_string()]
+}
+
+#[utoipa::path(
+    post,
+    path = "/devices/connect",
+    tag = "Devices",
+    request_body = ConnectBody,
+    responses(
+        (status = 200, description = "Reconnected — existing device profile re-served", body = ConnectResponse),
+        (status = 201, description = "Provisioned — new device + profile (also when device_id is stale/revoked)", body = ConnectResponse),
+        (status = 409, description = "Per-user device cap reached"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn connect(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Json(body): Json<ConnectBody>,
+) -> ApiResult<impl IntoResponse> {
+    // ── Reconnect: re-serve a live device's profile ────────────────────────
+    // Only when device_id resolves to a non-revoked device that still has a
+    // stored key. A missing / revoked / keyless id falls through to
+    // provisioning a fresh device below — so a stale id on the app (e.g. the
+    // device was deleted, which soft-revokes it) never wedges the Connect
+    // button with a hard error; it just transparently re-provisions.
+    let live_device = match body.device_id {
+        Some(device_id) => devices::find_for_user(&state.pool, user.id, device_id)
+            .await?
+            .filter(|d| d.status != DeviceStatus::Revoked && d.private_key_encrypted.is_some()),
+        None => None,
+    };
+    if let Some(device) = live_device {
+        let device_id = device.id;
+        let encrypted = device
+            .private_key_encrypted
+            .as_ref()
+            .expect("filtered to a device with a stored key above");
+        let private_bytes = state
+            .kek
+            .decrypt(encrypted)
+            .map_err(|e| ApiError::Internal(format!("decrypt private key: {e}")))?;
+        let private_key = String::from_utf8(private_bytes)
+            .map_err(|_| ApiError::Internal("stored private key is not UTF-8".into()))?;
+
+        let server = zerovpn_db::repos::servers::find_by_id(&state.pool, device.server_id)
+            .await?
+            .ok_or_else(|| ApiError::Internal("device's server missing".into()))?;
+
+        let ip = device.allocated_ip.ip();
+        let address = format!("{}/32", ip);
+        let dns: Vec<String> = match device.dns_override_ips() {
+            Some(ips) if !ips.is_empty() => ips.iter().map(|i| i.to_string()).collect(),
+            _ => server
+                .dns_servers_ips()
+                .iter()
+                .map(|i| i.to_string())
+                .collect(),
+        };
+        let allowed_ips = default_allowed_ips();
+        let endpoint = format!("{}:{}", server.endpoint_host, server.endpoint_port);
+        let (profile, config, qr_svg) = render_profile(
+            &private_key,
+            &address,
+            &dns,
+            &server.public_key,
+            &endpoint,
+            &allowed_ips,
+            server.mtu as u16,
+        )?;
+
+        // Re-assert the peer on the live interface (idempotent) so the tunnel
+        // works even if the interface/worker restarted since provisioning.
+        if let Err(e) = state
+            .wg
+            .add_peer(&device.public_key, ip, None, PERSISTENT_KEEPALIVE)
+            .await
+        {
+            tracing::warn!(?e, %device_id, "wg add_peer on reconnect failed (continuing)");
+        }
+        audit::record(
+            &state.pool,
+            audit::AuditEntry {
+                actor_user_id: Some(user.id),
+                action: "device.reconnected",
+                target_type: Some("device"),
+                target_id: Some(device_id),
+                metadata: json!({ "name": device.name }),
+                ip: None,
+            },
+        )
+        .await?;
+        info!(user_id = %user.id, device_id = %device_id, "device reconnected");
+        return Ok((
+            axum::http::StatusCode::OK,
+            Json(ConnectResponse {
+                device: device.into(),
+                profile,
+                config,
+                qr_svg,
+                reused: true,
+            }),
+        ));
+    }
+
+    // ── Provision: register a new device, server-generated keys ────────────
+    let existing = devices::list_for_user(&state.pool, user.id).await?;
+    if existing.len() >= MAX_DEVICES_PER_USER {
+        return Err(ApiError::Conflict(format!(
+            "max {MAX_DEVICES_PER_USER} active devices per user"
+        )));
+    }
+
+    let os = body.os.unwrap_or(DeviceOs::Other);
+    let device_type = body.device_type.unwrap_or(DeviceType::Other);
+    let name = match body.name.as_deref().map(str::trim) {
+        Some(n) if !n.is_empty() => {
+            if n.chars().count() > 64 {
+                return Err(ApiError::Validation("name must be 1–64 characters".into()));
+            }
+            n.to_string()
+        }
+        _ => default_device_name(os, device_type),
+    };
+
+    let server = servers::list_active(&state.pool)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::Internal("no active servers".into()))?;
+    let alloc = state
+        .allocators
+        .get(server.id)
+        .ok_or_else(|| ApiError::Internal("server allocator missing".into()))?;
+    let ip = allocate_auto(&alloc)?;
+
+    let private_key = keys::generate_private_key();
+    let public_key =
+        keys::derive_public_key(&private_key).map_err(|e| ApiError::Internal(e.to_string()))?;
+    // Always store the key (KEK-encrypted) — reconnect re-serves it, and the
+    // server generated it so there's no client copy to fall back on.
+    let private_key_encrypted = state
+        .kek
+        .encrypt(private_key.as_bytes())
+        .map_err(|e| ApiError::Internal(format!("encrypt private key: {e}")))?;
+
+    let host_prefix = if ip.is_ipv4() { 32 } else { 128 };
+    let allocated_cidr = IpNetwork::new(ip, host_prefix).expect("valid host prefix");
+    let device_id = match devices::create(
+        &state.pool,
+        devices::NewDevice {
+            user_id: user.id,
+            server_id: server.id,
+            name: &name,
+            os,
+            device_type,
+            public_key: &public_key,
+            preshared_key_encrypted: None,
+            allocated_ip: allocated_cidr,
+            private_key_encrypted: Some(&private_key_encrypted),
+        },
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = alloc.release(ip);
+            return Err(e.into());
+        }
+    };
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "device.connected",
+            target_type: Some("device"),
+            target_id: Some(device_id),
+            metadata: json!({ "name": name, "server": server.name, "source": "app" }),
+            ip: None,
+        },
+    )
+    .await?;
+
+    let address = format!("{}/32", ip);
+    let dns: Vec<String> = server
+        .dns_servers_ips()
+        .iter()
+        .map(|i| i.to_string())
+        .collect();
+    let allowed_ips = default_allowed_ips();
+    let endpoint = format!("{}:{}", server.endpoint_host, server.endpoint_port);
+    let (profile, config, qr_svg) = render_profile(
+        &private_key,
+        &address,
+        &dns,
+        &server.public_key,
+        &endpoint,
+        &allowed_ips,
+        server.mtu as u16,
+    )?;
+
+    let stored = devices::find_for_user(&state.pool, user.id, device_id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("just-created device missing".into()))?;
+
+    if let Err(e) = state
+        .wg
+        .add_peer(&public_key, ip, None, PERSISTENT_KEEPALIVE)
+        .await
+    {
+        tracing::warn!(?e, "wg add_peer failed (continuing — DB row persisted)");
+    }
+
+    info!(user_id = %user.id, device_id = %device_id, ip = %ip, "device connected (app provision)");
+    Ok((
+        axum::http::StatusCode::CREATED,
+        Json(ConnectResponse {
+            device: stored.into(),
+            profile,
+            config,
+            qr_svg,
+            reused: false,
+        }),
+    ))
+}
+
 #[utoipa::path(
     patch,
     path = "/devices/{id}",
@@ -993,13 +1224,6 @@ pub async fn patch(
             return Err(ApiError::Validation("name must be 1–64 chars".into()));
         }
     }
-    if let Some(ref ips) = body.allowed_ips_override {
-        for s in ips {
-            if s.parse::<IpNetwork>().is_err() && s.parse::<std::net::IpAddr>().is_err() {
-                return Err(ApiError::Validation(format!("invalid CIDR: {s}")));
-            }
-        }
-    }
     let dns_override_inet: Option<Vec<IpNetwork>> = if let Some(ref dns) = body.dns_override {
         let mut out = Vec::with_capacity(dns.len());
         for s in dns {
@@ -1020,16 +1244,14 @@ pub async fn patch(
         r#"UPDATE devices
               SET name = COALESCE($3, name),
                   os = COALESCE($4, os),
-                  device_type = COALESCE($7, device_type),
-                  allowed_ips_override = $5,
-                  dns_override = $6
+                  device_type = COALESCE($6, device_type),
+                  dns_override = $5
             WHERE user_id = $1 AND id = $2"#,
     )
     .bind(user.id)
     .bind(id)
     .bind(body.name.as_deref())
     .bind(body.os)
-    .bind(body.allowed_ips_override.as_deref())
     .bind(dns_override_inet.as_deref())
     .bind(body.device_type)
     .execute(&state.pool)
@@ -1045,7 +1267,6 @@ pub async fn patch(
             metadata: json!({
                 "name_changed": body.name.is_some(),
                 "os_changed": body.os.is_some(),
-                "split_tunnel_changed": body.allowed_ips_override.is_some(),
                 "dns_changed": body.dns_override.is_some(),
             }),
             ip: None,

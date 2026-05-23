@@ -323,6 +323,66 @@ pub async fn soft_delete(pool: &PgPool, user_id: Uuid) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// Permanently purge a user and **all** of their data (GDPR-style erasure)
+/// — used by the admin "delete user" action. Unlike `soft_delete`, the
+/// `users` row is removed outright.
+///
+/// FK `ON DELETE CASCADE` clears the bulk of it: devices, sessions,
+/// verification tokens, user_preferences, session_events,
+/// topology_positions, connection_sessions and bandwidth_aggregates (and,
+/// via devices, peer_endpoint_history). The tables that DON'T cascade are
+/// purged explicitly first, while the user link still exists:
+///   - `bandwidth_samples` — partitioned, no FK to devices → delete by device id
+///   - `audit_logs` (actor + target), `access_logs`, `destination_ips` —
+///     `ON DELETE SET NULL`, so they'd be anonymized-not-removed
+///   - `failed_logins` — keyed by email (CITEXT), no FK
+/// Everything runs in one transaction so a failure leaves the user intact.
+pub async fn hard_delete(pool: &PgPool, user_id: Uuid, email: &str) -> sqlx::Result<()> {
+    let mut tx = pool.begin().await?;
+
+    // Raw per-tick samples have no FK to devices, so the user→devices
+    // cascade won't reach them. Grab the device ids first, then purge.
+    let device_ids: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM devices WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    if !device_ids.is_empty() {
+        sqlx::query("DELETE FROM bandwidth_samples WHERE device_id = ANY($1)")
+            .bind(&device_ids)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    // SET-NULL / no-FK tables: delete the user's rows while the link is
+    // still intact (once the users row goes, SET NULL severs the reference).
+    sqlx::query("DELETE FROM audit_logs WHERE actor_user_id = $1 OR target_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM access_logs WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM destination_ips WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM failed_logins WHERE email_attempted = $1::CITEXT")
+        .bind(email)
+        .execute(&mut *tx)
+        .await?;
+
+    // Finally the user — CASCADE removes everything else.
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Row used by the admin user list page.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AdminUserRow {
