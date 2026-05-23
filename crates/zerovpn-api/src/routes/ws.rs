@@ -109,5 +109,9 @@ fn visible_to(event: &Event, user_id: Uuid, role: UserRole) -> bool {
         | Event::HandshakeChange { user_id: u, .. }
         | Event::PeerStatusChanged { user_id: u, .. }
         | Event::DnsUpdated { user_id: u, .. } => *u == user_id,
+        // Mutation notifications: a user sees changes to their own resources;
+        // admin-global ones (`user_id == None`, e.g. server / maintenance)
+        // are dropped for non-admins (admins already returned `true` above).
+        Event::DataChanged { user_id: owner, .. } => *owner == Some(user_id),
     }
 }

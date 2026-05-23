@@ -88,6 +88,7 @@ import {
   setDeviceDns,
   unpauseDevice,
 } from "@/lib/api"
+import { copyText } from "@/lib/clipboard"
 import { connState } from "@/lib/deviceState"
 import { formatDate } from "@/lib/datetime"
 import { formatBps } from "@/lib/units"
@@ -699,8 +700,8 @@ export function DeviceDetailPage() {
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        void navigator.clipboard.writeText(rotated.config)
-                        toast.success("Config copied")
+                        if (copyText(rotated.config)) toast.success("Config copied")
+                        else toast.error("Failed to copy")
                       }}
                     >
                       Copy config
@@ -737,13 +738,9 @@ function CopyIcon({ value, title }: { value: string; title?: string }) {
     <WithTooltip label={copied ? "Copied" : (title ?? "Copy")}>
       <button
         type="button"
-        onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(value)
-            setCopied(true)
-          } catch {
-            toast.error("Failed to copy")
-          }
+        onClick={() => {
+          if (copyText(value)) setCopied(true)
+          else toast.error("Failed to copy")
         }}
         className="text-muted-foreground hover:text-foreground border-border hover:border-foreground/40 flex size-6 shrink-0 items-center justify-center border transition-colors"
         aria-label={title ?? "Copy value"}

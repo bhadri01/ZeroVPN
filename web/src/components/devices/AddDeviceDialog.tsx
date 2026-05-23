@@ -42,6 +42,7 @@ import {
   meServer,
   setDeviceDns,
 } from "@/lib/api"
+import { copyText } from "@/lib/clipboard"
 import { useAuth } from "@/stores/auth"
 
 type IpMode = "auto" | "custom"
@@ -537,8 +538,8 @@ function Step2Result({
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  void navigator.clipboard.writeText(result.config)
-                  toast.success("Config copied")
+                  if (copyText(result.config)) toast.success("Config copied")
+                  else toast.error("Failed to copy")
                 }}
               >
                 <IconQrcode size={14} />
@@ -654,13 +655,9 @@ function ConfigRow({
  *  in component state — it's never stored after the sheet closes. */
 function SecretRow({ label, value }: { label: string; value: string }) {
   const [revealed, setRevealed] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      toast.success(`${label} copied`)
-    } catch {
-      toast.error("Clipboard blocked — copy from the raw .conf instead")
-    }
+  const copy = () => {
+    if (copyText(value)) toast.success(`${label} copied`)
+    else toast.error("Clipboard blocked — copy from the raw .conf instead")
   }
   return (
     <div className="border-border [&:not(:first-child)]:border-t flex items-center justify-between gap-3 px-3 py-2">
@@ -690,7 +687,7 @@ function SecretRow({ label, value }: { label: string; value: string }) {
         </button>
         <button
           type="button"
-          onClick={() => void copy()}
+          onClick={copy}
           className="text-muted-foreground hover:text-foreground border-border hover:border-foreground inline-flex size-6 shrink-0 items-center justify-center border transition-colors"
           aria-label={`Copy ${label}`}
         >

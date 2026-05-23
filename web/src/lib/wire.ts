@@ -14,6 +14,10 @@ export type Event =
       tx_bytes: number
       rate_rx_bps: number
       rate_tx_bps: number
+      /** Authoritative cumulative lifetime totals after this tick — the
+       *  device's "Total RX/TX". Grows in real time and matches the server. */
+      total_rx_bytes: number
+      total_tx_bytes: number
       ts_ms: number
     }
   | {
@@ -59,4 +63,25 @@ export type Event =
       online_count: number
       handshake_count: number
       ts_ms: number
+    }
+  | {
+      /** A persisted-data mutation happened (emitted by the API, not the
+       *  worker). Lets every other session of the same user — and any admin
+       *  watching — invalidate the right query and reflect add/edit/delete in
+       *  real time. `user_id` is null for admin-global resources (server,
+       *  maintenance); `id` is null for bulk ops (reorder). */
+      type: "data_changed"
+      user_id: string | null
+      resource: "device" | "user" | "server" | "maintenance"
+      id: string | null
+      action:
+        | "created"
+        | "updated"
+        | "deleted"
+        | "paused"
+        | "unpaused"
+        | "keys_rotated"
+        | "dns_updated"
+        | "reordered"
+        | "connected"
     }

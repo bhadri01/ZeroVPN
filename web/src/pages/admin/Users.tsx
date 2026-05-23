@@ -54,6 +54,7 @@ import {
   adminUsersCsvUrl,
   me,
 } from "@/lib/api"
+import { copyText } from "@/lib/clipboard"
 import { useAuth } from "@/stores/auth"
 
 const USER_STATUS_TO_PILL: Record<UserStatus, Status> = {
@@ -648,14 +649,10 @@ function InviteUserDialog({
     })
   }
 
-  const copyPassword = async () => {
+  const copyPassword = () => {
     if (!created?.generated_password) return
-    try {
-      await navigator.clipboard.writeText(created.generated_password)
-      toast.success("Password copied")
-    } catch {
-      toast.error("Clipboard blocked — copy manually")
-    }
+    if (copyText(created.generated_password)) toast.success("Password copied")
+    else toast.error("Clipboard blocked — copy manually")
   }
 
   return (
@@ -690,7 +687,7 @@ function InviteUserDialog({
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => void copyPassword()}
+                      onClick={copyPassword}
                     >
                       <IconCopy className="size-3.5" />
                       Copy

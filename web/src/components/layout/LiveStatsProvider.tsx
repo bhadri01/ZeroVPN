@@ -57,8 +57,8 @@ export function LiveStatsProvider() {
               event.rate_rx_bps,
               event.rate_tx_bps,
               event.ts_ms,
-              event.rx_bytes,
-              event.tx_bytes,
+              event.total_rx_bytes,
+              event.total_tx_bytes,
             )
           } else {
             skippedWhileHiddenRef.current = true
@@ -152,6 +152,52 @@ export function LiveStatsProvider() {
             )
           }
           break
+        case "data_changed": {
+          // A persisted mutation happened — on this session or another of
+          // the same user, or (for admin-global resources) an admin. Refresh
+          // the affected queries so add / edit / delete reflect in real time.
+          // This is the cross-device sync path: a peer added on a phone shows
+          // up on the laptop without a manual reload. Always applied (even
+          // while hidden) — it's only cache invalidation, and it means the
+          // view is already correct when the tab regains focus.
+          switch (event.resource) {
+            case "device":
+              void qc.invalidateQueries({ queryKey: ["devices"] })
+              void qc.invalidateQueries({ queryKey: ["admin", "devices"] })
+              void qc.invalidateQueries({ queryKey: ["me", "topology"] })
+              if (event.id) {
+                void qc.invalidateQueries({ queryKey: ["device", event.id] })
+                void qc.invalidateQueries({
+                  queryKey: ["admin", "device", event.id],
+                })
+              }
+              break
+            case "user":
+              void qc.invalidateQueries({ queryKey: ["admin", "users"] })
+              void qc.invalidateQueries({ queryKey: ["admin", "stats"] })
+              void qc.invalidateQueries({ queryKey: ["me", "topology"] })
+              if (event.id) {
+                void qc.invalidateQueries({
+                  queryKey: ["admin", "user", event.id],
+                })
+              }
+              break
+            case "server":
+              void qc.invalidateQueries({ queryKey: ["admin", "servers"] })
+              void qc.invalidateQueries({ queryKey: ["me", "server"] })
+              if (event.id) {
+                void qc.invalidateQueries({
+                  queryKey: ["admin", "server", event.id],
+                })
+              }
+              break
+            case "maintenance":
+              void qc.invalidateQueries({ queryKey: ["admin", "maintenance"] })
+              void qc.invalidateQueries({ queryKey: ["maintenance-banner"] })
+              break
+          }
+          break
+        }
         default:
           // heartbeat, dns_updated — tail handled above
           break

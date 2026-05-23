@@ -304,6 +304,56 @@ pub async fn touch_handshake(
     Ok(res.rows_affected())
 }
 
+/// Seed a device's lifetime counters to at least the live WireGuard counter,
+/// returning the resulting totals. Called by the poller on the **first sight**
+/// of a peer each worker session: `GREATEST` means a continuously-connected
+/// peer catches up bytes transferred while the worker was down (matching
+/// `wg show`), while a peer whose counter reset to a smaller value (re-add /
+/// reboot) keeps its larger accumulated lifetime. Never decreases.
+pub async fn seed_lifetime(
+    pool: &PgPool,
+    device_id: Uuid,
+    counter_rx: i64,
+    counter_tx: i64,
+) -> sqlx::Result<(i64, i64)> {
+    sqlx::query_as(
+        r#"UPDATE devices
+              SET lifetime_rx_bytes = GREATEST(lifetime_rx_bytes, $2),
+                  lifetime_tx_bytes = GREATEST(lifetime_tx_bytes, $3)
+            WHERE id = $1
+        RETURNING lifetime_rx_bytes, lifetime_tx_bytes"#,
+    )
+    .bind(device_id)
+    .bind(counter_rx)
+    .bind(counter_tx)
+    .fetch_one(pool)
+    .await
+}
+
+/// Add this tick's RX/TX delta to a device's lifetime counters, returning the
+/// new absolute totals (which the worker forwards in `StatsDelta` so clients
+/// show an exact, live-growing total). The increment is atomic, so only the
+/// worker ever writes these and concurrency is a non-issue.
+pub async fn accumulate_lifetime(
+    pool: &PgPool,
+    device_id: Uuid,
+    add_rx: i64,
+    add_tx: i64,
+) -> sqlx::Result<(i64, i64)> {
+    sqlx::query_as(
+        r#"UPDATE devices
+              SET lifetime_rx_bytes = lifetime_rx_bytes + $2,
+                  lifetime_tx_bytes = lifetime_tx_bytes + $3
+            WHERE id = $1
+        RETURNING lifetime_rx_bytes, lifetime_tx_bytes"#,
+    )
+    .bind(device_id)
+    .bind(add_rx)
+    .bind(add_tx)
+    .fetch_one(pool)
+    .await
+}
+
 /// All allocated IPs for a server, used to seed the in-memory bitmap on boot.
 pub async fn allocated_ips_for_server(pool: &PgPool, server_id: Uuid) -> sqlx::Result<Vec<IpAddr>> {
     let rows: Vec<(IpNetwork,)> = sqlx::query_as(

@@ -17,6 +17,7 @@ use uuid::Uuid;
 use zerovpn_core::models::{Device, DeviceOs, DeviceStatus, DeviceType};
 use zerovpn_db::repos::{audit, devices, servers};
 use zerovpn_wg::{config, ip_alloc::IpAllocator, keys, qr};
+use zerovpn_wire::{ChangeAction, Event, ResourceKind};
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -27,6 +28,19 @@ use crate::{
 
 const MAX_DEVICES_PER_USER: usize = 5;
 pub const PERSISTENT_KEEPALIVE: u16 = 30;
+
+/// Broadcast a device mutation so the owner's other logged-in sessions (and
+/// any admin watching) invalidate their device queries and reflect the change
+/// in real time — e.g. a peer added on a phone appears on the laptop instantly.
+/// Fire-and-forget; `device_id` is `None` for bulk operations like reorder.
+fn notify_device(state: &AppState, user_id: Uuid, device_id: Option<Uuid>, action: ChangeAction) {
+    state.broadcast(Event::DataChanged {
+        user_id: Some(user_id),
+        resource: ResourceKind::Device,
+        id: device_id,
+        action,
+    });
+}
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateBody {
@@ -480,6 +494,7 @@ pub async fn create(
     }
 
     info!(user_id = %user.id, device_id = %device_id, ip = %ip, "device created");
+    notify_device(&state, user.id, Some(device_id), ChangeAction::Created);
 
     Ok((
         axum::http::StatusCode::CREATED,
@@ -551,6 +566,7 @@ pub async fn reorder(
     )
     .await?;
     info!(user_id = %user.id, count = body.ids.len(), "devices reordered");
+    notify_device(&state, user.id, None, ChangeAction::Reordered);
     Ok(Json(json!({ "status": "ok", "updated": n })))
 }
 
@@ -685,6 +701,7 @@ pub async fn rotate_keys(
         .ok_or_else(|| ApiError::Internal("rotated device missing".into()))?;
 
     info!(user_id = %user.id, device_id = %id, "device keys rotated");
+    notify_device(&state, user.id, Some(id), ChangeAction::KeysRotated);
 
     Ok(Json(CreatedDevice {
         device: stored.into(),
@@ -738,6 +755,7 @@ pub async fn delete(
     }
 
     info!(user_id = %user.id, device_id = %id, "device revoked");
+    notify_device(&state, user.id, Some(id), ChangeAction::Deleted);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -1092,6 +1110,7 @@ pub async fn connect(
         )
         .await?;
         info!(user_id = %user.id, device_id = %device_id, "device reconnected");
+        notify_device(&state, user.id, Some(device_id), ChangeAction::Connected);
         return Ok((
             axum::http::StatusCode::OK,
             Json(ConnectResponse {
@@ -1214,6 +1233,7 @@ pub async fn connect(
     }
 
     info!(user_id = %user.id, device_id = %device_id, ip = %ip, "device connected (app provision)");
+    notify_device(&state, user.id, Some(device_id), ChangeAction::Created);
     Ok((
         axum::http::StatusCode::CREATED,
         Json(ConnectResponse {
@@ -1305,6 +1325,7 @@ pub async fn patch(
     )
     .await?;
     info!(user_id = %user.id, device_id = %id, "device patched");
+    notify_device(&state, user.id, Some(id), ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -1409,6 +1430,16 @@ async fn set_pause_state(
         },
     )
     .await?;
+
+    notify_device(
+        state,
+        user_id,
+        Some(device_id),
+        match target {
+            DeviceStatus::Paused => ChangeAction::Paused,
+            _ => ChangeAction::Unpaused,
+        },
+    );
 
     Ok(())
 }

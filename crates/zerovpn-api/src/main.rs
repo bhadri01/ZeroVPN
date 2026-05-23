@@ -518,5 +518,6 @@ fn event_kind(e: &Event) -> &'static str {
         Event::DnsUpdated { .. } => "dns_updated",
         Event::ServerHealth { .. } => "server_health",
         Event::ServerSample { .. } => "server_sample",
+        Event::DataChanged { .. } => "data_changed",
     }
 }

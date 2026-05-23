@@ -41,6 +41,7 @@ import {
   listDevices,
   userBandwidth,
 } from "@/lib/api"
+import { copyText } from "@/lib/clipboard"
 import { connState } from "@/lib/deviceState"
 import { formatBytes } from "@/lib/units"
 import { useHistoryHydration } from "@/hooks/useHistoryHydration"
@@ -435,8 +436,8 @@ function CreatedDeviceCard({
             size="sm"
             variant="outline"
             onClick={() => {
-              void navigator.clipboard.writeText(data.config)
-              toast.success("Config copied")
+              if (copyText(data.config)) toast.success("Config copied")
+              else toast.error("Failed to copy")
             }}
           >
             <IconQrcode />

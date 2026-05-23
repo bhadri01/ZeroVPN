@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use zerovpn_db::repos::{audit, devices};
 use zerovpn_dns::{PeerDnsEntry, validate_hostname, write_hosts_file};
+use zerovpn_wire::{ChangeAction, Event, ResourceKind};
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -104,6 +105,13 @@ pub async fn set(
     }
 
     info!(user_id = %user.id, device_id = %id, count = wanted.len(), "dns names updated");
+    // Reflect the change to the owner's other sessions (and admins) live.
+    state.broadcast(Event::DataChanged {
+        user_id: Some(user.id),
+        resource: ResourceKind::Device,
+        id: Some(id),
+        action: ChangeAction::DnsUpdated,
+    });
     Ok(Json(DnsResponse { dns_names: wanted }))
 }
 

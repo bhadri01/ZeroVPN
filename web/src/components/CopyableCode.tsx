@@ -1,6 +1,7 @@
 import { IconCheck, IconCopy } from "@tabler/icons-react"
 import { useCallback, useEffect, useState } from "react"
 
+import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 /**
@@ -20,13 +21,8 @@ export function CopyableCode({
 }) {
   const [copied, setCopied] = useState(false)
 
-  const onCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-    } catch {
-      /* noop */
-    }
+  const onCopy = useCallback(() => {
+    if (copyText(value)) setCopied(true)
   }, [value])
 
   useEffect(() => {

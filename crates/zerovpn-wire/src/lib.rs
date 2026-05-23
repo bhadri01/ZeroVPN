@@ -23,6 +23,12 @@ pub enum Event {
         tx_bytes: u64,
         rate_rx_bps: u64,
         rate_tx_bps: u64,
+        /// Authoritative cumulative lifetime totals for this device, after
+        /// folding in this tick's delta. Lets the client display a "Total"
+        /// that grows in real time and matches the server exactly, instead
+        /// of accumulating deltas locally (which drifts on dropped frames).
+        total_rx_bytes: u64,
+        total_tx_bytes: u64,
         ts_ms: i64,
     },
 
@@ -88,6 +94,51 @@ pub enum Event {
         handshake_count: u32,
         ts_ms: i64,
     },
+
+    /// A mutation happened to persisted data — emitted by the **API** (not
+    /// the worker) straight onto the broadcast bus so every other session of
+    /// the same user, plus any admin watching, can invalidate the relevant
+    /// query and reflect the change in real time. The client maps
+    /// `resource` to the cache keys it must refresh and may surface a toast
+    /// keyed on `action`.
+    ///
+    /// `user_id` is the owning user for user-scoped resources (device, user
+    /// account); `None` marks admin-global resources (server, maintenance)
+    /// that only admins should react to. `id` is the affected row's id when
+    /// a single row changed (`None` for bulk operations like reorder).
+    DataChanged {
+        user_id: Option<Uuid>,
+        resource: ResourceKind,
+        id: Option<Uuid>,
+        action: ChangeAction,
+    },
+}
+
+/// What kind of persisted resource a [`Event::DataChanged`] refers to.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceKind {
+    Device,
+    User,
+    Server,
+    Maintenance,
+}
+
+/// The mutation that produced a [`Event::DataChanged`]. Used purely on the
+/// client for optional toasts; the cache invalidation only keys on
+/// `resource`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeAction {
+    Created,
+    Updated,
+    Deleted,
+    Paused,
+    Unpaused,
+    KeysRotated,
+    DnsUpdated,
+    Reordered,
+    Connected,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

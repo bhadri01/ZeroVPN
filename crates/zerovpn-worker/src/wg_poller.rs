@@ -172,6 +172,11 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
     let iface = interface();
     info!(?interval, %iface, "real WG poller started");
     let mut last: HashMap<String, Cumulative> = HashMap::new();
+    // Last-known cumulative lifetime totals per device, mirrored from the DB
+    // `accumulate_lifetime` / `seed_lifetime` writes. Lets every per-peer
+    // `StatsDelta` carry the absolute total — including idle ticks where we
+    // skip the DB write — so the client's "Total" tracks the server exactly.
+    let mut lifetimes: HashMap<Uuid, (u64, u64)> = HashMap::new();
     // Per-device online flag from the previous tick. Powers transition
     // detection — when the value flips we write an audit_logs row so the
     // device-detail "Activity" timeline can render online/offline
@@ -190,6 +195,7 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
             &tx,
             &iface,
             &mut last,
+            &mut lifetimes,
             &mut prev_online,
             &mut candles,
             interval,
@@ -208,6 +214,7 @@ async fn poll_once(
     tx: &mpsc::Sender<(String, Event)>,
     iface: &str,
     last: &mut HashMap<String, Cumulative>,
+    lifetimes: &mut HashMap<Uuid, (u64, u64)>,
     prev_online: &mut HashMap<Uuid, bool>,
     candle_acc: &mut CandleAccumulator,
     interval: Duration,
@@ -279,10 +286,30 @@ async fn poll_once(
         let rx_total: u64 = cols[5].parse().unwrap_or(0);
         let tx_total: u64 = cols[6].parse().unwrap_or(0);
 
-        let prev = last.get(public_key).cloned().unwrap_or_default();
+        let prev_entry = last.get(public_key).cloned();
+        // First sight of this peer in this worker session. We must NOT treat
+        // the full cumulative counter as a delta here — on a worker restart
+        // that would re-count the peer's entire history (a spike in the
+        // chart and a doubled lifetime total). Instead we establish the
+        // baseline this tick (delta 0) and reconcile the lifetime against
+        // the live counter via `seed_lifetime` below.
+        let first_sight = prev_entry.is_none();
+        let prev = prev_entry.unwrap_or_default();
         // Counter reset (peer reconnect) → take the new value as the delta.
-        let drx = if rx_total >= prev.rx { rx_total - prev.rx } else { rx_total };
-        let dtx = if tx_total >= prev.tx { tx_total - prev.tx } else { tx_total };
+        let drx = if first_sight {
+            0
+        } else if rx_total >= prev.rx {
+            rx_total - prev.rx
+        } else {
+            rx_total
+        };
+        let dtx = if first_sight {
+            0
+        } else if tx_total >= prev.tx {
+            tx_total - prev.tx
+        } else {
+            tx_total
+        };
         let endpoint_changed = endpoint_now.is_some() && endpoint_now != prev.endpoint;
         // A newer handshake than we last saw for this peer — emitted below as
         // a HandshakeChange once we've resolved the peer to a device.
@@ -480,6 +507,34 @@ async fn poll_once(
             }
         }
 
+        // Maintain the device's authoritative lifetime totals (the "Total
+        // RX/TX" the UI shows). On first sight reconcile against the live WG
+        // counter (GREATEST — catch up downtime, keep the larger lifetime
+        // across a counter reset); on later ticks add this tick's delta. We
+        // mirror the result in `lifetimes` so idle ticks below can still
+        // report an accurate absolute total without a DB round-trip.
+        if report_rates {
+            if first_sight {
+                match devices::seed_lifetime(pool, device_id, rx_total as i64, tx_total as i64)
+                    .await
+                {
+                    Ok((lr, lt)) => {
+                        lifetimes.insert(device_id, (lr.max(0) as u64, lt.max(0) as u64));
+                    }
+                    Err(e) => warn!(?e, %device_id, "seed_lifetime failed"),
+                }
+            } else if drx > 0 || dtx > 0 {
+                match devices::accumulate_lifetime(pool, device_id, drx as i64, dtx as i64).await {
+                    Ok((lr, lt)) => {
+                        lifetimes.insert(device_id, (lr.max(0) as u64, lt.max(0) as u64));
+                    }
+                    Err(e) => warn!(?e, %device_id, "accumulate_lifetime failed"),
+                }
+            }
+        }
+        let (total_rx_bytes, total_tx_bytes) =
+            lifetimes.get(&device_id).copied().unwrap_or((0, 0));
+
         let rate_rx_bps = if report_rates { drx / secs * 8 } else { 0 };
         let rate_tx_bps = if report_rates { dtx / secs * 8 } else { 0 };
 
@@ -499,6 +554,8 @@ async fn poll_once(
             tx_bytes: if report_rates { dtx } else { 0 },
             rate_rx_bps,
             rate_tx_bps,
+            total_rx_bytes,
+            total_tx_bytes,
             ts_ms: now_ms,
         };
         let topic = format!("stats.peer.{}", device_id);

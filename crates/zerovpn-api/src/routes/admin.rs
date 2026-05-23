@@ -18,6 +18,7 @@ use zerovpn_db::repos::{
     servers, session_events,
     users::{self, AdminUserFilters},
 };
+use zerovpn_wire::{ChangeAction, Event, ResourceKind};
 
 use crate::{
     error::{ApiError, ApiResult},
@@ -32,6 +33,30 @@ use crate::{
     },
     state::AppState,
 };
+
+// ── Real-time cross-session notifications ───────────────────────────────
+/// Broadcast a change to a specific user's account/devices so that user's
+/// own sessions (e.g. an admin acting on themselves) and every admin
+/// console refresh in real time. `action` only drives optional client toasts.
+fn notify_user(state: &AppState, target_user_id: Uuid, action: ChangeAction) {
+    state.broadcast(Event::DataChanged {
+        user_id: Some(target_user_id),
+        resource: ResourceKind::User,
+        id: Some(target_user_id),
+        action,
+    });
+}
+
+/// Broadcast an admin-global change (server config, maintenance mode). Only
+/// admins receive these — `visible_to` drops `user_id == None` for non-admins.
+fn notify_admin(state: &AppState, resource: ResourceKind, id: Option<Uuid>, action: ChangeAction) {
+    state.broadcast(Event::DataChanged {
+        user_id: None,
+        resource,
+        id,
+        action,
+    });
+}
 
 // ── WireGuard sync helpers ──────────────────────────────────────────────
 // Used whenever an account-level lifecycle change should ripple out to
@@ -542,6 +567,7 @@ pub async fn set_user_status(
     )
     .await?;
     info!(actor = %actor.id, target = %target_id, status = ?body.status, "admin set user status");
+    notify_user(&state, target_id, ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -608,6 +634,7 @@ pub async fn set_user_role(
     )
     .await?;
     info!(actor = %actor.id, target = %target_id, role = ?body.role, "admin set user role");
+    notify_user(&state, target_id, ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -689,6 +716,7 @@ pub async fn admin_disable_2fa(
     )
     .await?;
     info!(actor = %actor.id, target = %target.id, "admin cleared TOTP");
+    notify_user(&state, target.id, ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -731,6 +759,7 @@ pub async fn admin_revoke_sessions(
     )
     .await?;
     info!(actor = %actor.id, target = %target.id, "admin revoked all sessions");
+    notify_user(&state, target.id, ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -797,6 +826,7 @@ pub async fn admin_set_email_route(
     )
     .await?;
     info!(actor = %actor.id, target = %target.id, "admin changed email");
+    notify_user(&state, target.id, ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -868,6 +898,7 @@ pub async fn delete_user(
     )
     .await?;
     info!(actor = %actor.id, target = %target.id, "admin hard-deleted user");
+    notify_user(&state, target.id, ChangeAction::Deleted);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -1020,6 +1051,7 @@ pub async fn create_user(
     )
     .await?;
     info!(actor = %actor.id, target = %id, role = ?body.role, "admin created user");
+    notify_user(&state, id, ChangeAction::Created);
 
     Ok(Json(CreatedUserResponse {
         id,
@@ -1405,6 +1437,7 @@ pub async fn set_user_quota(
     )
     .await?;
     info!(actor = %actor.id, target = %target_id, ?cap, "admin set user quota");
+    notify_user(&state, target_id, ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -1522,6 +1555,8 @@ pub async fn set_maintenance(
     )
     .await?;
     info!(on = body.maintenance_mode, "maintenance mode toggled");
+    // Admin-global: every admin console + the maintenance banner refreshes.
+    notify_admin(&state, ResourceKind::Maintenance, None, ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -1664,6 +1699,7 @@ pub async fn patch_server(
     )
     .await?;
     info!(actor = %actor.id, server = %id, "server patched");
+    notify_admin(&state, ResourceKind::Server, Some(id), ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -1761,6 +1797,7 @@ pub async fn rotate_server_keys(
     .await?;
 
     info!(actor = %actor.id, server = %id, "server keys rotated");
+    notify_admin(&state, ResourceKind::Server, Some(id), ChangeAction::KeysRotated);
     Ok(Json(json!({
         "status": "ok",
         "new_public_key": public,

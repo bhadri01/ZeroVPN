@@ -23,6 +23,7 @@ import {
   totpEnable,
   totpSetup,
 } from "@/lib/api"
+import { copyText } from "@/lib/clipboard"
 import { useAuth } from "@/stores/auth"
 
 /** Security-management content embedded by the unified `/app/settings`
@@ -208,8 +209,9 @@ export function SecuritySections() {
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  void navigator.clipboard.writeText(recoveryCodes.join("\n"))
-                  toast.success("Recovery codes copied")
+                  if (copyText(recoveryCodes.join("\n")))
+                    toast.success("Recovery codes copied")
+                  else toast.error("Failed to copy")
                 }}
               >
                 <IconCopy className="size-3.5" />

@@ -184,22 +184,22 @@ pub async fn fleet_totals(pool: &PgPool) -> sqlx::Result<(i64, i64)> {
 }
 
 /// All-time RX/TX totals per device for a user, keyed by `device_id`.
-/// Sums the `'hour'` rollups specifically — the table also holds `'day'`
-/// rows derived from the same hours, so a bucket-agnostic SUM would
-/// double-count (see [`fleet_totals`]). Devices with no traffic yet simply
-/// don't appear in the result. Powers the persisted RX/TX TOTAL on the
-/// device cards (survives reloads, unlike the session-local live counters).
+///
+/// Reads the authoritative `lifetime_rx_bytes` / `lifetime_tx_bytes` counters
+/// the worker maintains on every poll tick (see
+/// [`crate::repos::devices::accumulate_lifetime`]). These match the live WG
+/// counter and grow in real time, unlike the hourly aggregate rollups they
+/// replaced (which lagged by up to a minute). Powers the persisted RX/TX
+/// TOTAL on the device cards and detail — survives reloads and worker
+/// restarts. Revoked devices are excluded to mirror the device list.
 pub async fn device_totals(
     pool: &PgPool,
     user_id: Uuid,
 ) -> sqlx::Result<Vec<(Uuid, i64, i64)>> {
     sqlx::query_as(
-        r#"SELECT device_id,
-                  COALESCE(SUM(rx_bytes), 0)::BIGINT,
-                  COALESCE(SUM(tx_bytes), 0)::BIGINT
-             FROM bandwidth_aggregates
-            WHERE user_id = $1 AND bucket = 'hour'::bucket_kind
-            GROUP BY device_id"#,
+        r#"SELECT id, lifetime_rx_bytes, lifetime_tx_bytes
+             FROM devices
+            WHERE user_id = $1 AND status <> 'revoked'"#,
     )
     .bind(user_id)
     .fetch_all(pool)

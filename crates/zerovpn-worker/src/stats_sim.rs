@@ -97,6 +97,25 @@ async fn emit_round(
                 warn!(device = %d.id, ?e, "bandwidth sample insert failed");
             }
 
+            // Fold the same delta into the device's authoritative lifetime
+            // totals (the "Total RX/TX" the UI shows) and carry the resulting
+            // absolute back in the StatsDelta so the dev dashboard's total
+            // ticks up live, exactly as the real WG poller does.
+            let (total_rx_bytes, total_tx_bytes) = match devices::accumulate_lifetime(
+                pool,
+                d.id,
+                rx_bytes as i64,
+                tx_bytes as i64,
+            )
+            .await
+            {
+                Ok((lr, lt)) => (lr.max(0) as u64, lt.max(0) as u64),
+                Err(e) => {
+                    warn!(device = %d.id, ?e, "accumulate_lifetime failed");
+                    (0, 0)
+                }
+            };
+
             // Bump the per-user monthly counter; auto-pause if the user
             // crossed their cap.
             let total_delta = (rx_bytes + tx_bytes) as i64;
@@ -151,6 +170,8 @@ async fn emit_round(
                 tx_bytes,
                 rate_rx_bps,
                 rate_tx_bps,
+                total_rx_bytes,
+                total_tx_bytes,
                 ts_ms: now_ms,
             };
             let topic = format!("stats.peer.{}", d.id);

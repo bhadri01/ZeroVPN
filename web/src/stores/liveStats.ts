@@ -27,11 +27,12 @@ export interface DeviceLive {
    *  signal than the ~2-min WireGuard handshake. Stale → the peer dropped.
    *  0 until the first byte of activity is seen. */
   lastSeenTs: number
-  /** Real cumulative bytes seen this session (summed from the WS byte
-   *  deltas, not the rate). Lets the UI grow the persisted API total live
-   *  between refetches — see `useLiveTotal`. Monotonic while connected. */
-  sessRxBytes: number
-  sessTxBytes: number
+  /** Authoritative cumulative lifetime totals for this device, taken straight
+   *  from each `stats_delta` (the worker maintains them). The UI shows the max
+   *  of this and the periodically-refetched API total, so "Total RX/TX" grows
+   *  live and matches the server exactly — see `useLiveTotal`. Monotonic. */
+  lifeRxBytes: number
+  lifeTxBytes: number
   peakRx: number
   peakTx: number
   totalRx: number
@@ -119,8 +120,8 @@ interface LiveStatsState {
     rxBps: number,
     txBps: number,
     ts?: number,
-    rxBytes?: number,
-    txBytes?: number,
+    totalRxBytes?: number,
+    totalTxBytes?: number,
   ): void
   applyServerSample(
     id: string,
@@ -161,8 +162,8 @@ const empty = (): DeviceLive => ({
   txHistory: [],
   lastTs: 0,
   lastSeenTs: 0,
-  sessRxBytes: 0,
-  sessTxBytes: 0,
+  lifeRxBytes: 0,
+  lifeTxBytes: 0,
   peakRx: 0,
   peakTx: 0,
   totalRx: 0,
@@ -277,7 +278,7 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
   servers: {},
   aggregate: emptyAggregate(),
   serverHealth: {},
-  applyDelta(id, rxBps, txBps, ts, rxBytes = 0, txBytes = 0) {
+  applyDelta(id, rxBps, txBps, ts, totalRxBytes = 0, totalTxBytes = 0) {
     set((state) => {
       const cur = state.devices[id] ?? empty()
       const at = ts ?? Date.now()
@@ -295,10 +296,11 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
           // keepalive ticks count, idle zero-rate ticks don't. A frozen
           // value is how the card detects a drop ahead of the handshake.
           lastSeenTs: rxBps > 0 || txBps > 0 ? at : cur.lastSeenTs,
-          // Real cumulative bytes (delta-summed) — drives the live-growing
-          // total on top of the persisted API figure (see `useLiveTotal`).
-          sessRxBytes: cur.sessRxBytes + rxBytes,
-          sessTxBytes: cur.sessTxBytes + txBytes,
+          // Authoritative cumulative lifetime totals from the worker. Clamp
+          // to monotonic (max) so a stray zero / out-of-order frame can never
+          // make the displayed total jump backwards (see `useLiveTotal`).
+          lifeRxBytes: Math.max(cur.lifeRxBytes, totalRxBytes),
+          lifeTxBytes: Math.max(cur.lifeTxBytes, totalTxBytes),
           peakRx: Math.max(cur.peakRx, rxBps),
           peakTx: Math.max(cur.peakTx, txBps),
           totalRx: cur.totalRx + rxBps,
@@ -391,8 +393,8 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
           txHistory,
           lastTs,
           lastSeenTs: cur.lastSeenTs,
-          sessRxBytes: cur.sessRxBytes,
-          sessTxBytes: cur.sessTxBytes,
+          lifeRxBytes: cur.lifeRxBytes,
+          lifeTxBytes: cur.lifeTxBytes,
           peakRx,
           peakTx,
           totalRx: cur.totalRx,

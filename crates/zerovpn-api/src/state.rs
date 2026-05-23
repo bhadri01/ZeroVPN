@@ -28,6 +28,16 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Fire-and-forget publish onto the live event bus. The WebSocket
+    /// handler fans this out to every connected client that
+    /// [`crate::routes::ws::visible_to`] lets through (the owning user's
+    /// other sessions, plus admins). Used by mutation handlers to make
+    /// add/edit/delete reflect across a user's devices in real time.
+    /// Errors only when there are zero subscribers, which is fine to drop.
+    pub fn broadcast(&self, event: Event) {
+        let _ = self.events.send(event);
+    }
+
     pub fn new(
         pool: PgPool,
         allocators: Arc<IpAllocators>,
