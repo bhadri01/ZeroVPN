@@ -57,6 +57,8 @@ export function LiveStatsProvider() {
               event.rate_rx_bps,
               event.rate_tx_bps,
               event.ts_ms,
+              event.rx_bytes,
+              event.tx_bytes,
             )
           } else {
             skippedWhileHiddenRef.current = true

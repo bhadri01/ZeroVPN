@@ -15,8 +15,10 @@ import {
 import { Link } from "react-router"
 
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
+import { CopyButton } from "@/components/CopyButton"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import { WithTooltip } from "@/components/ui/with-tooltip"
+import { useLiveTotal } from "@/hooks/useLiveTotal"
 import { useNow } from "@/hooks/useNow"
 import type { PublicDevice } from "@/lib/api"
 import { formatAgo, formatDateTime } from "@/lib/datetime"
@@ -39,10 +41,10 @@ const CHART_WINDOW = 30
 
 /** How long a previously-active peer can go without moving a byte before
  *  we treat it as disconnected. Peer configs ship `PersistentKeepalive =
- *  25s`, so a live peer's rx advances at least that often; ~3× that gives
+ *  30s`, so a live peer's rx advances at least that often; ~3× that gives
  *  a robust, flicker-free drop signal that's far quicker than waiting out
  *  the ~3-min WireGuard handshake window. See `DeviceLive.lastSeenTs`. */
-const ACTIVITY_STALE_MS = 75_000
+const ACTIVITY_STALE_MS = 90_000
 
 /** Pill the header shows — combines connection state with peer state
  *  (admin lifecycle) so a paused or revoked device always wins over the
@@ -131,7 +133,7 @@ export function DeviceCard({
 
   const hasEverHandshook = d.last_handshake_at != null
   // Connectivity = the coarse handshake window, refined by keepalive
-  // activity. A live peer's rx ticks every ~25s (PersistentKeepalive); if
+  // activity. A live peer's rx ticks every ~30s (PersistentKeepalive); if
   // we've seen activity and it's since gone stale, the peer dropped — flip
   // offline now instead of waiting out the full handshake window. When
   // we've never seen activity (just connected, or no keepalive) we fall
@@ -155,13 +157,19 @@ export function DeviceCard({
     () => (isOnline ? (live?.txHistory ?? []).slice(-CHART_WINDOW) : []),
     [isOnline, live?.txHistory],
   )
-  // Cumulative byte counters live in the footer and need their own
-  // gate: a device that's been online before and is now offline should
-  // still show its accumulated totals — but a device that's never
-  // handshook must read zero, regardless of whatever stale rates the
-  // worker may have produced.
-  const totalRx = hasEverHandshook ? (live?.totalRx ?? 0) : 0
-  const totalTx = hasEverHandshook ? (live?.totalTx ?? 0) : 0
+  // Only draw the live trace once the device is online AND at least one
+  // frame has streamed in. Otherwise the chart slot shows a flat baseline
+  // placeholder; the moment a connect lands its frames, the real chart
+  // takes over and grows from there.
+  const showChart = isOnline && (rxHistory.length > 0 || txHistory.length > 0)
+  // Cumulative byte totals: the persisted API figure (survives reload)
+  // grown live by the bytes streamed since the last refetch, so the number
+  // ticks up in sync with the live rate instead of only on refetch.
+  const { rx: totalRx, tx: totalTx } = useLiveTotal(
+    d.id,
+    d.total_rx_bytes,
+    d.total_tx_bytes,
+  )
 
   // WAN endpoint IP only — the port is noise on the card.
   const peerHost = d.last_peer_endpoint
@@ -204,23 +212,52 @@ export function DeviceCard({
           <IconGripVertical className="size-3" />
         </div>
       )}
-      <div className="flex items-start justify-between gap-2 px-4 pt-4 pb-3">
-        <Link
-          to={`/app/devices/${d.id}`}
-          draggable={false}
-          className="hover:text-foreground flex min-w-0 flex-col gap-0.5 transition-colors"
-        >
-          <span className="text-foreground truncate text-sm font-medium">
+      {/* Header: name + status share the top row; the IP and WAN endpoint
+          each get their own full-width line below so they never get squeezed
+          (and wrapped) by a wide status pill. Fixed line count keeps every
+          card the same height across the grid. */}
+      <div className="flex flex-col gap-0.5 px-4 pt-4 pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <Link
+            to={`/app/devices/${d.id}`}
+            draggable={false}
+            className="text-foreground hover:text-foreground min-w-0 flex-1 truncate text-sm font-medium transition-colors"
+          >
             {d.name}
-          </span>
-          <span className="text-muted-foreground font-mono text-xs">
-            {d.os} · {d.allocated_ip}
-          </span>
-          {/* WAN endpoint the peer connects from. Always rendered (with a
-              dim placeholder when unknown) so cards keep a uniform height
-              across the grid. Truncates on long IPv6 endpoints. */}
+          </Link>
+          <div className="flex shrink-0 items-center gap-1">
+            <StatusPill status={rowPill(isOnline ? "online" : "offline", peerState(d))} />
+            {actions}
+            {showOpenLink && !actions && (
+              <WithTooltip label="Open device">
+                <Link
+                  to={`/app/devices/${d.id}`}
+                  aria-label="Open device"
+                  className="text-muted-foreground hover:text-foreground -mr-1 p-1 transition-colors"
+                >
+                  <IconExternalLink className="size-3.5" />
+                </Link>
+              </WithTooltip>
+            )}
+          </div>
+        </div>
+        {/* IP — full card width, single line, with a copy affordance. */}
+        <div className="flex items-center gap-1.5">
+          <Link
+            to={`/app/devices/${d.id}`}
+            draggable={false}
+            className="text-muted-foreground hover:text-foreground min-w-0 truncate font-mono text-xs transition-colors"
+          >
+            {d.allocated_ip}
+          </Link>
+          <CopyButton value={d.allocated_ip} label="Copy IP" />
+        </div>
+        {/* WAN endpoint the peer connects from. Always rendered (with a dim
+            placeholder when unknown) so cards keep a uniform height. The
+            copy button only appears once there's an endpoint to copy. */}
+        <div className="flex items-center gap-1.5">
           <span
-            className="text-muted-foreground/60 truncate font-mono text-[11px]"
+            className="text-muted-foreground/60 min-w-0 truncate font-mono text-[11px]"
             title={
               peerHost
                 ? d.last_peer_endpoint_at
@@ -231,20 +268,8 @@ export function DeviceCard({
           >
             via {peerHost ?? "—"}
           </span>
-        </Link>
-        <div className="flex items-center gap-1">
-          <StatusPill status={rowPill(isOnline ? "online" : "offline", peerState(d))} />
-          {actions}
-          {showOpenLink && !actions && (
-            <WithTooltip label="Open device">
-              <Link
-                to={`/app/devices/${d.id}`}
-                aria-label="Open device"
-                className="text-muted-foreground hover:text-foreground -mr-1 p-1 transition-colors"
-              >
-                <IconExternalLink className="size-3.5" />
-              </Link>
-            </WithTooltip>
+          {d.last_peer_endpoint && (
+            <CopyButton value={d.last_peer_endpoint} label="Copy endpoint" />
           )}
         </div>
       </div>
@@ -271,7 +296,19 @@ export function DeviceCard({
           locked height also stops recharts' ResponsiveContainer from
           nudging the card's height as frames stream in. */}
       <div className="h-14 overflow-hidden px-1">
-        <MiniAreaChart rxHistory={rxHistory} txHistory={txHistory} height={56} />
+        {showChart ? (
+          <MiniAreaChart rxHistory={rxHistory} txHistory={txHistory} height={56} />
+        ) : (
+          <ChartPlaceholder
+            text={
+              isOnline
+                ? "connecting…"
+                : hasEverHandshook
+                  ? "offline"
+                  : "not connected"
+            }
+          />
+        )}
       </div>
 
       <div className="border-border bg-muted/40 flex items-center justify-between gap-3 border-t px-4 py-2.5 font-mono text-[11px]">
@@ -300,6 +337,34 @@ export function DeviceCard({
           </span>
         </span>
       </div>
+    </div>
+  )
+}
+
+/** Chart-slot fallback when there's no live trace to draw — a flat
+ *  baseline with a short status string, sized to the same box as the real
+ *  sparkline so the card/row height never jumps. Once the device connects
+ *  and frames stream in, the live MiniAreaChart replaces this and grows
+ *  from that point. Shared by the grid card and the list-view row. */
+export function ChartPlaceholder({
+  text,
+  height = 56,
+}: {
+  text: string
+  height?: number
+}) {
+  return (
+    <div
+      className="relative flex items-center justify-center"
+      style={{ height }}
+    >
+      <span
+        className="bg-border absolute inset-x-1 top-1/2 h-px -translate-y-1/2"
+        aria-hidden
+      />
+      <span className="bg-card text-muted-foreground/70 relative px-2 font-mono text-[10px] tracking-[0.08em]">
+        {text}
+      </span>
     </div>
   )
 }

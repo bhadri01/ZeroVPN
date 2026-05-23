@@ -13,8 +13,8 @@ export type ConnState = "online" | "offline"
  *  renamed so "live" reads better than "active" alongside "online". */
 export type PeerState = "live" | "paused" | "revoked"
 
-/** WireGuard's default keepalive is 25 s; real-world handshakes happen
- *  every ~2 min. 3 minutes is the conservative connectivity bound. */
+/** Our peer configs set PersistentKeepalive = 30 s; real-world handshakes
+ *  happen every ~2 min. 3 minutes is the conservative connectivity bound. */
 const ONLINE_HANDSHAKE_WINDOW_MS = 3 * 60_000
 
 export function connState(d: PublicDevice): ConnState {

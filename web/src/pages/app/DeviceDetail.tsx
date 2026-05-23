@@ -72,13 +72,13 @@ import {
 import { WithTooltip } from "@/components/ui/with-tooltip"
 import { useBreadcrumbOverride } from "@/hooks/useBreadcrumbOverride"
 import { useHistoryHydration } from "@/hooks/useHistoryHydration"
+import { useLiveTotal } from "@/hooks/useLiveTotal"
 import {
   ApiError,
   type CreatedDevice,
   type DeviceEvent,
   type DeviceOs,
   deleteDevice,
-  deviceBandwidth,
   getDevice,
   listDeviceEvents,
   meServer,
@@ -94,7 +94,7 @@ import { formatBps } from "@/lib/units"
 import { cn } from "@/lib/utils"
 import { useLiveStats } from "@/stores/liveStats"
 
-const KEEPALIVE_SECS = 25
+const KEEPALIVE_SECS = 30
 
 // Fixed suffix the server's DNS regex requires. Mirrors the
 // `\.vpn\.local$` portion of `validate_hostname` in zerovpn-dns.
@@ -155,13 +155,15 @@ export function DeviceDetailPage() {
     refetchInterval: 30_000,
   })
 
-  // Headline "total bytes" tile — fixed 24 h window off the byte aggregates.
-  const bwQ = useQuery({
-    queryKey: ["bandwidth", "device", id, "24h"],
-    queryFn: () => deviceBandwidth(id, "24h"),
-    enabled: id.length > 0,
-    refetchInterval: 30_000,
-  })
+  // Cumulative RX/TX totals — the persisted figure from the device query,
+  // grown live by the WS byte deltas streamed since the last refetch so the
+  // headline tiles tick up in real time instead of only jumping every 20 s.
+  // Called before the loading early-return below to keep hook order stable.
+  const { rx: totalRx, tx: totalTx } = useLiveTotal(
+    id,
+    deviceQ.data?.total_rx_bytes ?? 0,
+    deviceQ.data?.total_tx_bytes ?? 0,
+  )
 
   // OHLC bandwidth candles are owned by the self-contained <CandleChart> below
   // (timeframe + zoom/pan + lazy history live inside it).
@@ -294,19 +296,6 @@ export function DeviceDetailPage() {
     : ""
   const serverDns = server ? server.dns_servers.join(", ") : ""
 
-  // 30-day total — derived from the deviceBandwidth(30d) call, summed.
-  // Pulled separately so the headline tile is honest about what window
-  // it's showing.
-  const total24hRx = (bwQ.data?.buckets ?? []).reduce(
-    (s, b) => s + b.rx_bytes,
-    0,
-  )
-  const total24hTx = (bwQ.data?.buckets ?? []).reduce(
-    (s, b) => s + b.tx_bytes,
-    0,
-  )
-  const totalBytes = total24hRx + total24hTx
-
   const allowedIpsForDisplay = "0.0.0.0/0, ::/0"
   const dnsForDisplay =
     d.dns_override && d.dns_override.length > 0
@@ -402,13 +391,7 @@ export function DeviceDetailPage() {
       <KpiStrip>
         <Kpi
           label="RX"
-          value={
-            bwQ.isLoading ? (
-              <Dash />
-            ) : (
-              <span className="tabular-nums">{formatBytes(total24hRx)}</span>
-            )
-          }
+          value={<span className="tabular-nums">{formatBytes(totalRx)}</span>}
           spark={isOnline ? rxHistory.slice(-32) : []}
           sparkColor="var(--chart-1)"
           footL={isOnline ? formatBps(live?.rxBps ?? 0) : "idle"}
@@ -417,13 +400,7 @@ export function DeviceDetailPage() {
         />
         <Kpi
           label="TX"
-          value={
-            bwQ.isLoading ? (
-              <Dash />
-            ) : (
-              <span className="tabular-nums">{formatBytes(total24hTx)}</span>
-            )
-          }
+          value={<span className="tabular-nums">{formatBytes(totalTx)}</span>}
           spark={isOnline ? txHistory.slice(-32) : []}
           sparkColor="var(--primary)"
           footL={isOnline ? formatBps(live?.txBps ?? 0) : "idle"}
@@ -433,7 +410,7 @@ export function DeviceDetailPage() {
         <Kpi
           label="Total"
           value={
-            bwQ.isLoading ? <Dash /> : <span className="tabular-nums">{formatBytes(totalBytes)}</span>
+            <span className="tabular-nums">{formatBytes(totalRx + totalTx)}</span>
           }
           spark={isOnline ? totalHistory.slice(-32) : []}
           sparkColor="var(--primary)"
@@ -1246,10 +1223,6 @@ function formatDayLabel(day: string): string {
   if (day === yToday) return "Today"
   if (day === yesterday) return "Yesterday"
   return formatDate(day)
-}
-
-function Dash() {
-  return <span className="text-muted-foreground/40">—</span>
 }
 
 /** Build a WireGuard config matching the design's wg-conf preview. The

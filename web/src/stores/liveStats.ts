@@ -22,11 +22,16 @@ export interface DeviceLive {
   txHistory: number[]
   lastTs: number
   /** Last tick at which this device actually moved bytes (rx or tx > 0).
-   *  Persistent-keepalive (25s) keeps a *connected* peer's rx ticking, so
+   *  Persistent-keepalive (30s) keeps a *connected* peer's rx ticking, so
    *  this advancing within the last ~minute is a much faster liveness
    *  signal than the ~2-min WireGuard handshake. Stale → the peer dropped.
    *  0 until the first byte of activity is seen. */
   lastSeenTs: number
+  /** Real cumulative bytes seen this session (summed from the WS byte
+   *  deltas, not the rate). Lets the UI grow the persisted API total live
+   *  between refetches — see `useLiveTotal`. Monotonic while connected. */
+  sessRxBytes: number
+  sessTxBytes: number
   peakRx: number
   peakTx: number
   totalRx: number
@@ -109,7 +114,14 @@ interface LiveStatsState {
   aggregate: AggregateLive
   /** Host-level health, keyed by server_id. Sidebar panel reads this. */
   serverHealth: Record<string, ServerHealthLive>
-  applyDelta(id: string, rxBps: number, txBps: number, ts?: number): void
+  applyDelta(
+    id: string,
+    rxBps: number,
+    txBps: number,
+    ts?: number,
+    rxBytes?: number,
+    txBytes?: number,
+  ): void
   applyServerSample(
     id: string,
     rxBps: number,
@@ -149,6 +161,8 @@ const empty = (): DeviceLive => ({
   txHistory: [],
   lastTs: 0,
   lastSeenTs: 0,
+  sessRxBytes: 0,
+  sessTxBytes: 0,
   peakRx: 0,
   peakTx: 0,
   totalRx: 0,
@@ -263,7 +277,7 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
   servers: {},
   aggregate: emptyAggregate(),
   serverHealth: {},
-  applyDelta(id, rxBps, txBps, ts) {
+  applyDelta(id, rxBps, txBps, ts, rxBytes = 0, txBytes = 0) {
     set((state) => {
       const cur = state.devices[id] ?? empty()
       const at = ts ?? Date.now()
@@ -281,6 +295,10 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
           // keepalive ticks count, idle zero-rate ticks don't. A frozen
           // value is how the card detects a drop ahead of the handshake.
           lastSeenTs: rxBps > 0 || txBps > 0 ? at : cur.lastSeenTs,
+          // Real cumulative bytes (delta-summed) — drives the live-growing
+          // total on top of the persisted API figure (see `useLiveTotal`).
+          sessRxBytes: cur.sessRxBytes + rxBytes,
+          sessTxBytes: cur.sessTxBytes + txBytes,
           peakRx: Math.max(cur.peakRx, rxBps),
           peakTx: Math.max(cur.peakTx, txBps),
           totalRx: cur.totalRx + rxBps,
@@ -373,6 +391,8 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
           txHistory,
           lastTs,
           lastSeenTs: cur.lastSeenTs,
+          sessRxBytes: cur.sessRxBytes,
+          sessTxBytes: cur.sessTxBytes,
           peakRx,
           peakTx,
           totalRx: cur.totalRx,

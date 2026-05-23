@@ -20,7 +20,7 @@ import { toast } from "sonner"
 
 import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { DeviceCard } from "@/components/DeviceCard"
+import { ChartPlaceholder, DeviceCard } from "@/components/DeviceCard"
 import { AddDeviceDialog } from "@/components/devices/AddDeviceDialog"
 import { EditDeviceDialog } from "@/components/devices/EditDeviceDialog"
 import {
@@ -536,12 +536,21 @@ export function DevicesPage() {
                 const rowTx = isOnlineForChart
                   ? (liveEntry?.txHistory ?? []).slice(-LIST_CHART_WINDOW)
                   : []
-                // Cumulative totals — same gate the card uses: a device
-                // that's never handshook reads zero regardless of any
-                // stale counters the worker may have produced.
-                const hasEverHandshook = d.last_handshake_at != null
-                const totalRx = hasEverHandshook ? (liveEntry?.totalRx ?? 0) : 0
-                const totalTx = hasEverHandshook ? (liveEntry?.totalTx ?? 0) : 0
+                // Draw the trace only once online with at least one frame;
+                // otherwise show a flat baseline + status string. The chart
+                // takes over and grows from the moment a connect lands.
+                const rowShowChart =
+                  isOnlineForChart && (rowRx.length > 0 || rowTx.length > 0)
+                const rowChartText = isOnlineForChart
+                  ? "connecting…"
+                  : d.last_handshake_at != null
+                    ? "offline"
+                    : "not connected"
+                // Cumulative totals come from the API (persisted hourly
+                // rollups), so they survive a reload instead of restarting
+                // from 0 like the session-local WS counters did.
+                const totalRx = d.total_rx_bytes
+                const totalTx = d.total_tx_bytes
                 const rowStatus = rowPill(c, p)
                 return (
                   <SortableListRow
@@ -552,6 +561,8 @@ export function DevicesPage() {
                     peerState={p}
                     rxHistory={rowRx}
                     txHistory={rowTx}
+                    showChart={rowShowChart}
+                    chartText={rowChartText}
                     totalRx={totalRx}
                     totalTx={totalTx}
                     isDragging={dragId === d.id}
@@ -731,6 +742,8 @@ function SortableListRow({
   peerState: p,
   rxHistory,
   txHistory,
+  showChart,
+  chartText,
   totalRx,
   totalTx,
   isDragging,
@@ -745,6 +758,8 @@ function SortableListRow({
   peerState: PeerState
   rxHistory: number[]
   txHistory: number[]
+  showChart: boolean
+  chartText: string
   totalRx: number
   totalTx: number
   isDragging: boolean
@@ -808,11 +823,15 @@ function SortableListRow({
       </div>
       <div className="zv-cell" style={{ padding: "4px 12px" }}>
         <div className="w-[116px]">
-          <MiniAreaChart
-            rxHistory={rxHistory}
-            txHistory={txHistory}
-            height={28}
-          />
+          {showChart ? (
+            <MiniAreaChart
+              rxHistory={rxHistory}
+              txHistory={txHistory}
+              height={28}
+            />
+          ) : (
+            <ChartPlaceholder text={chartText} height={28} />
+          )}
         </div>
       </div>
       <div className="zv-cell zv-num">

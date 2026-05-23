@@ -60,6 +60,17 @@ pub async fn write_hosts_file(
     f.write_all(out.as_bytes()).await?;
     f.sync_all().await?;
     drop(f);
+    // CoreDNS reads this file over a shared volume as a NON-root user. The API
+    // writes it as root and `File::create` honours the process umask (often
+    // 077 → mode 600), which leaves the file unreadable to CoreDNS — its
+    // `hosts` plugin then silently loads nothing and every *.vpn.local query
+    // NXDOMAINs. Force world-readable (0644) so the resolver can read it. The
+    // file holds only <vpn-ip> <hostname> mappings, no secrets.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).await?;
+    }
     fs::rename(&tmp, path).await?;
     info!(path = %path.display(), entries = entries.len(), "wrote DNS hosts file");
     Ok(())

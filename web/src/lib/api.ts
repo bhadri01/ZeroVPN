@@ -119,6 +119,11 @@ export interface PublicDevice {
   last_peer_endpoint: string | null
   last_peer_endpoint_at: string | null
   created_at: string
+  /** All-time bytes received / sent, from the persisted hourly bandwidth
+   *  rollups. Survives reloads (unlike the session-local live counters in
+   *  the WS store). `0` until the device transmits. Only on list / get. */
+  total_rx_bytes: number
+  total_tx_bytes: number
 }
 
 export interface CreatedDevice {

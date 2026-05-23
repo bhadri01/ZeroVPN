@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Area,
   Bar,
@@ -111,8 +111,12 @@ interface Props {
  *  - the view stays **pinned to the latest** candle (auto-advancing as the
  *    worker flushes each minute) until the user pans back; a "Latest" button
  *    re-pins.
+ *
+ * Wrapped in `memo` (see export) so the once-per-second live-stats re-renders
+ * of the parent card don't cascade a full recharts redraw into the chart —
+ * that cascade was the main source of interaction jank.
  */
-export function CandleChart({ scope, id, height = 260 }: Props) {
+function CandleChartImpl({ scope, id, height = 260 }: Props) {
   const [tf, setTf] = useState<Timeframe>("1m")
   const [chartType, setChartType] = useState<ChartType>("bar")
   const { candles, loadOlder, isLoadingOlder, hasMore, isLoading, isError } =
@@ -132,6 +136,10 @@ export function CandleChart({ scope, id, height = 260 }: Props) {
   // of trackpad events produces one smooth update instead of many janky ones.
   const wheelAccum = useRef({ dy: 0, dx: 0, x: 0 })
   const rafRef = useRef<number | null>(null)
+  // Same idea for drag: mousemove can fire faster than the frame rate, so the
+  // latest cursor X is applied once per frame rather than re-rendering per event.
+  const dragRafRef = useRef<number | null>(null)
+  const dragXRef = useRef(0)
 
   // Reset the view whenever the timeframe changes.
   useEffect(() => {
@@ -238,7 +246,9 @@ export function CandleChart({ scope, id, height = 260 }: Props) {
             applyPanCandles(Math.round(dx / candleW))
           } else if (dy !== 0) {
             // exp() → smooth multiplicative zoom proportional to scroll amount.
-            applyZoom(x, clamp(Math.exp(dy * 0.0025), 0.5, 2))
+            // Gentle per-frame factor (tight clamp) so each notch eases rather
+            // than jumping.
+            applyZoom(x, clamp(Math.exp(dy * 0.0015), 0.7, 1.45))
           }
         })
       }
@@ -250,22 +260,30 @@ export function CandleChart({ scope, id, height = 260 }: Props) {
     }
   }, [applyZoom, applyPanCandles, chartReady])
 
-  // Click-drag pan. Recompute from the drag-start anchor each move so the view
-  // tracks the cursor without accumulating rounding drift.
+  // Click-drag pan, rAF-throttled. Recompute from the drag-start anchor each
+  // frame so the view tracks the cursor without accumulating rounding drift.
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const applyDrag = () => {
+      dragRafRef.current = null
       const d = dragRef.current
       const el = containerRef.current
       if (!d || !el) return
       const { visibleCount: vc, n: cn, tsArr: ts } = viewRef.current
       const candleW = Math.max(1, (el.clientWidth - plotInset) / Math.max(1, vc))
-      const dxCandles = Math.round((e.clientX - d.startX) / candleW)
+      const dxCandles = Math.round((dragXRef.current - d.startX) / candleW)
       const startRightIdx =
         d.startRight === null ? cn - 1 : nearestIdx(ts, d.startRight)
       const minRight = Math.min(vc - 1, cn - 1)
       // Drag right reveals older data → view moves toward the past.
       const newRight = clamp(startRightIdx - dxCandles, minRight, cn - 1)
       setRightEnd(newRight >= cn - 1 ? null : ts[newRight])
+    }
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current) return
+      dragXRef.current = e.clientX
+      if (dragRafRef.current == null) {
+        dragRafRef.current = requestAnimationFrame(applyDrag)
+      }
     }
     const onUp = () => {
       dragRef.current = null
@@ -275,10 +293,12 @@ export function CandleChart({ scope, id, height = 260 }: Props) {
     return () => {
       window.removeEventListener("mousemove", onMove)
       window.removeEventListener("mouseup", onUp)
+      if (dragRafRef.current != null) cancelAnimationFrame(dragRafRef.current)
     }
   }, [chartReady])
 
   const onMouseDown = (e: React.MouseEvent) => {
+    dragXRef.current = e.clientX
     dragRef.current = { startX: e.clientX, startRight: viewRef.current.rightEnd }
   }
 
@@ -453,3 +473,7 @@ export function CandleChart({ scope, id, height = 260 }: Props) {
     </div>
   )
 }
+
+// Props are stable primitives (scope/id/height), so memo cleanly blocks the
+// parent's per-second live re-renders from reaching the chart.
+export const CandleChart = memo(CandleChartImpl)

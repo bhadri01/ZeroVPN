@@ -26,7 +26,7 @@ use crate::{
 };
 
 const MAX_DEVICES_PER_USER: usize = 5;
-pub const PERSISTENT_KEEPALIVE: u16 = 25;
+pub const PERSISTENT_KEEPALIVE: u16 = 30;
 
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct CreateBody {
@@ -88,6 +88,13 @@ pub struct PublicDevice {
     /// Wall-clock time `last_peer_endpoint` was first observed.
     #[serde(with = "time::serde::rfc3339::option")]
     pub last_peer_endpoint_at: Option<OffsetDateTime>,
+    /// All-time bytes received / sent, summed from the persisted hourly
+    /// bandwidth rollups — so the card's RX/TX TOTAL survives a page reload
+    /// (unlike the session-local live counters). `0` until the device has
+    /// transmitted. Merged in by the list/get handlers; `0` on
+    /// create/rotate responses, which don't fetch it.
+    pub total_rx_bytes: i64,
+    pub total_tx_bytes: i64,
 }
 
 impl From<Device> for PublicDevice {
@@ -114,6 +121,9 @@ impl From<Device> for PublicDevice {
             // want them merge them in after the conversion.
             last_peer_endpoint: None,
             last_peer_endpoint_at: None,
+            // Totals come from bandwidth_aggregates; merged in by list/get.
+            total_rx_bytes: 0,
+            total_tx_bytes: 0,
         }
     }
 }
@@ -149,10 +159,22 @@ pub async fn list(
             .into_iter()
             .map(|(id, ep, at)| (id, (ep, at)))
             .collect();
+    // All-time per-device byte totals (persisted; survives reload). One
+    // grouped query for the whole list, zipped on per device.
+    let totals: HashMap<Uuid, (i64, i64)> =
+        zerovpn_db::repos::bandwidth::device_totals(&state.pool, user.id)
+            .await?
+            .into_iter()
+            .map(|(id, rx, tx)| (id, (rx, tx)))
+            .collect();
     for d in &mut out {
         if let Some((ep, at)) = endpoints.get(&d.id) {
             d.last_peer_endpoint = ep.clone();
             d.last_peer_endpoint_at = *at;
+        }
+        if let Some((rx, tx)) = totals.get(&d.id) {
+            d.total_rx_bytes = *rx;
+            d.total_tx_bytes = *tx;
         }
     }
     Ok(Json(out))
@@ -189,6 +211,15 @@ pub async fn get(
     {
         pd.last_peer_endpoint = ep;
         pd.last_peer_endpoint_at = at;
+    }
+    // All-time byte totals (persisted) — same source the list uses.
+    if let Some((_, rx, tx)) = zerovpn_db::repos::bandwidth::device_totals(&state.pool, user.id)
+        .await?
+        .into_iter()
+        .find(|(did, _, _)| *did == id)
+    {
+        pd.total_rx_bytes = rx;
+        pd.total_tx_bytes = tx;
     }
     Ok(Json(pd))
 }
