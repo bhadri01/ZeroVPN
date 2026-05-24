@@ -41,11 +41,18 @@ export function DashboardLayout() {
       <SidebarProvider defaultOpen={sidebarOpen}>
         <LiveStatsProvider />
         <AppSidebar />
-        <SidebarInset className="bg-background">
+        {/* `min-w-0` is essential: SidebarInset is a flex row item, and a
+            flex item's default `min-width: auto` refuses to shrink below its
+            content's intrinsic width. Wide page content (charts, tables) would
+            then push the inset past the viewport — most visibly after the
+            sidebar collapses/expands and the row re-lays-out. min-w-0 lets it
+            shrink to the available space so nested overflow containers scroll
+            instead of the whole body sliding off-screen. */}
+        <SidebarInset className="bg-background min-w-0">
           <TopBar onOpenCommand={() => setPaletteOpen(true)} />
           <MaintenanceBanner />
           <ScrollRestoration />
-          <main className="relative flex-1">
+          <main className="relative min-w-0 flex-1">
             {/* Route-level entry. Keyed on pathname so each navigation
                 remounts (and re-fires the entry animation). Plain mount
                 animation — no AnimatePresence, no `mode="wait"` — which

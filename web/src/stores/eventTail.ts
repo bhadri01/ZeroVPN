@@ -84,6 +84,8 @@ function toLine(event: Event): TailLine | null {
     case "heartbeat":
       return null
   }
+  // Event variants not surfaced in the tail (e.g. data-change syncs).
+  return null
 }
 
 /**

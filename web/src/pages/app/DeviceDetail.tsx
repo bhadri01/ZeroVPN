@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import {
   IconBrandAndroid,
   IconBrandApple,
@@ -12,6 +17,7 @@ import {
   IconFingerprint,
   IconGlobe,
   IconKey,
+  IconListDetails,
   IconPencil,
   IconPlayerPause,
   IconPlayerPlay,
@@ -25,7 +31,7 @@ import {
   IconTrash,
   IconX,
 } from "@tabler/icons-react"
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 
@@ -71,6 +77,7 @@ import {
 } from "@/components/ui/tabs"
 import { WithTooltip } from "@/components/ui/with-tooltip"
 import { useBreadcrumbOverride } from "@/hooks/useBreadcrumbOverride"
+import { useDeviceOnline } from "@/hooks/useDeviceOnline"
 import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import { useLiveTotal } from "@/hooks/useLiveTotal"
 import {
@@ -89,13 +96,18 @@ import {
   unpauseDevice,
 } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
-import { connState } from "@/lib/deviceState"
+import { DEVICE_TYPE_ICONS, deviceTypeLabel, osLabel } from "@/lib/deviceIcons"
 import { formatDate } from "@/lib/datetime"
 import { formatBps } from "@/lib/units"
 import { cn } from "@/lib/utils"
 import { useLiveStats } from "@/stores/liveStats"
 
 const KEEPALIVE_SECS = 30
+
+// Activity feed: how many recent entries the inline panel shows before the
+// "Full view" sheet takes over, and the page size the sheet pages through.
+const ACTIVITY_PREVIEW_COUNT = 10
+const ACTIVITY_PAGE_SIZE = 30
 
 // Fixed suffix the server's DNS regex requires. Mirrors the
 // `\.vpn\.local$` portion of `validate_hostname` in zerovpn-dns.
@@ -149,9 +161,12 @@ export function DeviceDetailPage() {
   // Activity timeline: lifecycle, config, DNS, key, and online/offline
   // transitions. Polled every 30s so a transition emitted by the worker
   // surfaces without a manual refresh.
+  // Inline panel shows just the 10 most recent entries; the rest live behind
+  // the "Full view" sheet (infinite scroll). Fetching 10 also tells us whether
+  // there's more to page through (length === 10 ⇒ probably more).
   const eventsQ = useQuery({
     queryKey: ["device", id, "events"],
-    queryFn: () => listDeviceEvents(id, 200),
+    queryFn: () => listDeviceEvents(id, { limit: ACTIVITY_PREVIEW_COUNT }),
     enabled: id.length > 0,
     refetchInterval: 30_000,
   })
@@ -165,6 +180,11 @@ export function DeviceDetailPage() {
     deviceQ.data?.total_rx_bytes ?? 0,
     deviceQ.data?.total_tx_bytes ?? 0,
   )
+  // Effective connectivity — handshake window refined by keepalive activity so
+  // the pill flips offline in ~90s (like the cards) instead of waiting out the
+  // ~3-min handshake window. Called before the early-return to keep hook order
+  // stable. See useDeviceOnline.
+  const isOnline = useDeviceOnline(deviceQ.data)
 
   // OHLC bandwidth candles are owned by the self-contained <CandleChart> below
   // (timeframe + zoom/pan + lazy history live inside it).
@@ -191,6 +211,8 @@ export function DeviceDetailPage() {
   // pencil button in the page header; the shared dialog seeds + saves
   // itself, so this page only owns the open flag.
   const [renameOpen, setRenameOpen] = useState(false)
+  // Full activity log — paginated, infinite-scroll side sheet.
+  const [activityOpen, setActivityOpen] = useState(false)
 
   const pauseM = useMutation({
     mutationFn: () => pauseDevice(id),
@@ -279,12 +301,14 @@ export function DeviceDetailPage() {
     )
   }
   const d = deviceQ.data
+  // Device-type icon shown before the peer name in the header — a glanceable
+  // indicator of what the peer is.
+  const TypeIcon = DEVICE_TYPE_ICONS[d.device_type]
   const rxHistory = live?.rxHistory ?? []
   const txHistory = live?.txHistory ?? []
   // Combined per-second total (rx+tx) — the "Total" KPI card's line chart.
   // rx/tx histories are pushed together so they share a length.
   const totalHistory = rxHistory.map((v, i) => v + (txHistory[i] ?? 0))
-  const isOnline = connState(d) === "online"
   const isPaused = d.status === "paused"
   const isRevoked = d.status === "revoked"
 
@@ -307,8 +331,16 @@ export function DeviceDetailPage() {
     <PageStagger>
       <StaggerItem>
       <PageHead
-        eyebrow={`${d.os} · ${d.device_type} · ${d.id.slice(0, 8).toUpperCase()}`}
-        title={d.name}
+        eyebrow={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)} · ${d.id.slice(0, 8).toUpperCase()}`}
+        title={
+          <span className="inline-flex items-center gap-2">
+            <TypeIcon
+              className="text-muted-foreground size-[0.8em] shrink-0"
+              title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
+            />
+            <span className="min-w-0 break-words">{d.name}</span>
+          </span>
+        }
         sub={
           <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
             <span className="font-mono">{d.allocated_ip}</span>
@@ -387,7 +419,7 @@ export function DeviceDetailPage() {
       />
       </StaggerItem>
 
-      {/* KPI strip — design's 4-up: RX live, TX live, Total (window), Last handshake */}
+      {/* KPI strip — design's 4-up: RX live, TX live, Total (window), Quota */}
       <StaggerItem>
       <KpiStrip>
         <Kpi
@@ -417,10 +449,10 @@ export function DeviceDetailPage() {
           sparkColor="var(--primary)"
           footL="rx + tx"
         />
-        <Kpi
-          label="Last handshake"
-          value={<RelativeTime value={d.last_handshake_at} fallback="Never" />}
-          footL={isOnline ? `stable · ${KEEPALIVE_SECS}s keepalive` : "—"}
+        <QuotaKpi
+          used={d.current_month_bytes}
+          cap={d.monthly_byte_cap}
+          autoPaused={d.auto_paused}
         />
       </KpiStrip>
       </StaggerItem>
@@ -429,7 +461,7 @@ export function DeviceDetailPage() {
           "Edit" dialog (peer config + QR stay in the "Config" dialog). The
           chart owns its timeframe + zoom/pan controls. */}
       <StaggerItem>
-        <Panel title="Bandwidth" sub="OHLC candles · scroll to zoom · drag to pan">
+        <Panel title="Bandwidth" sub="scroll to zoom · drag to pan">
           <CandleChart scope="device" id={id} height={260} />
         </Panel>
       </StaggerItem>
@@ -487,19 +519,30 @@ export function DeviceDetailPage() {
         title="Activity"
         sub="Lifecycle, connectivity and configuration changes"
         right={
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => eventsQ.refetch()}
-            disabled={eventsQ.isFetching}
-            title="Refresh"
-          >
-            <IconRefresh
-              size={12}
-              className={eventsQ.isFetching ? "animate-spin" : undefined}
-            />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => eventsQ.refetch()}
+              disabled={eventsQ.isFetching}
+              title="Refresh"
+            >
+              <IconRefresh
+                size={12}
+                className={eventsQ.isFetching ? "animate-spin" : undefined}
+              />
+              Refresh
+            </Button>
+            {/* Surfaced whenever there's any activity — the sheet is the
+                comfortable, paginated reading view even when the inline
+                preview already shows everything. */}
+            {(eventsQ.data?.length ?? 0) > 0 && (
+              <Button size="sm" onClick={() => setActivityOpen(true)}>
+                <IconListDetails size={12} />
+                Full view
+              </Button>
+            )}
+          </div>
         }
       >
         <DeviceTimeline
@@ -649,6 +692,13 @@ export function DeviceDetailPage() {
         onOpenChange={setRenameOpen}
       />
 
+      {/* Full activity log — infinite-scroll side sheet behind "Full view". */}
+      <ActivitySheet
+        deviceId={id}
+        open={activityOpen}
+        onOpenChange={setActivityOpen}
+      />
+
       {/* Rotated-config reveal: shows the new QR + wg-conf in the same
           shape as the create-device dialog's step 2. The private key only
           exists in this payload — once the user dismisses, it's gone. */}
@@ -720,6 +770,152 @@ export function DeviceDetailPage() {
         </DialogContent>
       </Dialog>
     </PageStagger>
+  )
+}
+
+/** Full activity log in a right-side sheet. Keyset-paginated via
+ *  `useInfiniteQuery` (cursor = last row's id) and auto-loads the next page
+ *  when a sentinel near the bottom scrolls into view, so the admin can scroll
+ *  through the device's entire history without manual "load more" clicks.
+ *  Reuses <DeviceTimeline> to render the accumulated pages, so day grouping
+ *  and online/offline durations span the whole list. Only fetches while open. */
+function ActivitySheet({
+  deviceId,
+  open,
+  onOpenChange,
+}: {
+  deviceId: string
+  open: boolean
+  onOpenChange: (v: boolean) => void
+}) {
+  const q = useInfiniteQuery({
+    queryKey: ["device", deviceId, "events", "all"],
+    queryFn: ({ pageParam }) =>
+      listDeviceEvents(deviceId, {
+        limit: ACTIVITY_PAGE_SIZE,
+        beforeId: pageParam,
+      }),
+    initialPageParam: undefined as number | undefined,
+    // A short final page (fewer than a full page) means we've hit the end;
+    // otherwise the cursor is the oldest id we just received.
+    getNextPageParam: (last) =>
+      last.length === ACTIVITY_PAGE_SIZE ? last[last.length - 1].id : undefined,
+    enabled: open,
+  })
+
+  const events = useMemo(() => q.data?.pages.flat() ?? [], [q.data])
+
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = q
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  // Observe a sentinel just below the list; when it enters the scroll
+  // viewport (200px early) pull the next page. `events.length` is a dep so the
+  // observer re-arms after each page lands — if the new content still doesn't
+  // fill the viewport, it fires again until it does or the list is exhausted.
+  useEffect(() => {
+    if (!open) return
+    const el = sentinelRef.current
+    if (!el) return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMore()
+      },
+      { root: scrollRef.current, rootMargin: "200px" },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [open, loadMore, events.length])
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex flex-col gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-lg"
+      >
+        <SheetHeader className="border-border border-b p-4">
+          <SheetTitle>
+            <Eyebrow>Activity log</Eyebrow>
+          </SheetTitle>
+          <SheetDescription>
+            Every lifecycle, connectivity and configuration change recorded for
+            this device, newest first.
+          </SheetDescription>
+        </SheetHeader>
+
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-4">
+          <DeviceTimeline
+            events={events}
+            loading={q.isLoading}
+            error={q.error}
+            onRetry={() => void q.refetch()}
+          />
+          {/* Sentinel + paging status. Kept inside the scroll area so the
+              IntersectionObserver root (the scroll container) sees it. */}
+          <div ref={sentinelRef} aria-hidden className="h-px" />
+          {isFetchingNextPage && (
+            <p className="text-muted-foreground/70 py-3 text-center font-mono text-[11px]">
+              Loading more…
+            </p>
+          )}
+          {!hasNextPage && !q.isLoading && events.length > 0 && (
+            <p className="text-muted-foreground/50 py-3 text-center font-mono text-[11px]">
+              End of activity
+            </p>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+/** "Quota" KPI card — this device's month-to-date usage against its
+ *  per-device cap. Colored progress bar (green < 70%, amber ≥ 70%, red ≥ 90%)
+ *  when a cap exists; otherwise shows the usage with a "no cap" note. Flags an
+ *  auto-pause (device hit its own or the account cap). Matches the surrounding
+ *  `Kpi` cards' chrome via the `zv-kpi` class. */
+function QuotaKpi({
+  used,
+  cap,
+  autoPaused,
+}: {
+  used: number
+  cap: number | null
+  autoPaused: boolean
+}) {
+  const cap0 = cap ?? 0
+  const hasCap = cap0 > 0
+  const pct = hasCap ? Math.min(100, Math.round((used / cap0) * 100)) : 0
+  const tone =
+    pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"
+  return (
+    <div className="zv-kpi">
+      <div className="zv-kpi-label">
+        <span>Quota</span>
+      </div>
+      <div className="zv-kpi-val font-heading">
+        <span className="tabular-nums">{formatBytes(used)}</span>
+      </div>
+      <div className="mt-1.5 h-1.5 w-full overflow-hidden bg-muted">
+        {hasCap && (
+          <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />
+        )}
+      </div>
+      <div className="zv-kpi-foot">
+        <span>{hasCap ? `/ ${formatBytes(cap0)} this month` : "this month"}</span>
+        <span
+          className={
+            autoPaused ? "text-amber-600 dark:text-amber-400" : undefined
+          }
+        >
+          {autoPaused ? "auto-paused" : hasCap ? `${pct}%` : "no cap"}
+        </span>
+      </div>
+    </div>
   )
 }
 
@@ -854,6 +1050,11 @@ const ACTION_CATALOG: Record<string, ActionSpec> = {
   },
   "device.online": {
     label: "Came online",
+    tone: "online",
+    icon: IconPlugConnected,
+  },
+  "device.reconnected": {
+    label: "Reconnected",
     tone: "online",
     icon: IconPlugConnected,
   },

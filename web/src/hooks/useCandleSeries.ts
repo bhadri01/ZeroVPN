@@ -4,12 +4,23 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   type Candle,
   type Timeframe,
+  adminDeviceCandles,
+  adminUserCandles,
   deviceCandles,
   serverCandles,
   userCandles,
 } from "@/lib/api"
 
-export type CandleScope = "device" | "server" | "user"
+/** "user" aggregates the *caller's* own devices (session-keyed, ignores `id`);
+ *  "admin-user" aggregates a *target* user's devices (`id` = that user's id);
+ *  "admin-device" is a single device viewed by an admin (`id` = device id),
+ *  for the admin user/device detail pages. */
+export type CandleScope =
+  | "device"
+  | "server"
+  | "user"
+  | "admin-user"
+  | "admin-device"
 
 /** Candles fetched per request. The latest page auto-refreshes; older pages
  *  are loaded on demand (cursor = oldest loaded bucket) as the user pans. */
@@ -51,7 +62,11 @@ export function useCandleSeries(
         ? deviceCandles(id, tf, PAGE, before)
         : scope === "server"
           ? serverCandles(id, tf, PAGE, before)
-          : userCandles(tf, PAGE, before),
+          : scope === "admin-user"
+            ? adminUserCandles(id, tf, PAGE, before)
+            : scope === "admin-device"
+              ? adminDeviceCandles(id, tf, PAGE, before)
+              : userCandles(tf, PAGE, before),
     [scope, id, tf],
   )
 

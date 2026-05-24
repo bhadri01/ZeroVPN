@@ -85,3 +85,16 @@ export type Event =
         | "reordered"
         | "connected"
     }
+  | {
+      /** Server-composed, ready-to-display notification. The client renders it
+       *  as a toast and (when the tab is hidden + opted in) an OS notification.
+       *  Covers connectivity / quota / security alerts without a per-category
+       *  wire variant. */
+      type: "notify"
+      user_id: string | null
+      level: "info" | "success" | "warning" | "error"
+      title: string
+      body: string | null
+      url: string | null
+      tag: string | null
+    }

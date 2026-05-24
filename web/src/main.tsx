@@ -7,6 +7,7 @@ import "./index.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import { queryClient } from "@/lib/query"
+import { registerServiceWorker } from "@/lib/registerSW"
 import { router } from "@/routes"
 
 createRoot(document.getElementById("root")!).render(
@@ -19,3 +20,6 @@ createRoot(document.getElementById("root")!).render(
     </ThemeProvider>
   </StrictMode>,
 )
+
+// PWA: install the service worker (installability + notification click).
+registerServiceWorker()

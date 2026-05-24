@@ -75,6 +75,9 @@ export function TopBar({
       await adminStopImpersonation()
       const updated = await me()
       setUser(updated)
+      // Close the confirm dialog before navigating — the TopBar stays mounted
+      // across the move to /admin/users, so without this the dialog lingers.
+      setStopImpersonationConfirmOpen(false)
       toast.success("Returned to your admin session")
       void navigate("/admin/users")
     } catch {

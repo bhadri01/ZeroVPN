@@ -3,7 +3,6 @@ import {
   IconActivity,
   IconArrowDown,
   IconArrowUp,
-  IconBolt,
   IconInfoCircle,
   IconServer,
   IconUsers,
@@ -13,15 +12,11 @@ import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import { CandleChart } from "@/components/charts/CandleChart"
-import {
-  LiveIndicator,
-  NetworkMonitorChart,
-} from "@/components/charts/LazyNetworkMonitorChart"
+import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { Kpi, KpiStrip, PageHead, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { WithTooltip } from "@/components/ui/with-tooltip"
-import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import {
   ApiError,
   type AdminServerRow,
@@ -32,10 +27,8 @@ import {
   adminStats,
 } from "@/lib/api"
 import { useReducedMotion } from "@/lib/motion"
-import { formatBps, formatBytes } from "@/lib/units"
+import { formatBytes } from "@/lib/units"
 import { useLiveStats } from "@/stores/liveStats"
-
-const SERVER_LIVE_WINDOW_SEC = 300
 
 export function AdminOverviewPage() {
   const qc = useQueryClient()
@@ -59,19 +52,17 @@ export function AdminOverviewPage() {
     queryFn: adminGetMaintenance,
   })
 
-  // Server-level live charts: list servers, hydrate each from the
-  // /servers/{id}/history endpoint (5-min lookback so the chart isn't
-  // empty after refresh), then live `ServerSample` events from the WS
-  // keep them rolling forward.
+  // Per-server live cards: list servers; live `ServerSample` events from the
+  // WS drive the KPI strip, and each card's <CandleChart> owns its own
+  // bandwidth history. (The old live RX/TX line chart was removed — the candle
+  // chart already covers throughput over time.)
   const serversQ = useQuery({
     queryKey: ["admin", "servers", "overview"],
     queryFn: adminListServers,
+    // Refresh so the cumulative RX/TX totals on the cards stay current
+    // (Peers/Online still update live over the WS).
+    refetchInterval: 30_000,
   })
-  const serverIds = useMemo(
-    () => (serversQ.data ?? []).filter((s) => s.is_active).map((s) => s.id),
-    [serversQ.data],
-  )
-  useHistoryHydration({ serverIds, windowSec: 300 })
 
   const setMaintM = useMutation({
     mutationFn: (on: boolean) => adminSetMaintenance(on),
@@ -273,10 +264,9 @@ function ServerLiveCard({
         </div>
       </div>
 
-      {/* KPI strip — 5 metrics in a row. Each value pop-animates when it
-          changes so live updates are visually obvious instead of silently
-          swapping the number. */}
-      <div className="border-border grid grid-cols-2 border md:grid-cols-5">
+      {/* KPI strip — Peers · Online (live) and cumulative RX · TX totals.
+          Each value pop-animates when it changes so updates are obvious. */}
+      <div className="border-border grid grid-cols-2 border md:grid-cols-4">
         <LiveStat
           label="Peers"
           value={live?.peerCount ?? 0}
@@ -291,59 +281,26 @@ function ServerLiveCard({
           reduceMotion={reduceMotion}
         />
         <LiveStat
-          label="Hshakes/s"
-          value={live?.handshakeCount ?? 0}
-          icon={<IconBolt className="size-3.5" />}
-          reduceMotion={reduceMotion}
-        />
-        <LiveStat
-          label="Down"
-          value={formatBps(live?.rxBps ?? 0)}
+          label="RX"
+          value={formatBytes(server.rx_total)}
           icon={<IconArrowDown className="size-3.5 text-[var(--chart-1)]" />}
           reduceMotion={reduceMotion}
         />
         <LiveStat
-          label="Up"
-          value={formatBps(live?.txBps ?? 0)}
+          label="TX"
+          value={formatBytes(server.tx_total)}
           icon={<IconArrowUp className="size-3.5 text-primary" />}
           reduceMotion={reduceMotion}
         />
       </div>
 
-      {/* Big chart — pinned 5-min window, time labels along the X axis. */}
-      <div className="relative">
-        <NetworkMonitorChart
-          rxHistory={live?.rxHistory ?? []}
-          txHistory={live?.txHistory ?? []}
-          height={240}
-          windowSec={SERVER_LIVE_WINDOW_SEC}
-        />
-        {/* Live legend overlay — top-right of the chart. Two coloured
-            dots labelling RX and TX so users don't have to hover the
-            tooltip to read the series. */}
-        <div className="text-muted-foreground absolute right-2 top-1 flex items-center gap-3 font-mono text-[10px]">
-          <span className="inline-flex items-center gap-1">
-            <span
-              className="inline-block size-2"
-              style={{ background: "var(--chart-1)" }}
-            />
-            RX
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span
-              className="inline-block size-2"
-              style={{ background: "var(--primary)" }}
-            />
-            TX
-          </span>
-        </div>
-      </div>
-
-      {/* Historical candles — server-aggregate OHLC across all peers. The
-          chart owns its timeframe + zoom/pan/lazy-history controls. */}
-      <div className="border-border flex flex-col gap-2 border-t pt-4">
+      {/* Bandwidth candles — server-aggregate OHLC across all peers. The
+          chart owns its timeframe + zoom/pan/lazy-history controls and is the
+          single throughput-over-time view (the old live RX/TX line chart was
+          redundant with this and has been removed). */}
+      <div className="flex flex-col gap-2">
         <span className="text-muted-foreground font-mono text-[10px] uppercase tracking-wide">
-          Bandwidth candles · scroll to zoom · drag to pan
+          Bandwidth · scroll to zoom · drag to pan
         </span>
         <CandleChart scope="server" id={server.id} height={260} />
       </div>

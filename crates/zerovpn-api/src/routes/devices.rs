@@ -29,6 +29,14 @@ use crate::{
 const MAX_DEVICES_PER_USER: usize = 5;
 pub const PERSISTENT_KEEPALIVE: u16 = 30;
 
+/// A peer is considered "online" while its last handshake is within this
+/// window — the same 180s bound the worker and the frontend `connState` use.
+/// The app calls `POST /devices/connect` to (re)fetch its config on every
+/// launch / Connect tap; we only record a `device.reconnected` event when the
+/// device was actually offline (handshake stale or never seen) so an
+/// already-connected peer re-fetching doesn't spam the activity log.
+const ONLINE_HANDSHAKE_WINDOW_SECS: i64 = 180;
+
 /// Broadcast a device mutation so the owner's other logged-in sessions (and
 /// any admin watching) invalidate their device queries and reflect the change
 /// in real time — e.g. a peer added on a phone appears on the laptop instantly.
@@ -109,6 +117,15 @@ pub struct PublicDevice {
     /// create/rotate responses, which don't fetch it.
     pub total_rx_bytes: i64,
     pub total_tx_bytes: i64,
+    /// Per-device monthly byte cap (null/0 = no device cap; the account cap
+    /// still applies). Admin-set; merged in by list/get, `None` elsewhere.
+    pub monthly_byte_cap: Option<i64>,
+    /// This device's own bandwidth used in the current monthly cycle. Merged
+    /// in by list/get; `0` on create/rotate responses.
+    pub current_month_bytes: i64,
+    /// True when the quota sweep auto-paused this device (its own cap or the
+    /// account cap), vs. a manual user pause.
+    pub auto_paused: bool,
 }
 
 impl From<Device> for PublicDevice {
@@ -138,6 +155,10 @@ impl From<Device> for PublicDevice {
             // Totals come from bandwidth_aggregates; merged in by list/get.
             total_rx_bytes: 0,
             total_tx_bytes: 0,
+            // Quota columns aren't on the core Device row; merged in by list/get.
+            monthly_byte_cap: None,
+            current_month_bytes: 0,
+            auto_paused: false,
         }
     }
 }
@@ -181,6 +202,13 @@ pub async fn list(
             .into_iter()
             .map(|(id, rx, tx)| (id, (rx, tx)))
             .collect();
+    // Per-device monthly quota (cap + usage + auto-pause flag) for the card.
+    let quotas: HashMap<Uuid, (Option<i64>, i64, bool)> =
+        devices::quota_for_user(&state.pool, user.id)
+            .await?
+            .into_iter()
+            .map(|(id, cap, used, paused)| (id, (cap, used, paused)))
+            .collect();
     for d in &mut out {
         if let Some((ep, at)) = endpoints.get(&d.id) {
             d.last_peer_endpoint = ep.clone();
@@ -189,6 +217,11 @@ pub async fn list(
         if let Some((rx, tx)) = totals.get(&d.id) {
             d.total_rx_bytes = *rx;
             d.total_tx_bytes = *tx;
+        }
+        if let Some((cap, used, paused)) = quotas.get(&d.id) {
+            d.monthly_byte_cap = *cap;
+            d.current_month_bytes = *used;
+            d.auto_paused = *paused;
         }
     }
     Ok(Json(out))
@@ -235,6 +268,16 @@ pub async fn get(
         pd.total_rx_bytes = rx;
         pd.total_tx_bytes = tx;
     }
+    // Per-device monthly quota — same source the list uses.
+    if let Some((_, cap, used, paused)) = devices::quota_for_user(&state.pool, user.id)
+        .await?
+        .into_iter()
+        .find(|(did, _, _, _)| *did == id)
+    {
+        pd.monthly_byte_cap = cap;
+        pd.current_month_bytes = used;
+        pd.auto_paused = paused;
+    }
     Ok(Json(pd))
 }
 
@@ -252,6 +295,9 @@ pub struct EventsQuery {
     /// Page size. Clamped to [1, 500] server-side. Defaults to 100 when
     /// omitted — enough to render a full day of typical activity.
     pub limit: Option<i64>,
+    /// Keyset cursor for infinite scroll: return only events older than this
+    /// id (use the last row's id from the previous page). Omit for page 1.
+    pub before_id: Option<i64>,
 }
 
 /// Returns the audit-log entries targeting this device, newest first.
@@ -285,7 +331,8 @@ pub async fn events(
         .await?
         .ok_or(ApiError::NotFound)?;
     let limit = q.limit.unwrap_or(100);
-    let rows = audit::list_for_target(&state.pool, "device", id, limit).await?;
+    let rows =
+        audit::list_for_target_before(&state.pool, "device", id, q.before_id, limit).await?;
     let out: Vec<DeviceEvent> = rows
         .into_iter()
         .map(|r| DeviceEvent {
@@ -1097,20 +1144,39 @@ pub async fn connect(
         {
             tracing::warn!(?e, %device_id, "wg add_peer on reconnect failed (continuing)");
         }
-        audit::record(
-            &state.pool,
-            audit::AuditEntry {
-                actor_user_id: Some(user.id),
-                action: "device.reconnected",
-                target_type: Some("device"),
-                target_id: Some(device_id),
-                metadata: json!({ "name": device.name }),
-                ip: None,
-            },
-        )
-        .await?;
-        info!(user_id = %user.id, device_id = %device_id, "device reconnected");
-        notify_device(&state, user.id, Some(device_id), ChangeAction::Connected);
+
+        // Only treat this as a real reconnect when the device was actually
+        // offline (no handshake on record, or the last one is older than the
+        // online window). An already-online peer re-fetching its config is a
+        // no-op for the activity feed — recording it every time produced a
+        // stream of meaningless "device.reconnected" entries.
+        let now = OffsetDateTime::now_utc();
+        let was_offline = match device.last_handshake_at {
+            Some(ts) => (now - ts).whole_seconds() >= ONLINE_HANDSHAKE_WINDOW_SECS,
+            None => true,
+        };
+        if was_offline {
+            audit::record(
+                &state.pool,
+                audit::AuditEntry {
+                    actor_user_id: Some(user.id),
+                    action: "device.reconnected",
+                    target_type: Some("device"),
+                    target_id: Some(device_id),
+                    metadata: json!({ "name": device.name }),
+                    ip: None,
+                },
+            )
+            .await?;
+            info!(user_id = %user.id, device_id = %device_id, "device reconnected");
+            notify_device(&state, user.id, Some(device_id), ChangeAction::Connected);
+        } else {
+            tracing::debug!(
+                user_id = %user.id,
+                device_id = %device_id,
+                "connect: config re-fetch for already-online device (no reconnect logged)"
+            );
+        }
         return Ok((
             axum::http::StatusCode::OK,
             Json(ConnectResponse {

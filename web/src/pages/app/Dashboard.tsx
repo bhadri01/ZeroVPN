@@ -39,9 +39,10 @@ import {
   adminListServers,
   createDevice,
   listDevices,
-  userBandwidth,
+  myUsage,
 } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
+import { formatDate } from "@/lib/datetime"
 import { connState } from "@/lib/deviceState"
 import { formatBytes } from "@/lib/units"
 import { useHistoryHydration } from "@/hooks/useHistoryHydration"
@@ -90,14 +91,11 @@ export function DashboardPage() {
     refetchInterval: 30_000,
   })
 
-  // Separate, always-30d query that feeds the KPI "Total" cards. Pinning
-  // to the longest available aggregate window means the headline numbers
-  // don't shift when the user toggles the chart range — "Total RX" stays
-  // "Total RX" instead of becoming "RX over the last 24h" mid-interaction.
-  const totalsQ = useQuery({
-    queryKey: ["bandwidth", "user", "30d"],
-    queryFn: () => userBandwidth("30d"),
-    refetchInterval: 5 * 60_000,
+  // Account-level monthly quota for the "Quota" KPI card.
+  const usageQ = useQuery({
+    queryKey: ["me", "usage"],
+    queryFn: myUsage,
+    refetchInterval: 60_000,
   })
 
   const addM = useMutation({
@@ -114,22 +112,45 @@ export function DashboardPage() {
     },
   })
 
-  const devices = devicesQ.data ?? []
+  // Stable reference so the totals/online memos below don't recompute on
+  // every render just because `?? []` minted a fresh array.
+  const devices = useMemo(() => devicesQ.data ?? [], [devicesQ.data])
   const active = devices.filter((d) => d.status === "active").length
   const paused = devices.filter((d) => d.status === "paused").length
 
-  // Headline totals derived from the user-level bandwidth rollups. Always
-  // backed by the 30-day query so the "Total" cards stay stable when the
-  // user toggles the chart range below.
+  // Headline totals = the sum of every device's lifetime RX/TX — the exact
+  // figure each device card shows — grown live by the WS store so the numbers
+  // tick up in real time. Summing the persisted per-device lifetime totals
+  // (not a 30-day aggregate window) keeps the dashboard consistent with the
+  // device cards + detail pages. See useLiveTotal / device_totals.
   const totalRxBytes = useMemo(
-    () => (totalsQ.data?.buckets ?? []).reduce((s, b) => s + b.rx_bytes, 0),
-    [totalsQ.data?.buckets],
+    () =>
+      devices.reduce(
+        (s, d) =>
+          s + Math.max(d.total_rx_bytes, liveDevices[d.id]?.lifeRxBytes ?? 0),
+        0,
+      ),
+    [devices, liveDevices],
   )
   const totalTxBytes = useMemo(
-    () => (totalsQ.data?.buckets ?? []).reduce((s, b) => s + b.tx_bytes, 0),
-    [totalsQ.data?.buckets],
+    () =>
+      devices.reduce(
+        (s, d) =>
+          s + Math.max(d.total_tx_bytes, liveDevices[d.id]?.lifeTxBytes ?? 0),
+        0,
+      ),
+    [devices, liveDevices],
   )
   const totalUsageBytes = totalRxBytes + totalTxBytes
+
+  // Account monthly quota for the "Quota" card. `cap == null` ⇒ unlimited.
+  const quotaCap = usageQ.data?.monthly_byte_cap ?? null
+  const quotaUsed = usageQ.data?.current_month_bytes ?? 0
+  const quotaPct =
+    quotaCap && quotaCap > 0
+      ? Math.min(100, Math.round((quotaUsed / quotaCap) * 100))
+      : null
+  const quotaResetsAt = usageQ.data?.quota_resets_at
 
   // Only currently-online devices contribute to "live" numbers. A device
   // that's offline / paused / revoked cannot be transmitting RIGHT NOW,
@@ -263,7 +284,7 @@ export function DashboardPage() {
           the chart below renders; the live bps rate sits in the footer
           so "right now" is still readable at a glance. */}
       <StaggerItem>
-        <KpiStrip>
+        <KpiStrip cols={5}>
         <Kpi
           label="Devices · online"
           value={onlineCount}
@@ -280,7 +301,7 @@ export function DashboardPage() {
         />
         <Kpi
           label="Total RX"
-          value={totalsQ.isLoading ? "—" : formatBytes(totalRxBytes)}
+          value={devicesQ.isLoading ? "—" : formatBytes(totalRxBytes)}
           spark={liveHistory.rx}
           sparkColor="var(--chart-1)"
           footL={
@@ -291,7 +312,7 @@ export function DashboardPage() {
         />
         <Kpi
           label="Total TX"
-          value={totalsQ.isLoading ? "—" : formatBytes(totalTxBytes)}
+          value={devicesQ.isLoading ? "—" : formatBytes(totalTxBytes)}
           spark={liveHistory.tx}
           sparkColor="var(--primary)"
           footL={
@@ -302,13 +323,27 @@ export function DashboardPage() {
         />
         <Kpi
           label="Total usage"
-          value={
-            totalsQ.isLoading ? "—" : formatBytes(totalUsageBytes)
-          }
+          value={devicesQ.isLoading ? "—" : formatBytes(totalUsageBytes)}
           spark={liveHistory.total}
           sparkColor="var(--primary)"
           footL={`RX ${formatBytes(totalRxBytes)} · TX ${formatBytes(totalTxBytes)}`}
           footR={isAdmin && servers.length > 0 ? `${liveHubs}/${servers.length} hubs` : undefined}
+        />
+        <Kpi
+          label="Quota"
+          value={
+            usageQ.isLoading
+              ? "—"
+              : quotaPct == null
+                ? "Unlimited"
+                : `${quotaPct}%`
+          }
+          footL={
+            quotaPct == null
+              ? `${formatBytes(quotaUsed)} this month`
+              : `${formatBytes(quotaUsed)} / ${formatBytes(quotaCap ?? 0)}`
+          }
+          footR={quotaResetsAt ? `resets ${formatDate(quotaResetsAt)}` : undefined}
         />
         </KpiStrip>
       </StaggerItem>
@@ -323,7 +358,7 @@ export function DashboardPage() {
           devices. Owns its own timeframe + zoom/pan controls (same chart as
           the device detail + admin overview pages). */}
       <StaggerItem>
-        <Panel title="Bandwidth" sub="All devices · OHLC candles · scroll to zoom · drag to pan">
+        <Panel title="Bandwidth" sub="All devices · scroll to zoom · drag to pan">
           <CandleChart scope="user" height={260} />
         </Panel>
       </StaggerItem>

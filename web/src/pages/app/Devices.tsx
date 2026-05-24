@@ -43,6 +43,11 @@ import { WithTooltip } from "@/components/ui/with-tooltip"
 import { Sheet, SheetTrigger } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import {
+  ACTIVITY_STALE_MS,
+  isLiveOnline,
+} from "@/hooks/useDeviceOnline"
+import { useNow } from "@/hooks/useNow"
+import {
   type PublicDevice,
   deleteDevice,
   listDevices,
@@ -50,8 +55,8 @@ import {
   reorderDevices,
   unpauseDevice,
 } from "@/lib/api"
+import { DEVICE_TYPE_ICONS, deviceTypeLabel, osLabel } from "@/lib/deviceIcons"
 import {
-  connState,
   endpointHost,
   peerState,
   type ConnState,
@@ -136,6 +141,20 @@ export function DevicesPage() {
   const [editDevice, setEditDevice] = useState<PublicDevice | null>(null)
 
   const liveDevices = useLiveStats((s) => s.devices)
+  // 1 Hz tick + a tab-focus watermark drive the same fast, keepalive-based
+  // offline detection the cards use (see isLiveOnline), so list rows AND the
+  // header counts flip offline in ~90s instead of waiting out the ~3-min
+  // handshake window — and stay consistent with each other.
+  const now = useNow()
+  const [visibleSince, setVisibleSince] = useState(() => Date.now())
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== "hidden") setVisibleSince(Date.now())
+    }
+    document.addEventListener("visibilitychange", onVis)
+    return () => document.removeEventListener("visibilitychange", onVis)
+  }, [])
+  const settledAfterFocus = now - visibleSince > ACTIVITY_STALE_MS
 
   const pauseM = useMutation({
     mutationFn: (id: string) => pauseDevice(id),
@@ -270,8 +289,20 @@ export function DevicesPage() {
   // we only mutate on commit).
   const effectiveDevices = localOrder ?? devices
   const decorated = useMemo(
-    () => effectiveDevices.map((d) => ({ d, c: connState(d), p: peerState(d) })),
-    [effectiveDevices],
+    () =>
+      effectiveDevices.map((d) => ({
+        d,
+        c: isLiveOnline(
+          d,
+          liveDevices[d.id]?.lastSeenTs ?? 0,
+          now,
+          settledAfterFocus,
+        )
+          ? ("online" as ConnState)
+          : ("offline" as ConnState),
+        p: peerState(d),
+      })),
+    [effectiveDevices, liveDevices, now, settledAfterFocus],
   )
 
   const counts = useMemo(() => {
@@ -771,6 +802,7 @@ function SortableListRow({
   const peerHost = d.last_peer_endpoint
     ? endpointHost(d.last_peer_endpoint)
     : null
+  const TypeIcon = DEVICE_TYPE_ICONS[d.device_type]
   const controls = useDragControls()
   return (
     <Reorder.Item
@@ -803,6 +835,10 @@ function SortableListRow({
           className="hover:text-foreground inline-flex items-center gap-2 font-medium"
         >
           <StatusPill status={rowStatus} dotOnly />
+          <TypeIcon
+            className="text-muted-foreground size-4 shrink-0"
+            title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
+          />
           {d.name}
         </Link>
       </div>
@@ -955,7 +991,12 @@ function RowActions({
   const canResume = device.status === "paused"
   const canRevoke = device.status !== "revoked"
   return (
-    <DropdownMenu>
+    // `modal={false}`: the "Edit" item opens a Dialog whose OS / device-type
+    // Select portals to <body>. A *modal* menu stays a modal layer through its
+    // ~100ms close animation, which conflicts with the dialog's and the
+    // Select's layers — the Select dropdown then refuses to open. Non-modal
+    // keeps this menu out of that layer stack; it still closes on outside click.
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"

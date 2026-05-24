@@ -326,6 +326,14 @@ pub struct AdminUserDevice {
     pub last_peer_endpoint_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    /// Per-device monthly byte cap (null/0 = no device cap; the account cap
+    /// still applies). Enforced alongside the account cap by the quota sweep.
+    pub monthly_byte_cap: Option<i64>,
+    /// The device's own bandwidth used this monthly cycle.
+    pub current_month_bytes: i64,
+    /// True when the quota sweep paused this device (device or account cap),
+    /// as opposed to a manual user pause — drives the "auto-paused" hint.
+    pub auto_paused: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -407,11 +415,14 @@ pub async fn user_detail(
         last_peer_endpoint: Option<String>,
         last_peer_endpoint_at: Option<OffsetDateTime>,
         created_at: OffsetDateTime,
+        monthly_byte_cap: Option<i64>,
+        current_month_bytes: i64,
+        auto_paused: bool,
     }
     let device_rows: Vec<DeviceRow> = sqlx::query_as(
         r#"SELECT id, name, os, status, allocated_ip, dns_names,
                   last_handshake_at, last_peer_endpoint, last_peer_endpoint_at,
-                  created_at
+                  created_at, monthly_byte_cap, current_month_bytes, auto_paused
              FROM devices
             WHERE user_id = $1 AND status <> 'revoked'
             ORDER BY display_order NULLS LAST, created_at DESC"#,
@@ -432,6 +443,9 @@ pub async fn user_detail(
             last_peer_endpoint: d.last_peer_endpoint,
             last_peer_endpoint_at: d.last_peer_endpoint_at,
             created_at: d.created_at,
+            monthly_byte_cap: d.monthly_byte_cap,
+            current_month_bytes: d.current_month_bytes,
+            auto_paused: d.auto_paused,
         })
         .collect();
 
@@ -608,7 +622,10 @@ pub async fn set_user_role(
         let target = users::find_by_id(&state.pool, target_id)
             .await?
             .ok_or(ApiError::NotFound)?;
-        if target.role == UserRole::Admin {
+        // Only an *active* admin counts toward the floor — a suspended /
+        // pending admin holds no live access, so demoting one can't strand the
+        // deployment (mirrors the delete guard).
+        if target.role == UserRole::Admin && target.status == UserStatus::Active {
             let admins = users::count_active_admins(&state.pool).await?;
             if admins <= 1 {
                 return Err(ApiError::Validation(
@@ -856,7 +873,12 @@ pub async fn delete_user(
     let target = users::find_by_id(&state.pool, target_id)
         .await?
         .ok_or(ApiError::NotFound)?;
-    if target.role == UserRole::Admin {
+    // Only an *active* admin counts toward the "keep at least one admin" floor.
+    // A suspended / pending (e.g. never-verified invite) admin holds no live
+    // access — `count_active_admins` already excludes them — so deleting one
+    // can't strand the deployment. Without this status check you couldn't
+    // delete such an admin while you were the only active one.
+    if target.role == UserRole::Admin && target.status == UserStatus::Active {
         let admins = users::count_active_admins(&state.pool).await?;
         if admins <= 1 {
             return Err(ApiError::Validation(
@@ -1442,6 +1464,51 @@ pub async fn set_user_quota(
 }
 
 #[utoipa::path(
+    put,
+    path = "/admin/devices/{id}/quota",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Target device UUID"),
+    ),
+    request_body = QuotaBody,
+    responses(
+        (status = 200, description = "Device quota updated (null/0 = no device cap)", body = StatusAck),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "Device not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn set_device_quota(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+    Json(body): Json<QuotaBody>,
+) -> ApiResult<impl IntoResponse> {
+    let device = devices::get_by_id(&state.pool, device_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let cap = body.monthly_byte_cap.filter(|c| *c > 0);
+    devices::set_quota(&state.pool, device_id, cap).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.device_quota_set",
+            target_type: Some("device"),
+            target_id: Some(device_id),
+            metadata: json!({ "monthly_byte_cap": cap }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, %device_id, ?cap, "admin set device quota");
+    // Surface on the owner's account + admin consoles (the device-quota UI
+    // lives on the admin user-detail page, keyed on the owning user).
+    notify_user(&state, device.user_id, ChangeAction::Updated);
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+#[utoipa::path(
     get,
     path = "/admin/failed-logins",
     tag = "Admin",
@@ -1576,6 +1643,11 @@ pub struct AdminServer {
     pub dns_servers: Vec<String>,
     pub mtu: i32,
     pub is_active: bool,
+    /// Cumulative lifetime RX/TX across this server's (non-revoked) devices —
+    /// the accurate per-device lifetime sum (not the drift-prone aggregates).
+    /// Merged in by `list_servers`; `0` on responses that don't compute it.
+    pub rx_total: i64,
+    pub tx_total: i64,
 }
 
 impl From<Server> for AdminServer {
@@ -1591,6 +1663,9 @@ impl From<Server> for AdminServer {
             dns_servers: s.dns_servers.into_iter().map(|n| n.ip().to_string()).collect(),
             mtu: s.mtu,
             is_active: s.is_active,
+            // Totals are merged in by handlers that compute them (list_servers).
+            rx_total: 0,
+            tx_total: 0,
         }
     }
 }
@@ -1610,7 +1685,25 @@ pub async fn list_servers(
     RequireAdmin(_admin): RequireAdmin,
 ) -> ApiResult<impl IntoResponse> {
     let rows = servers::list_active(&state.pool).await?;
-    let out: Vec<AdminServer> = rows.into_iter().map(Into::into).collect();
+    // Merge in each server's cumulative lifetime RX/TX (accurate device-totals
+    // source) for the server-live card.
+    let totals: std::collections::HashMap<Uuid, (i64, i64)> =
+        devices::server_lifetime_totals(&state.pool)
+            .await?
+            .into_iter()
+            .map(|(id, rx, tx)| (id, (rx, tx)))
+            .collect();
+    let out: Vec<AdminServer> = rows
+        .into_iter()
+        .map(|s| {
+            let mut a: AdminServer = s.into();
+            if let Some((rx, tx)) = totals.get(&a.id) {
+                a.rx_total = *rx;
+                a.tx_total = *tx;
+            }
+            a
+        })
+        .collect();
     Ok(Json(out))
 }
 
@@ -2054,6 +2147,7 @@ pub struct AdminDeviceDetail {
     pub server_id: Uuid,
     pub name: String,
     pub os: zerovpn_core::models::DeviceOs,
+    pub device_type: zerovpn_core::models::DeviceType,
     pub status: zerovpn_core::models::DeviceStatus,
     pub allocated_ip: String,
     pub public_key: String,
@@ -2066,6 +2160,15 @@ pub struct AdminDeviceDetail {
     pub last_peer_endpoint_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
+    /// Authoritative lifetime totals (same source as the user-facing device
+    /// card) so the admin view's RX/TX/Total KPIs match what the owner sees.
+    pub total_rx_bytes: i64,
+    pub total_tx_bytes: i64,
+    /// Per-device monthly quota (cap + usage + auto-pause flag) for the
+    /// Quota KPI — mirrors the user device page.
+    pub monthly_byte_cap: Option<i64>,
+    pub current_month_bytes: i64,
+    pub auto_paused: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -2117,6 +2220,7 @@ pub async fn device_detail(
         server_id: Uuid,
         name: String,
         os: zerovpn_core::models::DeviceOs,
+        device_type: zerovpn_core::models::DeviceType,
         status: zerovpn_core::models::DeviceStatus,
         allocated_ip: ipnetwork::IpNetwork,
         public_key: String,
@@ -2126,11 +2230,18 @@ pub async fn device_detail(
         last_peer_endpoint: Option<String>,
         last_peer_endpoint_at: Option<OffsetDateTime>,
         created_at: OffsetDateTime,
+        lifetime_rx_bytes: i64,
+        lifetime_tx_bytes: i64,
+        monthly_byte_cap: Option<i64>,
+        current_month_bytes: i64,
+        auto_paused: bool,
     }
     let row: Row = sqlx::query_as(
-        r#"SELECT id, user_id, server_id, name, os, status, allocated_ip,
+        r#"SELECT id, user_id, server_id, name, os, device_type, status, allocated_ip,
                   public_key, dns_names, dns_override, last_handshake_at,
-                  last_peer_endpoint, last_peer_endpoint_at, created_at
+                  last_peer_endpoint, last_peer_endpoint_at, created_at,
+                  lifetime_rx_bytes, lifetime_tx_bytes,
+                  monthly_byte_cap, current_month_bytes, auto_paused
              FROM devices
             WHERE id = $1"#,
     )
@@ -2161,6 +2272,7 @@ pub async fn device_detail(
             server_id: row.server_id,
             name: row.name,
             os: row.os,
+            device_type: row.device_type,
             status: row.status,
             allocated_ip: row.allocated_ip.ip().to_string(),
             public_key: row.public_key,
@@ -2170,6 +2282,11 @@ pub async fn device_detail(
             last_peer_endpoint: row.last_peer_endpoint,
             last_peer_endpoint_at: row.last_peer_endpoint_at,
             created_at: row.created_at,
+            total_rx_bytes: row.lifetime_rx_bytes,
+            total_tx_bytes: row.lifetime_tx_bytes,
+            monthly_byte_cap: row.monthly_byte_cap,
+            current_month_bytes: row.current_month_bytes,
+            auto_paused: row.auto_paused,
         },
         owner: AdminDeviceOwner {
             id: owner_row.id,

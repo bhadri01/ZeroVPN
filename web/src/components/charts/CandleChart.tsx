@@ -1,16 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
+import * as echarts from "echarts/core"
+import { CustomChart, LineChart } from "echarts/charts"
 import {
-  Area,
-  Bar,
-  CartesianGrid,
-  ComposedChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts"
+  DataZoomComponent,
+  GridComponent,
+  TooltipComponent,
+} from "echarts/components"
+import { CanvasRenderer } from "echarts/renderers"
+import type { EChartsType } from "echarts/core"
 
-import { Seg } from "@/components/swiss"
 import {
   Select,
   SelectContent,
@@ -20,74 +18,49 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { type Timeframe, TIMEFRAMES } from "@/lib/api"
-import { formatDate, formatDateTime, formatTime } from "@/lib/datetime"
-import { formatBps } from "@/lib/units"
 import { type CandleScope, useCandleSeries } from "@/hooks/useCandleSeries"
+import {
+  buildCandleOption,
+  CANDLE_MS,
+  type ChartType,
+  type Colors,
+  defaultWindow,
+  type Row,
+  type Window,
+} from "./candleOption"
 
-// RX/TX colors are user-selectable in Appearance (CSS vars on <html>), so the
-// chart re-skins on theme/accent/color change.
-const RX_COLOR = "var(--chart-rx)"
-const TX_COLOR = "var(--chart-tx)"
+echarts.use([
+  CustomChart,
+  LineChart,
+  GridComponent,
+  TooltipComponent,
+  DataZoomComponent,
+  CanvasRenderer,
+])
 
-type ChartType = "bar" | "line"
+/** Resolve a CSS custom property to a concrete color string the canvas can
+ *  paint (rgb/oklch). A probe element converts `var(--x)` to a computed value
+ *  so theme/accent changes flow through on re-skin. */
+function resolveColor(varName: string, fallback: string): string {
+  if (typeof document === "undefined") return fallback
+  const probe = document.createElement("span")
+  probe.style.color = `var(${varName})`
+  probe.style.display = "none"
+  document.body.appendChild(probe)
+  const c = getComputedStyle(probe).color
+  probe.remove()
+  return c || fallback
+}
 
-const MIN_VISIBLE = 8
-const MAX_VISIBLE = 400
-const DEFAULT_VISIBLE = 60
-
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
-
-/** Day-or-longer timeframes label the axis by date; intraday by clock time. */
-const isDaily = (tf: Timeframe) => tf === "1d" || tf === "7d" || tf === "1mo"
-
-/** Index of the candle whose timestamp is closest to `target` (ascending). */
-function nearestIdx(arr: number[], target: number): number {
-  if (arr.length === 0) return 0
-  let lo = 0
-  let hi = arr.length - 1
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1
-    if (arr[mid] < target) lo = mid + 1
-    else hi = mid
+function readColors(): Colors {
+  return {
+    rx: resolveColor("--chart-rx", "#3b82f6"),
+    tx: resolveColor("--chart-tx", "#f59e0b"),
+    border: resolveColor("--border", "#27272a"),
+    axis: resolveColor("--muted-foreground", "#71717a"),
+    card: resolveColor("--card", "#000"),
+    muted: resolveColor("--muted", "#3f3f46"),
   }
-  if (lo > 0 && Math.abs(arr[lo - 1] - target) <= Math.abs(arr[lo] - target)) {
-    return lo - 1
-  }
-  return lo
-}
-
-interface Row {
-  ts: number
-  rxRange: [number, number]
-  txRange: [number, number]
-  rxAvg: number
-  txAvg: number
-}
-
-interface TipProps {
-  active?: boolean
-  payload?: { payload: Row }[]
-}
-
-function CandleTooltip({ active, payload }: TipProps) {
-  if (!active || !payload?.length) return null
-  const p = payload[0].payload
-  return (
-    <div
-      className="border-border bg-card text-foreground border p-2 font-mono text-[11px]"
-      style={{ borderRadius: 2 }}
-    >
-      <div className="text-muted-foreground mb-1">{formatDateTime(p.ts)}</div>
-      <div style={{ color: RX_COLOR }}>
-        RX&nbsp;&nbsp;H {formatBps(p.rxRange[1])} · L {formatBps(p.rxRange[0])} · avg{" "}
-        {formatBps(p.rxAvg)}
-      </div>
-      <div style={{ color: TX_COLOR }}>
-        TX&nbsp;&nbsp;H {formatBps(p.txRange[1])} · L {formatBps(p.txRange[0])} · avg{" "}
-        {formatBps(p.txAvg)}
-      </div>
-    </div>
-  )
 }
 
 interface Props {
@@ -98,235 +71,290 @@ interface Props {
 }
 
 /**
- * Trading-style OHLC bandwidth chart with interactive navigation.
+ * Trading-style OHLC bandwidth chart. Each candle spans one timeframe window;
+ * the floating bar runs the per-second rate's low→high and the line tracks the
+ * window average (RX + TX overlaid).
  *
- * Each candle spans one timeframe window; the floating bar runs the
- * per-second rate's low→high and the line tracks the window average (RX + TX
- * overlaid). Controls (top-right): chart type (bar/line) sits left of the
- * timeframe selector.
+ * Rendered with ECharts (canvas) so pan/zoom is handled by its built-in
+ * `dataZoom` — buttery on canvas, no per-frame React re-render. Drag pans,
+ * wheel zooms; panning to the left edge lazily fetches older candles; the view
+ * auto-advances while pinned to the latest candle, and "Latest" re-pins.
  *
- * Navigation:
- *  - **wheel up/down** zooms the visible candle count in/out;
- *  - **wheel left/right** (or **click-drag**) pans through time, lazily
- *    fetching older candles as the left edge is reached;
- *  - the view stays **pinned to the latest** candle (auto-advancing as the
- *    worker flushes each minute) until the user pans back; a "Latest" button
- *    re-pins.
- *
- * Wrapped in `memo` (see export) so the once-per-second live-stats re-renders
- * of the parent card don't cascade a full recharts redraw into the chart —
- * that cascade was the main source of interaction jank.
+ * Wrapped in `memo` so the parent card's per-second live-stats re-renders don't
+ * reach the chart.
  */
 function CandleChartImpl({ scope, id, height = 260 }: Props) {
   const [tf, setTf] = useState<Timeframe>("1m")
-  const [chartType, setChartType] = useState<ChartType>("bar")
+  // Lines are the default view; switch to candle "Bars" from the toolbar.
+  const [chartType, setChartType] = useState<ChartType>("line")
+  const [themeTick, setThemeTick] = useState(0)
   const { candles, loadOlder, isLoadingOlder, hasMore, isLoading, isError } =
     useCandleSeries(scope, id ?? "", tf)
 
-  // Horizontal view state: `visibleCount` = zoom; `rightEnd` = the timestamp at
-  // the right edge, or null when pinned to the latest candle (auto-advance).
-  const [visibleCount, setVisibleCount] = useState(DEFAULT_VISIBLE)
-  const [rightEnd, setRightEnd] = useState<number | null>(null)
+  const elRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<EChartsType | null>(null)
+  const zoomRef = useRef<Window | null>(null)
+  // Value-axis (bytes) zoom window, set by scrolling over the value gutter.
+  const yZoomRef = useRef<Window | null>(null)
+  const lastLatestRef = useRef<number | null>(null)
 
-  const containerRef = useRef<HTMLDivElement>(null)
-  const dragRef = useRef<{ startX: number; startRight: number | null } | null>(null)
-  // Mirror of the live view + data so the (once-subscribed) wheel/drag
-  // listeners always read fresh values without re-subscribing each render.
-  const viewRef = useRef({ visibleCount, rightEnd, n: 0, tsArr: [] as number[] })
-  // Wheel deltas are coalesced and applied once per animation frame so a burst
-  // of trackpad events produces one smooth update instead of many janky ones.
-  const wheelAccum = useRef({ dy: 0, dx: 0, x: 0 })
-  const rafRef = useRef<number | null>(null)
-  // Same idea for drag: mousemove can fire faster than the frame rate, so the
-  // latest cursor X is applied once per frame rather than re-rendering per event.
-  const dragRafRef = useRef<number | null>(null)
-  const dragXRef = useRef(0)
-
-  // Reset the view whenever the timeframe changes.
-  useEffect(() => {
-    setVisibleCount(DEFAULT_VISIBLE)
-    setRightEnd(null)
-  }, [tf])
-
-  const tsArr = useMemo(
-    () => candles.map((c) => new Date(c.bucket_start).getTime()),
+  const rows = useMemo<Row[]>(
+    () =>
+      candles.map((c) => [
+        new Date(c.bucket_start).getTime(),
+        c.rx_low,
+        c.rx_high,
+        c.tx_low,
+        c.tx_high,
+        c.rx_avg,
+        c.tx_avg,
+      ]),
     [candles],
   )
-  const n = candles.length
-  const pinned = rightEnd === null
-  const rightIdx = pinned ? n - 1 : nearestIdx(tsArr, rightEnd)
-  const end = clamp(rightIdx + 1, 0, n)
-  const start = Math.max(0, end - visibleCount)
-  viewRef.current = { visibleCount, rightEnd, n, tsArr }
 
-  const data = useMemo<Row[]>(
-    () =>
-      candles.slice(start, end).map((c) => ({
-        ts: new Date(c.bucket_start).getTime(),
-        rxRange: [c.rx_low, c.rx_high],
-        txRange: [c.tx_low, c.tx_high],
-        rxAvg: c.rx_avg,
-        txAvg: c.tx_avg,
-      })),
-    [candles, start, end],
-  )
+  // Live mirrors so the (once-bound) dataZoom listener reads fresh values.
+  const stateRef = useRef({ rows, hasMore, isLoadingOlder, loadOlder })
+  stateRef.current = { rows, hasMore, isLoadingOlder, loadOlder }
 
-  // True once the chart container is actually rendered (not the loading/empty
-  // placeholder) — gates the wheel/drag listeners so they attach to the real
-  // node after data arrives, then stay put.
-  const chartReady = !isError && data.length > 0
+  const n = rows.length
+  const ready = !isError && !(isLoading && n === 0) && n > 0
 
-  // Reaching the oldest loaded candle pulls in another page of history.
+  // Reset the view when the timeframe changes.
   useEffect(() => {
-    if (!isLoading && hasMore && !isLoadingOlder && n > 0 && start <= 2) {
-      loadOlder()
+    zoomRef.current = null
+    lastLatestRef.current = null
+  }, [tf])
+
+  // Re-skin on theme / accent / color change (CSS vars on <html>).
+  useEffect(() => {
+    const obs = new MutationObserver(() => setThemeTick((t) => t + 1))
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    })
+    return () => obs.disconnect()
+  }, [])
+
+  // Create the ECharts instance once the container exists; wire resize + the
+  // dataZoom listener (which captures the user's window and lazily pages in
+  // older history when panning to the left edge).
+  useEffect(() => {
+    if (!ready) return
+    const el = elRef.current
+    if (!el) return
+    const chart = echarts.init(el, null, { renderer: "canvas" })
+    chartRef.current = chart
+
+    type DZ = { id?: string; startValue?: number; endValue?: number }
+    const onZoom = () => {
+      const opt = chart.getOption() as { dataZoom?: DZ[] }
+      const list = opt.dataZoom ?? []
+      const dzx = list.find((d) => d.id === "dzX") ?? list[0]
+      if (dzx?.startValue != null && dzx.endValue != null) {
+        zoomRef.current = { startValue: dzx.startValue, endValue: dzx.endValue }
+        const s = stateRef.current
+        const earliest = s.rows[0]?.[0]
+        if (
+          earliest != null &&
+          dzx.startValue <= earliest + CANDLE_MS[tf] * 4 &&
+          s.hasMore &&
+          !s.isLoadingOlder
+        ) {
+          s.loadOlder()
+        }
+      }
     }
-  }, [start, hasMore, isLoadingOlder, isLoading, n, loadOlder])
+    chart.on("datazoom", onZoom)
 
-  // Approx. plot width: container minus the right value-axis (62) + margins.
-  const plotInset = 70
-
-  // Zoom anchored to the cursor: the candle under the pointer stays put while
-  // the visible count scales — the hallmark of a pro trading chart. `factor`
-  // is continuous (proportional to scroll), not a fixed step.
-  const applyZoom = useCallback((cursorX: number, factor: number) => {
-    const el = containerRef.current
-    if (!el) return
-    const { visibleCount: vc, rightEnd: re, n: cn, tsArr: ts } = viewRef.current
-    if (cn === 0) return
-    const plotLeft = 4
-    const plotRight = Math.max(plotLeft + 1, el.clientWidth - plotInset)
-    const frac = clamp((cursorX - plotLeft) / (plotRight - plotLeft), 0, 1)
-
-    const curRight = re === null ? cn - 1 : nearestIdx(ts, re)
-    const curEnd = curRight + 1
-    const curStart = Math.max(0, curEnd - vc)
-    const curCount = Math.max(1, curEnd - curStart)
-    const anchorAbs = curStart + frac * curCount
-
-    const newCount = clamp(Math.round(vc * factor), MIN_VISIBLE, MAX_VISIBLE)
-    const newEnd = clamp(
-      Math.round(anchorAbs + (1 - frac) * newCount),
-      Math.min(newCount, cn),
-      cn,
-    )
-    setVisibleCount(newCount)
-    setRightEnd(newEnd - 1 >= cn - 1 ? null : ts[newEnd - 1])
-  }, [])
-
-  const applyPanCandles = useCallback((deltaCandles: number) => {
-    if (deltaCandles === 0) return
-    const { visibleCount: vc, rightEnd: re, n: cn, tsArr: ts } = viewRef.current
-    if (cn === 0) return
-    const curRight = re === null ? cn - 1 : nearestIdx(ts, re)
-    const minRight = Math.min(vc - 1, cn - 1)
-    const newRight = clamp(curRight + deltaCandles, minRight, cn - 1)
-    setRightEnd(newRight >= cn - 1 ? null : ts[newRight])
-  }, [])
-
-  // Wheel: vertical = zoom, horizontal = pan. Coalesced per animation frame for
-  // smoothness; non-passive so the page doesn't scroll while interacting.
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const onWheel = (e: WheelEvent) => {
+    // Value-axis (bytes) zoom: wheel over the right gutter scales the value
+    // range, anchored at the cursor. Wheel over the plot is left to ECharts'
+    // built-in time-axis zoom. Non-passive + capture so we can pre-empt it.
+    const onWheelY = (e: WheelEvent) => {
+      const rect = el.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      // Only act in the value-axis gutter (right edge); else let ECharts zoom X.
+      if (x < rect.width - 72) return
       e.preventDefault()
-      const scale = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1
-      const a = wheelAccum.current
-      a.dy += e.deltaY * scale
-      a.dx += e.deltaX * scale
-      a.x = e.clientX - el.getBoundingClientRect().left
-      if (rafRef.current == null) {
-        rafRef.current = requestAnimationFrame(() => {
-          rafRef.current = null
-          const { dy, dx, x } = wheelAccum.current
-          wheelAccum.current = { dy: 0, dx: 0, x: 0 }
-          if (Math.abs(dx) > Math.abs(dy) * 1.2) {
-            const vc = viewRef.current.visibleCount
-            const candleW = Math.max(1, (el.clientWidth - plotInset) / Math.max(1, vc))
-            applyPanCandles(Math.round(dx / candleW))
-          } else if (dy !== 0) {
-            // exp() → smooth multiplicative zoom proportional to scroll amount.
-            // Gentle per-frame factor (tight clamp) so each notch eases rather
-            // than jumping.
-            applyZoom(x, clamp(Math.exp(dy * 0.0015), 0.7, 1.45))
-          }
-        })
+      e.stopPropagation()
+      const y = e.clientY - rect.top
+      const conv = (py: number) => {
+        const v = chart.convertFromPixel({ gridIndex: 0 }, [x, py]) as
+          | number[]
+          | null
+        return Array.isArray(v) ? v[1] : NaN
       }
+      const topV = conv(8)
+      const botV = conv(rect.height - 22)
+      const curV = conv(y)
+      const span = topV - botV
+      if (!isFinite(span) || span <= 0 || !isFinite(curV)) return
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY
+      // Up (deltaY<0) → factor<1 → smaller range → zoom into finer detail.
+      const factor = Math.min(1.8, Math.max(0.55, Math.exp(dy * 0.0012)))
+      const frac = (curV - botV) / span
+      const newSpan = span * factor
+      let newBot = curV - frac * newSpan
+      let newTop = newBot + newSpan
+      if (newBot < 0) {
+        newTop -= newBot
+        newBot = 0
+      }
+      yZoomRef.current = { startValue: newBot, endValue: newTop }
+      chart.setOption({ yAxis: { min: newBot, max: newTop } })
     }
-    el.addEventListener("wheel", onWheel, { passive: false })
-    return () => {
-      el.removeEventListener("wheel", onWheel)
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-    }
-  }, [applyZoom, applyPanCandles, chartReady])
+    el.addEventListener("wheel", onWheelY, { capture: true, passive: false })
 
-  // Click-drag pan, rAF-throttled. Recompute from the drag-start anchor each
-  // frame so the view tracks the cursor without accumulating rounding drift.
+    // Value-axis drag-to-scale (TradingView price-axis style): press on the
+    // bytes gutter and drag — up stretches the scale (zoom in), down compresses
+    // it (zoom out), anchored at the grab point. Recomputed from the grab state
+    // each move so there's no drift.
+    const convY = (px: number, py: number) => {
+      const v = chart.convertFromPixel({ gridIndex: 0 }, [px, py]) as number[] | null
+      return Array.isArray(v) ? v[1] : NaN
+    }
+    const drag = { active: false, startY: 0, span0: 0, anchor: 0, frac: 0 }
+    const onDragMove = (e: MouseEvent) => {
+      if (!drag.active) return
+      e.preventDefault()
+      const dy = e.clientY - drag.startY // up → negative → zoom in
+      const factor = Math.min(5, Math.max(0.2, Math.exp(dy * 0.004)))
+      const newSpan = drag.span0 * factor
+      let newBot = drag.anchor - drag.frac * newSpan
+      let newTop = newBot + newSpan
+      if (newBot < 0) {
+        newTop -= newBot
+        newBot = 0
+      }
+      yZoomRef.current = { startValue: newBot, endValue: newTop }
+      chart.setOption({ yAxis: { min: newBot, max: newTop } })
+    }
+    const onDragUp = () => {
+      drag.active = false
+      window.removeEventListener("mousemove", onDragMove)
+      window.removeEventListener("mouseup", onDragUp)
+    }
+    const onDown = (e: MouseEvent) => {
+      const rect = el.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      if (x < rect.width - 72) return // only the value-axis gutter
+      const topV = convY(x, 8)
+      const botV = convY(x, rect.height - 22)
+      const anchor = convY(x, e.clientY - rect.top)
+      const span0 = topV - botV
+      if (!isFinite(span0) || span0 <= 0 || !isFinite(anchor)) return
+      e.preventDefault()
+      e.stopPropagation() // keep ECharts from starting an x-axis pan
+      drag.active = true
+      drag.startY = e.clientY
+      drag.span0 = span0
+      drag.anchor = anchor
+      drag.frac = (anchor - botV) / span0
+      window.addEventListener("mousemove", onDragMove)
+      window.addEventListener("mouseup", onDragUp)
+    }
+    el.addEventListener("mousedown", onDown, { capture: true })
+
+    // ns-resize cursor over the gutter so the drag affordance is discoverable.
+    const onHover = (e: MouseEvent) => {
+      if (drag.active) return
+      const rect = el.getBoundingClientRect()
+      el.style.cursor = e.clientX - rect.left >= rect.width - 72 ? "ns-resize" : ""
+    }
+    el.addEventListener("mousemove", onHover)
+
+    const ro = new ResizeObserver(() => chart.resize())
+    ro.observe(el)
+
+    return () => {
+      ro.disconnect()
+      el.removeEventListener("wheel", onWheelY, { capture: true })
+      el.removeEventListener("mousedown", onDown, { capture: true })
+      el.removeEventListener("mousemove", onHover)
+      window.removeEventListener("mousemove", onDragMove)
+      window.removeEventListener("mouseup", onDragUp)
+      chart.off("datazoom", onZoom)
+      chart.dispose()
+      chartRef.current = null
+    }
+    // Recreate only when the chart appears/disappears or timeframe changes.
+  }, [ready, tf])
+
+  // Push data / option updates. Preserves the user's window; auto-advances it
+  // when pinned to the latest candle so live candles keep scrolling in.
   useEffect(() => {
-    const applyDrag = () => {
-      dragRafRef.current = null
-      const d = dragRef.current
-      const el = containerRef.current
-      if (!d || !el) return
-      const { visibleCount: vc, n: cn, tsArr: ts } = viewRef.current
-      const candleW = Math.max(1, (el.clientWidth - plotInset) / Math.max(1, vc))
-      const dxCandles = Math.round((dragXRef.current - d.startX) / candleW)
-      const startRightIdx =
-        d.startRight === null ? cn - 1 : nearestIdx(ts, d.startRight)
-      const minRight = Math.min(vc - 1, cn - 1)
-      // Drag right reveals older data → view moves toward the past.
-      const newRight = clamp(startRightIdx - dxCandles, minRight, cn - 1)
-      setRightEnd(newRight >= cn - 1 ? null : ts[newRight])
-    }
-    const onMove = (e: MouseEvent) => {
-      if (!dragRef.current) return
-      dragXRef.current = e.clientX
-      if (dragRafRef.current == null) {
-        dragRafRef.current = requestAnimationFrame(applyDrag)
+    const chart = chartRef.current
+    if (!chart || n === 0) return
+
+    const latest = rows[n - 1][0]
+    if (zoomRef.current == null) {
+      zoomRef.current = defaultWindow(rows, tf)
+    } else if (lastLatestRef.current != null && latest > lastLatestRef.current) {
+      // New candle(s) arrived — if the view was pinned to the previous latest,
+      // slide the window forward to keep tracking live.
+      const w = zoomRef.current
+      if (w.endValue >= lastLatestRef.current - CANDLE_MS[tf]) {
+        zoomRef.current = { startValue: w.startValue + (latest - w.endValue), endValue: latest }
       }
     }
-    const onUp = () => {
-      dragRef.current = null
-    }
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
-    return () => {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
-      if (dragRafRef.current != null) cancelAnimationFrame(dragRafRef.current)
-    }
-  }, [chartReady])
+    lastLatestRef.current = latest
 
-  const onMouseDown = (e: React.MouseEvent) => {
-    dragXRef.current = e.clientX
-    dragRef.current = { startX: e.clientX, startRight: viewRef.current.rightEnd }
+    const colors = readColors()
+    // yZoomRef (if set) flows into yAxis.min/max so the user's manual value-axis
+    // scale survives live refreshes; null lets the axis auto-fit the data.
+    const option = buildCandleOption(rows, {
+      tf,
+      chartType,
+      colors,
+      yWindow: yZoomRef.current,
+    })
+    if (zoomRef.current) {
+      option.dataZoom[0] = {
+        ...option.dataZoom[0],
+        ...zoomRef.current,
+      } as (typeof option.dataZoom)[0]
+    }
+    chart.setOption(option, { replaceMerge: ["series"] })
+  }, [rows, n, chartType, tf, themeTick])
+
+  const onLatest = () => {
+    zoomRef.current = defaultWindow(rows, tf)
+    yZoomRef.current = null // refit the value axis to the data
+    const chart = chartRef.current
+    if (chart) {
+      if (zoomRef.current) {
+        chart.dispatchAction({ type: "dataZoom", dataZoomId: "dzX", ...zoomRef.current })
+      }
+      // Refit the value axis to the data (clears any manual scale).
+      chart.setOption({ yAxis: { min: 0, max: null } })
+    }
   }
-
-  const labelTick = (t: number) => (isDaily(tf) ? formatDate(t) : formatTime(t))
 
   const toolbar = (
     <div className="flex items-center gap-2">
-      {/* Chart-type selector — sits to the LEFT of the timeframe dropdown. */}
-      <Seg
+      {/* Order, left → right: Latest · chart style · timeframe. */}
+      <button
+        type="button"
+        onClick={onLatest}
+        className="border-border text-muted-foreground hover:text-foreground h-7 border px-2 font-mono text-[11px]"
+      >
+        Latest →
+      </button>
+      <Select
         value={chartType}
-        options={
-          [
-            { value: "bar", label: "Bars" },
-            { value: "line", label: "Lines" },
-          ] as const
-        }
-        onChange={setChartType}
-      />
-      {!pinned && (
-        <button
-          type="button"
-          onClick={() => setRightEnd(null)}
-          className="border-border text-muted-foreground hover:text-foreground h-7 border px-2 font-mono text-[11px]"
-        >
-          Latest →
-        </button>
-      )}
+        onValueChange={(v) => setChartType(v as ChartType)}
+      >
+        <SelectTrigger className="h-7 w-[92px] font-mono text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="line" className="font-mono text-xs">
+            Lines
+          </SelectItem>
+          <SelectItem value="bar" className="font-mono text-xs">
+            Bars
+          </SelectItem>
+        </SelectContent>
+      </Select>
       <Select value={tf} onValueChange={(v) => setTf(v as Timeframe)}>
         <SelectTrigger className="h-7 w-[104px] font-mono text-xs">
           <SelectValue />
@@ -354,7 +382,7 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
         Failed to load bandwidth candles.
       </div>
     )
-  } else if (data.length === 0) {
+  } else if (n === 0) {
     body = (
       <div
         className="text-muted-foreground border-border flex items-center justify-center border font-mono text-xs"
@@ -366,100 +394,12 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
   } else {
     body = (
       <div
-        ref={containerRef}
-        onMouseDown={onMouseDown}
         className="border-border relative cursor-grab touch-none select-none border active:cursor-grabbing"
         style={{ height, background: "var(--card)" }}
       >
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 8, right: 4, left: 4, bottom: 0 }} barGap={0}>
-            <defs>
-              <linearGradient id="candle-rx" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={RX_COLOR} stopOpacity={0.4} />
-                <stop offset="100%" stopColor={RX_COLOR} stopOpacity={0.02} />
-              </linearGradient>
-              <linearGradient id="candle-tx" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={TX_COLOR} stopOpacity={0.4} />
-                <stop offset="100%" stopColor={TX_COLOR} stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="1 3" stroke="var(--border)" vertical={false} />
-            <XAxis
-              dataKey="ts"
-              type="number"
-              domain={["dataMin", "dataMax"]}
-              tickFormatter={labelTick}
-              stroke="var(--muted-foreground)"
-              fontSize={10}
-              tickLine={false}
-              axisLine={false}
-              scale="time"
-              minTickGap={28}
-            />
-            {/* Value axis on the RIGHT, trading-chart style. */}
-            <YAxis
-              orientation="right"
-              tickFormatter={(v: number) => formatBps(v).replace(" ", "")}
-              stroke="var(--muted-foreground)"
-              fontSize={10}
-              tickLine={false}
-              axisLine={false}
-              width={62}
-            />
-            <Tooltip
-              content={<CandleTooltip />}
-              cursor={{ fill: "var(--muted)", fillOpacity: 0.4 }}
-            />
-            {chartType === "bar" ? (
-              <>
-                {/* Bars only — tight side-by-side HL bars (barGap=0 closes the
-                    RX/TX gap); maxBarSize keeps them candle-thin at any zoom. */}
-                <Bar
-                  dataKey="rxRange"
-                  name="rx"
-                  fill={RX_COLOR}
-                  fillOpacity={0.6}
-                  isAnimationActive={false}
-                  maxBarSize={10}
-                />
-                <Bar
-                  dataKey="txRange"
-                  name="tx"
-                  fill={TX_COLOR}
-                  fillOpacity={0.6}
-                  isAnimationActive={false}
-                  maxBarSize={10}
-                />
-              </>
-            ) : (
-              <>
-                {/* Faded area chart of the per-window average rate. */}
-                <Area
-                  type="monotone"
-                  dataKey="rxAvg"
-                  name="rx"
-                  stroke={RX_COLOR}
-                  strokeWidth={1.75}
-                  fill="url(#candle-rx)"
-                  dot={false}
-                  isAnimationActive={false}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="txAvg"
-                  name="tx"
-                  stroke={TX_COLOR}
-                  strokeWidth={1.75}
-                  fill="url(#candle-tx)"
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </>
-            )}
-          </ComposedChart>
-        </ResponsiveContainer>
+        <div ref={elRef} className="h-full w-full" />
         {isLoadingOlder && (
-          <span className="text-muted-foreground absolute left-2 top-1 font-mono text-[10px]">
+          <span className="text-muted-foreground absolute left-2 top-1 z-10 font-mono text-[10px]">
             loading history…
           </span>
         )}

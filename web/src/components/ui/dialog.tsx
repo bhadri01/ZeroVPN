@@ -4,13 +4,23 @@ import * as React from "react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { withBodyPointerEvents } from "@/lib/radix"
 import { Button } from "@/components/ui/button"
 import { IconX } from "@tabler/icons-react"
 
 function Dialog({
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+  // Clear any stray <body> pointer-events lock on close (e.g. when a nested
+  // Select or an originating DropdownMenu left one behind). See `@/lib/radix`.
+  return (
+    <DialogPrimitive.Root
+      data-slot="dialog"
+      onOpenChange={withBodyPointerEvents(onOpenChange)}
+      {...props}
+    />
+  )
 }
 
 function DialogTrigger({

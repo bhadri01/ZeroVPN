@@ -112,6 +112,38 @@ pub enum Event {
         id: Option<Uuid>,
         action: ChangeAction,
     },
+
+    /// A ready-to-display notification. The server decides *what* to tell the
+    /// user (connectivity changes, quota warnings, security alerts) and the
+    /// client just renders it — an in-app toast plus, when the tab is hidden
+    /// and the user opted in, an OS notification. Keeps notification copy and
+    /// routing server-side so we don't grow a wire variant per category.
+    ///
+    /// `user_id` scopes delivery (the owning user's sessions + admins);
+    /// `None` is admin-only. `url` is an in-app path to open on click; `tag`
+    /// de-dupes/replaces a prior notification with the same id.
+    Notify {
+        user_id: Option<Uuid>,
+        level: NotifyLevel,
+        title: String,
+        #[serde(default)]
+        body: Option<String>,
+        #[serde(default)]
+        url: Option<String>,
+        #[serde(default)]
+        tag: Option<String>,
+    },
+}
+
+/// Severity/affordance for a [`Event::Notify`] — maps to the client's toast
+/// variants.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotifyLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
 }
 
 /// What kind of persisted resource a [`Event::DataChanged`] refers to.

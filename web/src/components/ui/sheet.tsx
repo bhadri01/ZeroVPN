@@ -2,11 +2,23 @@ import * as React from "react"
 import { Dialog as SheetPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { withBodyPointerEvents } from "@/lib/radix"
 import { Button } from "@/components/ui/button"
 import { IconX } from "@tabler/icons-react"
 
-function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
-  return <SheetPrimitive.Root data-slot="sheet" {...props} />
+function Sheet({
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof SheetPrimitive.Root>) {
+  // Clear any stray <body> pointer-events lock on close (e.g. from a nested
+  // Select inside the sheet). See `@/lib/radix`.
+  return (
+    <SheetPrimitive.Root
+      data-slot="sheet"
+      onOpenChange={withBodyPointerEvents(onOpenChange)}
+      {...props}
+    />
+  )
 }
 
 function SheetTrigger({

@@ -60,6 +60,9 @@ export function UserMenu() {
       await adminStopImpersonation()
       const updated = await me()
       setUser(updated)
+      // Close the confirm dialog before navigating, otherwise it lingers (the
+      // menu/dialog host stays mounted across the move to /admin/users).
+      setStopImpersonationConfirmOpen(false)
       toast.success("Returned to your admin session")
       void navigate("/admin/users")
     } catch {

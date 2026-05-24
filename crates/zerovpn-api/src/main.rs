@@ -21,6 +21,7 @@ mod bootstrap;
 mod error;
 mod extractors;
 mod middleware;
+mod quota;
 mod routes;
 mod state;
 
@@ -151,6 +152,12 @@ async fn main() -> Result<()> {
         warn!(?e, "startup peer reconcile failed");
     }
 
+    // Background quota-enforcement sweep: resets elapsed monthly windows,
+    // auto-resumes devices it had paused, and auto-pauses devices over the
+    // per-device or account cap. Owns peer add/remove (via state.wg), which the
+    // worker can't do.
+    quota::spawn(app_state.clone());
+
     // ZMQ subscriber: consumes worker events (subscribed to all topics) and
     // forwards them onto the in-process broadcast bus that WS handlers tap.
     if let Ok(sub_url) = env::var("ZEROVPN_EVENTS__SUBSCRIBER_CONNECT") {
@@ -239,6 +246,8 @@ async fn main() -> Result<()> {
                 .route("/auth/totp/disable", post(routes::totp::disable))
                 .route("/me/data-export", get(routes::me::export))
                 .route("/me/server", get(routes::me::server_info))
+                .route("/me/usage", get(routes::me::usage))
+                .route("/me/activity", get(routes::me::activity))
                 .route(
                     "/me/topology",
                     get(routes::me::get_topology).put(routes::me::set_topology),
@@ -298,6 +307,10 @@ async fn main() -> Result<()> {
                     "/admin/users/{id}/bandwidth",
                     get(routes::admin::user_bandwidth),
                 )
+                .route(
+                    "/admin/users/{id}/candles",
+                    get(routes::bandwidth::admin_user_candles),
+                )
                 .route("/admin/audit", get(routes::admin::list_audit))
                 .route("/admin/audit.csv", get(routes::admin::list_audit_csv))
                 .route("/admin/failed-logins", get(routes::admin::list_failed_logins))
@@ -326,6 +339,14 @@ async fn main() -> Result<()> {
                 .route(
                     "/admin/devices/{id}/bandwidth",
                     get(routes::admin::device_bandwidth),
+                )
+                .route(
+                    "/admin/devices/{id}/candles",
+                    get(routes::bandwidth::admin_device_candles),
+                )
+                .route(
+                    "/admin/devices/{id}/quota",
+                    axum::routing::put(routes::admin::set_device_quota),
                 )
                 .route(
                     "/admin/devices/{id}/endpoint-history",
@@ -519,5 +540,6 @@ fn event_kind(e: &Event) -> &'static str {
         Event::ServerHealth { .. } => "server_health",
         Event::ServerSample { .. } => "server_sample",
         Event::DataChanged { .. } => "data_changed",
+        Event::Notify { .. } => "notify",
     }
 }

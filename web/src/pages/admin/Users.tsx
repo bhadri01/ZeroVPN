@@ -1,10 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   IconCopy,
+  IconDotsVertical,
   IconDownload,
+  IconEye,
+  IconKey,
+  IconLogin2,
+  IconLogout,
   IconPlus,
   IconSearch,
+  IconShieldOff,
   IconTrash,
+  IconUserCheck,
+  IconUserShield,
+  IconUserX,
   IconX,
 } from "@tabler/icons-react"
 import { useEffect, useMemo, useState } from "react"
@@ -28,6 +37,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -48,8 +65,12 @@ import {
   type UserStatus,
   adminCreateUser,
   adminDeleteUser,
+  adminDisableUser2FA,
   adminImpersonateUser,
   adminListUsers,
+  adminRevokeUserSessions,
+  adminSendPasswordReset,
+  adminSetUserRole,
   adminSetUserStatus,
   adminUsersCsvUrl,
   me,
@@ -80,6 +101,12 @@ export function UsersPage() {
   const [totpFilter, setTotpFilter] = useState<TotpFilter>("all")
   const [suspendTarget, setSuspendTarget] = useState<AdminUser | null>(null)
   const [impersonateTarget, setImpersonateTarget] = useState<AdminUser | null>(null)
+  // Row-kebab actions that need a confirm step (security-sensitive or
+  // destructive). Reversible actions (reset email, force-logout) fire directly.
+  const [confirmAction, setConfirmAction] = useState<{
+    user: AdminUser
+    kind: "delete" | "promote" | "demote" | "disable2fa"
+  } | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [pageSize, setPageSize] = useState(50)
   const [page, setPage] = useState(0)
@@ -142,6 +169,52 @@ export function UsersPage() {
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)
     },
+  })
+
+  // ── Row-kebab mutations ────────────────────────────────────────────────
+  const invalidateUsers = () =>
+    void qc.invalidateQueries({ queryKey: ["admin", "users"] })
+  const onActionError = (e: unknown) => {
+    if (e instanceof ApiError) toast.error(e.message)
+  }
+
+  const sendResetM = useMutation({
+    mutationFn: (id: string) => adminSendPasswordReset(id),
+    onSuccess: () => toast.success("Password-reset link sent"),
+    onError: onActionError,
+  })
+  const revokeSessionsM = useMutation({
+    mutationFn: (id: string) => adminRevokeUserSessions(id),
+    onSuccess: () => toast.success("All sessions for this user invalidated"),
+    onError: onActionError,
+  })
+  const disable2faM = useMutation({
+    mutationFn: (id: string) => adminDisableUser2FA(id),
+    onSuccess: () => {
+      invalidateUsers()
+      setConfirmAction(null)
+      toast.success("2FA disabled — user can re-enroll on next sign-in")
+    },
+    onError: onActionError,
+  })
+  const setRoleM = useMutation({
+    mutationFn: ({ id, role }: { id: string; role: UserRole }) =>
+      adminSetUserRole(id, role),
+    onSuccess: (_, { role }) => {
+      invalidateUsers()
+      setConfirmAction(null)
+      toast.success(`Role set to ${role}`)
+    },
+    onError: onActionError,
+  })
+  const deleteM = useMutation({
+    mutationFn: (id: string) => adminDeleteUser(id),
+    onSuccess: () => {
+      invalidateUsers()
+      setConfirmAction(null)
+      toast.success("User deleted")
+    },
+    onError: onActionError,
   })
 
   const items = usersQ.data?.items ?? []
@@ -467,37 +540,29 @@ export function UsersPage() {
                           <RelativeTime value={u.last_login_at} fallback="Never" />
                         </td>
                         <td className="zv-actions">
-                          {!isSelf && u.status === "active" && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setImpersonateTarget(u)}
-                            >
-                              Impersonate
-                            </Button>
-                          )}
-                          {!isSelf && u.status === "active" && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setSuspendTarget(u)}
-                            >
-                              Suspend
-                            </Button>
-                          )}
-                          {!isSelf && u.status === "suspended" && (
-                            <Button
-                              size="sm"
-                              onClick={() =>
-                                setStatusM.mutate({
-                                  id: u.id,
-                                  status: "active",
-                                })
-                              }
-                            >
-                              Unsuspend
-                            </Button>
-                          )}
+                          <RowActions
+                            user={u}
+                            isSelf={isSelf}
+                            onImpersonate={() => setImpersonateTarget(u)}
+                            onSuspend={() => setSuspendTarget(u)}
+                            onUnsuspend={() =>
+                              setStatusM.mutate({ id: u.id, status: "active" })
+                            }
+                            onResetPassword={() => sendResetM.mutate(u.id)}
+                            onForceLogout={() => revokeSessionsM.mutate(u.id)}
+                            onDisable2fa={() =>
+                              setConfirmAction({ user: u, kind: "disable2fa" })
+                            }
+                            onToggleRole={() =>
+                              setConfirmAction({
+                                user: u,
+                                kind: u.role === "admin" ? "demote" : "promote",
+                              })
+                            }
+                            onDelete={() =>
+                              setConfirmAction({ user: u, kind: "delete" })
+                            }
+                          />
                         </td>
                       </tr>
                     )
@@ -576,6 +641,61 @@ export function UsersPage() {
         onConfirm={() => bulkDeleteM.mutate(Array.from(selectedIds))}
       />
 
+      {confirmAction &&
+        (() => {
+          const { user: cu, kind } = confirmAction
+          const meta = {
+            delete: {
+              title: `Delete ${cu.email}?`,
+              description:
+                "Permanently deletes this account and ALL their data — peers removed and every device, session, log, and preference purged. Irreversible.",
+              confirmLabel: "Delete",
+              destructive: true,
+              pending: deleteM.isPending,
+              onConfirm: () => deleteM.mutate(cu.id),
+            },
+            promote: {
+              title: `Promote ${cu.email} to admin?`,
+              description:
+                "Grants full administrative access to the entire fleet, every user, and all settings.",
+              confirmLabel: "Promote",
+              destructive: false,
+              pending: setRoleM.isPending,
+              onConfirm: () => setRoleM.mutate({ id: cu.id, role: "admin" }),
+            },
+            demote: {
+              title: `Demote ${cu.email} to user?`,
+              description:
+                "Revokes administrative access. The account and its devices are kept.",
+              confirmLabel: "Demote",
+              destructive: true,
+              pending: setRoleM.isPending,
+              onConfirm: () => setRoleM.mutate({ id: cu.id, role: "user" }),
+            },
+            disable2fa: {
+              title: `Disable 2FA for ${cu.email}?`,
+              description:
+                "Clears their TOTP secret and recovery codes — they can re-enroll on next sign-in. Use only for account recovery.",
+              confirmLabel: "Disable 2FA",
+              destructive: true,
+              pending: disable2faM.isPending,
+              onConfirm: () => disable2faM.mutate(cu.id),
+            },
+          }[kind]
+          return (
+            <ConfirmDialog
+              open
+              onOpenChange={(o) => !o && setConfirmAction(null)}
+              title={meta.title}
+              description={meta.description}
+              confirmLabel={meta.confirmLabel}
+              destructive={meta.destructive}
+              pending={meta.pending}
+              onConfirm={meta.onConfirm}
+            />
+          )
+        })()}
+
       <InviteUserDialog
         open={inviteOpen}
         onOpenChange={setInviteOpen}
@@ -584,6 +704,112 @@ export function UsersPage() {
         }}
       />
     </PageStagger>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+
+/** Per-row 3-dot menu surfacing the full admin action set inline, so common
+ *  operations don't require opening the detail page. Mirrors the actions on
+ *  the user-detail page; the parent owns the confirm dialogs and mutations. */
+function RowActions({
+  user,
+  isSelf,
+  onImpersonate,
+  onSuspend,
+  onUnsuspend,
+  onResetPassword,
+  onForceLogout,
+  onDisable2fa,
+  onToggleRole,
+  onDelete,
+}: {
+  user: AdminUser
+  isSelf: boolean
+  onImpersonate: () => void
+  onSuspend: () => void
+  onUnsuspend: () => void
+  onResetPassword: () => void
+  onForceLogout: () => void
+  onDisable2fa: () => void
+  onToggleRole: () => void
+  onDelete: () => void
+}) {
+  const navigate = useNavigate()
+  const active = user.status === "active"
+  const suspended = user.status === "suspended"
+  // Deleted accounts have nothing actionable beyond viewing the record.
+  const terminal = user.status === "deleted"
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-8"
+          aria-label={`Actions for ${user.email}`}
+        >
+          <IconDotsVertical className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuLabel className="truncate">{user.email}</DropdownMenuLabel>
+        <DropdownMenuItem onClick={() => navigate(`/admin/users/${user.id}`)}>
+          <IconEye className="size-4" />
+          View details
+        </DropdownMenuItem>
+
+        {!isSelf && !terminal && (
+          <>
+            <DropdownMenuSeparator />
+            {active && (
+              <DropdownMenuItem onClick={onImpersonate}>
+                <IconLogin2 className="size-4" />
+                Impersonate
+              </DropdownMenuItem>
+            )}
+            {active && (
+              <DropdownMenuItem onClick={onSuspend}>
+                <IconUserX className="size-4" />
+                Suspend
+              </DropdownMenuItem>
+            )}
+            {suspended && (
+              <DropdownMenuItem onClick={onUnsuspend}>
+                <IconUserCheck className="size-4" />
+                Unsuspend
+              </DropdownMenuItem>
+            )}
+
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onResetPassword}>
+              <IconKey className="size-4" />
+              Send password reset
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onForceLogout}>
+              <IconLogout className="size-4" />
+              Force log out
+            </DropdownMenuItem>
+            {user.totp_enabled && (
+              <DropdownMenuItem onClick={onDisable2fa}>
+                <IconShieldOff className="size-4" />
+                Disable 2FA
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={onToggleRole}>
+              <IconUserShield className="size-4" />
+              {user.role === "admin" ? "Demote to user" : "Promote to admin"}
+            </DropdownMenuItem>
+
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={onDelete}>
+              <IconTrash className="size-4" />
+              Delete user
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

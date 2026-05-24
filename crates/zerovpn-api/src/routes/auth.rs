@@ -14,6 +14,7 @@ use tracing::{info, warn};
 use utoipa::ToSchema;
 use zerovpn_core::models::{User, UserRole, UserStatus};
 use zerovpn_db::repos::{audit, failed_logins, session_events, users};
+use zerovpn_wire::{Event, NotifyLevel};
 
 /// Best-effort full client IP from the `X-Forwarded-For` header (Caddy
 /// populates this) or the `X-Real-IP` header. Returns `None` if neither
@@ -437,6 +438,21 @@ pub async fn login(
                     json!({ "previous_ip": prev.to_string() }),
                 )
                 .await;
+                // Real-time security alert to the user's *other* sessions (the
+                // one signing in here isn't on the WS yet, so it won't see its
+                // own alert). Mirrors the suspicious-login email on the live
+                // channel so a backgrounded device gets an OS notification.
+                state.broadcast(Event::Notify {
+                    user_id: Some(user_with_secrets.id),
+                    level: NotifyLevel::Warning,
+                    title: "New sign-in to your account".to_string(),
+                    body: Some(format!(
+                        "A new sign-in from {}. If this wasn't you, change your password.",
+                        new_ip.ip()
+                    )),
+                    url: Some("/app/settings".to_string()),
+                    tag: None,
+                });
             }
             Ok(_) => {}
             Err(e) => warn!(?e, "swap_last_login_ip failed"),

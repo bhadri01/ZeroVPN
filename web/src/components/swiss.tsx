@@ -401,8 +401,23 @@ export function Sparkline({
 /* ── KPI strip + KPI ───────────────────────────────────────────────────
    Four-up labelled blocks. Use <Kpi> as the children of <KpiStrip>. */
 
-export function KpiStrip({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn("zv-kpi-strip", className)}>{children}</div>
+export function KpiStrip({
+  children,
+  className,
+  cols = 4,
+}: {
+  children: React.ReactNode
+  className?: string
+  /** Columns on wide screens. Defaults to 4; pass 5 for the dashboard's
+   *  Devices/RX/TX/Usage/Quota strip. The CSS variant keeps the responsive
+   *  fallbacks (`.zv-kpi-strip[data-cols="5"]` in index.css). */
+  cols?: 4 | 5
+}) {
+  return (
+    <div className={cn("zv-kpi-strip", className)} data-cols={cols}>
+      {children}
+    </div>
+  )
 }
 
 export function Kpi({

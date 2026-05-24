@@ -23,13 +23,7 @@ import {
 } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { OptionTiles } from "@/components/devices/OptionTiles"
 import {
   ApiError,
   type CreatedDevice,
@@ -43,6 +37,7 @@ import {
   setDeviceDns,
 } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
+import { DEVICE_TYPE_OPTIONS, OS_OPTIONS } from "@/lib/deviceIcons"
 import { useAuth } from "@/stores/auth"
 
 type IpMode = "auto" | "custom"
@@ -80,8 +75,11 @@ export function AddDeviceDialog({
 
   const [step, setStep] = useState<1 | 2>(1)
   const [name, setName] = useState("")
-  const [osChoice, setOsChoice] = useState<DeviceOs>("other")
-  const [deviceType, setDeviceType] = useState<DeviceType>("other")
+  // Empty until the user picks one — OS and type are now a required, deliberate
+  // choice (no "Other" escape hatch). `canSubmit` gates the Create button on
+  // both being set.
+  const [osChoice, setOsChoice] = useState<DeviceOs | "">("")
+  const [deviceType, setDeviceType] = useState<DeviceType | "">("")
   const [ipMode, setIpMode] = useState<IpMode>("auto")
   const [ipInput, setIpInput] = useState("")
   const [dnsPrefix, setDnsPrefix] = useState("")
@@ -156,6 +154,9 @@ export function AddDeviceDialog({
 
   const addM = useMutation({
     mutationFn: async () => {
+      if (!osChoice || !deviceType) {
+        throw new ApiError(422, "validation", "Choose an OS and device type")
+      }
       const created = await createDevice({
         name: name.trim(),
         os: osChoice,
@@ -192,6 +193,8 @@ export function AddDeviceDialog({
     name.trim().length > 0 &&
     name.trim().length <= 64 &&
     !nameTaken &&
+    osChoice !== "" &&
+    deviceType !== "" &&
     ipLooksValid &&
     dnsPrefixLocallyValid &&
     dnsNameAvailable &&
@@ -200,8 +203,8 @@ export function AddDeviceDialog({
   const resetAll = () => {
     setStep(1)
     setName("")
-    setOsChoice("other")
-    setDeviceType("other")
+    setOsChoice("")
+    setDeviceType("")
     setIpMode("auto")
     setIpInput("")
     setResult(null)
@@ -252,68 +255,24 @@ export function AddDeviceDialog({
             </p>
           </div>
 
-          {/* OS + device type share one row — both are short single-select
-              labels, so stacking them wasted vertical space. */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label className="zv-eyebrow">Operating system</Label>
-              <Select
-                value={osChoice}
-                onValueChange={(v) => setOsChoice(v as DeviceOs)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(
-                    [
-                      ["ios", "iOS"],
-                      ["android", "Android"],
-                      ["macos", "macOS"],
-                      ["windows", "Windows"],
-                      ["linux", "Linux"],
-                      ["other", "Other"],
-                    ] as [DeviceOs, string][]
-                  ).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="zv-eyebrow">Operating system</Label>
+            <OptionTiles
+              ariaLabel="Operating system"
+              options={OS_OPTIONS}
+              value={osChoice}
+              onChange={setOsChoice}
+            />
+          </div>
 
-            <div className="flex flex-col gap-1.5">
-              <Label className="zv-eyebrow">Device type</Label>
-              <Select
-                value={deviceType}
-                onValueChange={(v) => setDeviceType(v as DeviceType)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(
-                    [
-                      ["phone", "Phone"],
-                      ["tablet", "Tablet"],
-                      ["laptop", "Laptop"],
-                      ["desktop", "Desktop"],
-                      ["tv", "TV"],
-                      ["router", "Router"],
-                      ["watch", "Watch"],
-                      ["iot", "IoT"],
-                      ["server", "Server"],
-                      ["other", "Other"],
-                    ] as [DeviceType, string][]
-                  ).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="zv-eyebrow">Device type</Label>
+            <OptionTiles
+              ariaLabel="Device type"
+              options={DEVICE_TYPE_OPTIONS}
+              value={deviceType}
+              onChange={setDeviceType}
+            />
           </div>
 
           <div className="flex flex-col gap-1.5">

@@ -113,5 +113,8 @@ fn visible_to(event: &Event, user_id: Uuid, role: UserRole) -> bool {
         // admin-global ones (`user_id == None`, e.g. server / maintenance)
         // are dropped for non-admins (admins already returned `true` above).
         Event::DataChanged { user_id: owner, .. } => *owner == Some(user_id),
+        // Notifications are addressed to a specific user (their sessions) or
+        // admin-only (`None`, already handled by the admin short-circuit).
+        Event::Notify { user_id: owner, .. } => *owner == Some(user_id),
     }
 }

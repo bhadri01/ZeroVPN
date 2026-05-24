@@ -1,0 +1,27 @@
+{
+  "name": "ZeroVPN",
+  "short_name": "ZeroVPN",
+  "description": "Self-hosted WireGuard VPN manager — devices, live bandwidth, and access control.",
+  "id": "/",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "orientation": "any",
+  "categories": ["utilities", "productivity"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "maskable"
+    }
+  ]
+}

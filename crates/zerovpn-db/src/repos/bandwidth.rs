@@ -172,11 +172,15 @@ pub async fn device_raw(
 /// rows derived from the same hours, so a bucket-agnostic SUM would
 /// double-count. Returns a single (rx_bytes, tx_bytes) tuple.
 pub async fn fleet_totals(pool: &PgPool) -> sqlx::Result<(i64, i64)> {
+    // Sum the authoritative per-device lifetime counters (the same source the
+    // device cards / device_totals use), NOT bandwidth_aggregates — the
+    // hourly rollups drift / hold inflated dev+sim data, so summing them
+    // over-reported fleet bandwidth. Excludes revoked devices.
     let row: (i64, i64) = sqlx::query_as(
-        r#"SELECT COALESCE(SUM(rx_bytes), 0)::BIGINT,
-                  COALESCE(SUM(tx_bytes), 0)::BIGINT
-             FROM bandwidth_aggregates
-            WHERE bucket = 'hour'::bucket_kind"#,
+        r#"SELECT COALESCE(SUM(lifetime_rx_bytes), 0)::BIGINT,
+                  COALESCE(SUM(lifetime_tx_bytes), 0)::BIGINT
+             FROM devices
+            WHERE status <> 'revoked'"#,
     )
     .fetch_one(pool)
     .await?;

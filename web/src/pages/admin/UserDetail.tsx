@@ -10,11 +10,11 @@ import {
   IconUserShield,
   IconUserX,
 } from "@tabler/icons-react"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 
-import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
+import { CandleChart } from "@/components/charts/CandleChart"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { Identicon } from "@/components/Identicon"
 import { PageStagger, StaggerItem } from "@/components/motion"
@@ -40,11 +40,16 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   ApiError,
-  type BandwidthBucket,
-  type BandwidthRange,
   type ConnectionSessionRow,
   type DeviceStatus,
   type EndpointHistoryRow,
@@ -58,11 +63,11 @@ import {
   adminListDeviceEndpointHistory,
   adminRevokeUserSessions,
   adminSendPasswordReset,
+  adminSetDeviceQuota,
   adminSetUserEmail,
   adminSetUserQuota,
   adminSetUserRole,
   adminSetUserStatus,
-  adminUserBandwidth,
   me as fetchMe,
 } from "@/lib/api"
 import { formatBytes } from "@/lib/units"
@@ -83,6 +88,10 @@ const DEVICE_STATUS_TO_PILL: Record<DeviceStatus, Status> = {
 
 const GIB = 1024 ** 3
 
+// Activity timeline: how many of the merged entries the inline panel shows
+// before the "View all" side sheet takes over with the full list.
+const ACTIVITY_PREVIEW_COUNT = 10
+
 export function UserDetailPage() {
   const { id = "" } = useParams<{ id: string }>()
   const self = useAuth((s) => s.user)
@@ -99,7 +108,12 @@ export function UserDetailPage() {
   const [roleOpen, setRoleOpen] = useState(false)
   const [revokeSessionsOpen, setRevokeSessionsOpen] = useState(false)
   const [editEmailOpen, setEditEmailOpen] = useState(false)
-  const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
+  // Device whose per-device quota dialog is open (null = closed).
+  const [quotaDevice, setQuotaDevice] = useState<{
+    id: string
+    name: string
+    cap: number | null
+  } | null>(null)
   // ID of the device whose endpoint-history dialog is open; null means
   // closed. Phase 2 / Stage A — admins click the "history" cell on any
   // device row to drill into every distinct WG endpoint that peer has
@@ -113,21 +127,37 @@ export function UserDetailPage() {
     id: string
     name: string
   } | null>(null)
+  // Full activity timeline in a side sheet (inline panel shows a preview).
+  const [activityOpen, setActivityOpen] = useState(false)
 
   const detailQ = useQuery({
     queryKey: ["admin", "user", id],
     queryFn: () => adminGetUserDetail(id),
     enabled: !!id,
-  })
-
-  const bwQ = useQuery({
-    queryKey: ["admin", "user", id, "bandwidth", bwRange],
-    queryFn: () => adminUserBandwidth(id, bwRange),
-    enabled: !!id,
+    // Keep quota usage, device status, and handshakes fresh without a manual
+    // refresh. Live device/user events also invalidate this key (see
+    // LiveStatsProvider) for instant status flips; this is the steady tick that
+    // advances the ever-growing usage counters between events.
+    refetchInterval: 10_000,
   })
 
   const u = detailQ.data?.user
   const isSelf = u?.id === self?.id
+
+  // Merged activity timeline (audit + session events + connection sessions),
+  // newest-first. Computed once so the inline preview and the full side sheet
+  // share the same list.
+  const timeline = useMemo(
+    () => (detailQ.data ? buildTimeline(detailQ.data) : []),
+    [detailQ.data],
+  )
+  const deviceNameById = useMemo(
+    () =>
+      new Map(
+        (detailQ.data?.devices ?? []).map((d) => [d.id, d.name] as const),
+      ),
+    [detailQ.data],
+  )
 
   const invalidateUser = () => {
     void qc.invalidateQueries({ queryKey: ["admin", "user", id] })
@@ -448,20 +478,13 @@ export function UserDetailPage() {
 
           <StaggerItem>
             <Panel
-              title="Bandwidth history"
-              sub={`Aggregated across all of this user's devices · ${bwRange}`}
-              right={
-                <RangePicker value={bwRange} onChange={setBwRange} />
-              }
+              title="Bandwidth"
+              sub="Live bandwidth across all of this user's devices — drag to pan, scroll to zoom"
+              flush
             >
-              {bwQ.isLoading ? (
-                <Skeleton className="h-[220px] rounded-none" />
-              ) : (
-                <BandwidthChart
-                  buckets={(bwQ.data?.buckets ?? []) as BandwidthBucket[]}
-                  height={220}
-                />
-              )}
+              <div className="p-3">
+                <CandleChart scope="admin-user" id={id} height={300} />
+              </div>
             </Panel>
           </StaggerItem>
 
@@ -480,6 +503,7 @@ export function UserDetailPage() {
                         <th>OS</th>
                         <th>IP</th>
                         <th>Status</th>
+                        <th>Quota</th>
                         <th>Last handshake</th>
                         <th>Last endpoint</th>
                         <th>Connections</th>
@@ -504,9 +528,32 @@ export function UserDetailPage() {
                           </td>
                           <td className="font-mono text-xs">{d.allocated_ip}</td>
                           <td>
-                            <StatusPill
-                              status={DEVICE_STATUS_TO_PILL[d.status] ?? "offline"}
-                              label={d.status}
+                            <div className="flex flex-col gap-0.5">
+                              <StatusPill
+                                status={DEVICE_STATUS_TO_PILL[d.status] ?? "offline"}
+                                label={d.status}
+                              />
+                              {d.auto_paused && (
+                                <span
+                                  className="font-mono text-[10px] text-amber-600 dark:text-amber-400"
+                                  title="Auto-paused by the quota sweep; resumes on reset"
+                                >
+                                  quota
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <DeviceQuotaCell
+                              used={d.current_month_bytes}
+                              cap={d.monthly_byte_cap}
+                              onEdit={() =>
+                                setQuotaDevice({
+                                  id: d.id,
+                                  name: d.name,
+                                  cap: d.monthly_byte_cap,
+                                })
+                              }
                             />
                           </td>
                           <td className="text-muted-foreground font-mono text-xs">
@@ -562,50 +609,67 @@ export function UserDetailPage() {
           <StaggerItem>
             <Panel
               title="Activity timeline"
-              sub="Audit + session events + connection sessions, merged chronologically — newest first"
+              sub={
+                timeline.length > ACTIVITY_PREVIEW_COUNT
+                  ? `Showing ${ACTIVITY_PREVIEW_COUNT} of ${timeline.length} — audit + session + connection events, newest first`
+                  : "Audit + session events + connection sessions, merged chronologically — newest first"
+              }
               flush
+              right={
+                timeline.length > ACTIVITY_PREVIEW_COUNT ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setActivityOpen(true)}
+                  >
+                    View all ({timeline.length})
+                  </Button>
+                ) : undefined
+              }
             >
-              {detailQ.data && (() => {
-                const items = buildTimeline(detailQ.data)
-                if (items.length === 0) {
-                  return (
-                    <div className="text-muted-foreground py-8 text-center font-mono text-sm">
-                      No activity yet.
-                    </div>
-                  )
-                }
-                const deviceNameById = new Map(
-                  detailQ.data.devices.map((d) => [d.id, d.name]),
-                )
-                return (
-                  <div className="zv-table-scroll min-w-0 max-w-full">
-                    <table className="zv-table table-fixed">
-                      <thead>
-                        <tr>
-                          <th className="w-[150px]">When</th>
-                          <th className="w-[100px]">Kind</th>
-                          <th className="w-[180px]">Event</th>
-                          <th className="w-[140px]">IP</th>
-                          <th>Detail</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.map((it) => (
-                          <TimelineRow
-                            key={`${it.kind}-${it.id}`}
-                            item={it}
-                            deviceNameById={deviceNameById}
-                          />
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )
-              })()}
+              {timeline.length === 0 ? (
+                <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                  No activity yet.
+                </div>
+              ) : (
+                <TimelineTable
+                  items={timeline.slice(0, ACTIVITY_PREVIEW_COUNT)}
+                  deviceNameById={deviceNameById}
+                />
+              )}
             </Panel>
           </StaggerItem>
         </>
       )}
+
+      {/* Full activity timeline — opened by "View all". */}
+      <Sheet open={activityOpen} onOpenChange={setActivityOpen}>
+        <SheetContent
+          side="right"
+          className="flex flex-col gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl"
+        >
+          <SheetHeader className="border-border border-b p-4">
+            <SheetTitle>Activity timeline</SheetTitle>
+            <SheetDescription>
+              Audit + session events + connection sessions, merged
+              chronologically — newest first ({timeline.length})
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {timeline.length === 0 ? (
+              <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                No activity yet.
+              </div>
+            ) : (
+              <TimelineTable
+                items={timeline}
+                deviceNameById={deviceNameById}
+                full
+              />
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {detailQ.isError && (
         <StaggerItem>
@@ -727,6 +791,14 @@ export function UserDetailPage() {
         />
       )}
 
+      <DeviceQuotaDialog
+        device={quotaDevice}
+        onOpenChange={(open) => {
+          if (!open) setQuotaDevice(null)
+        }}
+        onSaved={invalidateUser}
+      />
+
       <EndpointHistoryDialog
         device={endpointDevice}
         onOpenChange={(open) => {
@@ -758,30 +830,6 @@ function KvList({ items }: { items: [string, React.ReactNode][] }) {
         </div>
       ))}
     </dl>
-  )
-}
-
-function RangePicker({
-  value,
-  onChange,
-}: {
-  value: BandwidthRange
-  onChange: (r: BandwidthRange) => void
-}) {
-  const opts: BandwidthRange[] = ["24h", "7d", "30d"]
-  return (
-    <div className="border-border inline-flex border">
-      {opts.map((r) => (
-        <button
-          key={r}
-          type="button"
-          onClick={() => onChange(r)}
-          className={`px-2 py-0.5 font-mono text-[11px] transition-colors ${value === r ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
-        >
-          {r}
-        </button>
-      ))}
-    </div>
   )
 }
 
@@ -899,6 +947,132 @@ function QuotaDialog({
             value={gibStr}
             onChange={(e) => setGibStr(e.target.value)}
             placeholder="Unlimited"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={m.isPending} onClick={submit}>
+            {m.isPending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Compact per-device quota readout for the devices table: a used/cap line
+ *  over a color-tiered mini bar, or a "Set cap" affordance when uncapped.
+ *  Clicking either opens the per-device cap editor. */
+function DeviceQuotaCell({
+  used,
+  cap,
+  onEdit,
+}: {
+  used: number
+  cap: number | null
+  onEdit: () => void
+}) {
+  if (!cap || cap <= 0) {
+    return (
+      <button
+        type="button"
+        onClick={onEdit}
+        className="text-muted-foreground hover:text-foreground font-mono text-[11px] underline-offset-2 hover:underline"
+        title="Set a per-device monthly cap"
+      >
+        {formatBytes(used)} · set cap
+      </button>
+    )
+  }
+  const pct = Math.min(100, Math.round((used / cap) * 100))
+  const tone =
+    pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"
+  return (
+    <button
+      type="button"
+      onClick={onEdit}
+      className="group flex w-[120px] flex-col gap-1 text-left"
+      title="Edit per-device monthly cap"
+    >
+      <span className="text-muted-foreground group-hover:text-foreground font-mono text-[11px]">
+        {formatBytes(used)} / {formatBytes(cap)} ({pct}%)
+      </span>
+      <span className="bg-muted block h-1 w-full overflow-hidden">
+        <span className={`block h-full ${tone}`} style={{ width: `${pct}%` }} />
+      </span>
+    </button>
+  )
+}
+
+/** Per-device cap editor — same GiB-in/bytes-out contract as the account
+ *  [`QuotaDialog`], targeting a single device. */
+function DeviceQuotaDialog({
+  device,
+  onOpenChange,
+  onSaved,
+}: {
+  device: { id: string; name: string; cap: number | null } | null
+  onOpenChange: (o: boolean) => void
+  onSaved: () => void
+}) {
+  const [gibStr, setGibStr] = useState("")
+
+  useEffect(() => {
+    if (device) setGibStr(device.cap ? (device.cap / GIB).toFixed(2) : "")
+  }, [device])
+
+  const m = useMutation({
+    mutationFn: (cap: number | null) =>
+      adminSetDeviceQuota(device?.id ?? "", cap),
+    onSuccess: () => {
+      toast.success("Device quota updated")
+      onSaved()
+      onOpenChange(false)
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const submit = () => {
+    const trimmed = gibStr.trim()
+    if (!trimmed) {
+      m.mutate(null)
+      return
+    }
+    const gib = Number(trimmed)
+    if (!Number.isFinite(gib) || gib < 0) {
+      toast.error("Enter a non-negative number of GiB, or leave blank for no cap")
+      return
+    }
+    m.mutate(gib > 0 ? Math.round(gib * GIB) : null)
+  }
+
+  return (
+    <Dialog open={!!device} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Per-device data cap</DialogTitle>
+          <DialogDescription>
+            Cap for <span className="font-medium">{device?.name}</span>, enforced
+            per calendar month. The device pauses when it hits this cap or the
+            account cap — whichever comes first. Blank or 0 removes the device
+            cap.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="dev-cap-gib">Monthly cap (GiB)</Label>
+          <Input
+            id="dev-cap-gib"
+            type="number"
+            inputMode="decimal"
+            step="0.5"
+            min="0"
+            value={gibStr}
+            onChange={(e) => setGibStr(e.target.value)}
+            placeholder="No device cap"
           />
         </div>
         <DialogFooter>
@@ -1104,6 +1278,46 @@ function buildTimeline(d: {
   return items
 }
 
+/** The merged-timeline table — shared by the inline preview (sliced) and the
+ *  full side sheet (every row). Columns auto-size to content (no `table-fixed`)
+ *  with long cells capped + truncated, so nothing overlaps; any residual width
+ *  scrolls horizontally. `full` (sheet) renders just the table and lets the
+ *  parent own scrolling, so every row is reachable. */
+function TimelineTable({
+  items,
+  deviceNameById,
+  full = false,
+}: {
+  items: TimelineItem[]
+  deviceNameById: Map<string, string>
+  full?: boolean
+}) {
+  const table = (
+    <table className="zv-table">
+      <thead>
+        <tr>
+          <th className="w-[120px]">When</th>
+          <th className="w-[90px]">Kind</th>
+          <th>Event</th>
+          <th className="w-[150px]">IP</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((it) => (
+          <TimelineRow
+            key={`${it.kind}-${it.id}`}
+            item={it}
+            deviceNameById={deviceNameById}
+          />
+        ))}
+      </tbody>
+    </table>
+  )
+  if (full) return table
+  return <div className="zv-table-scroll min-w-0 max-w-full">{table}</div>
+}
+
 function TimelineRow({
   item,
   deviceNameById,
@@ -1138,7 +1352,7 @@ function TimelineRow({
           )}
         </td>
         <td className="min-w-0 text-muted-foreground font-mono text-[11px]">
-          <span className="block max-w-full truncate" title={summarizeMetadata(item.metadata)}>
+          <span className="block max-w-[440px] truncate" title={summarizeMetadata(item.metadata)}>
             {targetLabel && (
               <span className="text-foreground mr-2">→ {targetLabel}</span>
             )}
@@ -1170,7 +1384,7 @@ function TimelineRow({
           )}
         </td>
         <td className="min-w-0 text-muted-foreground font-mono text-[11px]" title={item.user_agent ?? undefined}>
-          <span className="block max-w-full truncate">
+          <span className="block max-w-[440px] truncate">
             {summarizeMetadata(item.metadata)}
             {item.user_agent && (
               <span className="ml-2 inline-block max-w-full truncate align-bottom">
@@ -1203,8 +1417,11 @@ function TimelineRow({
           connection
         </Pill>
       </td>
-      <td>
-        <span className="font-mono text-xs">
+      <td className="min-w-0">
+        <span
+          className="block max-w-[260px] truncate font-mono text-xs"
+          title={`${deviceName} · ${open ? "active" : `closed after ${duration}`}`}
+        >
           <span className="text-foreground">{deviceName}</span>
           <span className="text-muted-foreground"> · </span>
           {open ? "active" : `closed after ${duration}`}
@@ -1212,7 +1429,7 @@ function TimelineRow({
       </td>
       <td className="min-w-0 font-mono text-xs" title={endpoint ?? undefined}>
         {endpoint ? (
-          <span className="block max-w-full truncate">{endpoint}</span>
+          <span className="block max-w-[220px] truncate">{endpoint}</span>
         ) : (
           <span className="text-muted-foreground">—</span>
         )}

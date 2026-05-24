@@ -13,13 +13,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { OptionTiles } from "@/components/devices/OptionTiles"
 import {
   ApiError,
   patchDevice,
@@ -27,30 +21,7 @@ import {
   type DeviceType,
   type PublicDevice,
 } from "@/lib/api"
-
-// [value, label] — value stays the lowercase enum the API expects; the
-// label is the brand-cased display string.
-const OS_OPTIONS: [DeviceOs, string][] = [
-  ["ios", "iOS"],
-  ["android", "Android"],
-  ["macos", "macOS"],
-  ["windows", "Windows"],
-  ["linux", "Linux"],
-  ["other", "Other"],
-]
-
-const TYPE_OPTIONS: [DeviceType, string][] = [
-  ["phone", "Phone"],
-  ["tablet", "Tablet"],
-  ["laptop", "Laptop"],
-  ["desktop", "Desktop"],
-  ["tv", "TV"],
-  ["router", "Router"],
-  ["watch", "Watch"],
-  ["iot", "IoT"],
-  ["server", "Server"],
-  ["other", "Other"],
-]
+import { DEVICE_TYPE_OPTIONS, OS_OPTIONS } from "@/lib/deviceIcons"
 
 /**
  * Shared "edit device" dialog — name, OS, device type, and custom DNS. The
@@ -160,40 +131,23 @@ function EditDeviceForm({
             1–64 characters.
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Label className="zv-eyebrow">Operating system</Label>
-            <Select value={os} onValueChange={(v) => setOs(v as DeviceOs)}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {OS_OPTIONS.map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label className="zv-eyebrow">Device type</Label>
-            <Select
-              value={deviceType}
-              onValueChange={(v) => setDeviceType(v as DeviceType)}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TYPE_OPTIONS.map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="flex flex-col gap-1.5">
+          <Label className="zv-eyebrow">Operating system</Label>
+          <OptionTiles
+            ariaLabel="Operating system"
+            options={OS_OPTIONS}
+            value={os}
+            onChange={setOs}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label className="zv-eyebrow">Device type</Label>
+          <OptionTiles
+            ariaLabel="Device type"
+            options={DEVICE_TYPE_OPTIONS}
+            value={deviceType}
+            onChange={setDeviceType}
+          />
         </div>
       </div>
       <DialogFooter>

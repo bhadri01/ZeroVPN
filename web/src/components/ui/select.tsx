@@ -2,12 +2,23 @@ import * as React from "react"
 import { Select as SelectPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { withBodyPointerEvents } from "@/lib/radix"
 import { IconSelector, IconCheck, IconChevronUp, IconChevronDown } from "@tabler/icons-react"
 
 function Select({
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />
+  // Clears a stray `pointer-events: none` left on <body> when a Select closes
+  // inside a modal Dialog/Sheet (otherwise the trigger can't be clicked again
+  // and the dropdown "won't reopen"). See `withBodyPointerEvents`.
+  return (
+    <SelectPrimitive.Root
+      data-slot="select"
+      onOpenChange={withBodyPointerEvents(onOpenChange)}
+      {...props}
+    />
+  )
 }
 
 function SelectGroup({

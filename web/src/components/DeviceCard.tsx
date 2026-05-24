@@ -5,9 +5,7 @@ import {
   IconGripVertical,
 } from "@tabler/icons-react"
 import {
-  useEffect,
   useMemo,
-  useState,
   type HTMLAttributes,
   type PointerEventHandler,
   type ReactNode,
@@ -18,12 +16,13 @@ import { MiniAreaChart } from "@/components/charts/LazyMiniAreaChart"
 import { CopyButton } from "@/components/CopyButton"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import { WithTooltip } from "@/components/ui/with-tooltip"
+import { useDeviceOnline } from "@/hooks/useDeviceOnline"
 import { useLiveTotal } from "@/hooks/useLiveTotal"
 import { useNow } from "@/hooks/useNow"
 import type { PublicDevice } from "@/lib/api"
 import { formatAgo, formatDateTime } from "@/lib/datetime"
+import { DEVICE_TYPE_ICONS, deviceTypeLabel, osLabel } from "@/lib/deviceIcons"
 import {
-  connState,
   endpointHost,
   peerState,
   type ConnState,
@@ -38,13 +37,6 @@ import { useLiveStats } from "@/stores/liveStats"
  *  a shorter window keeps the trace readable and stops the Y axis being
  *  pulled by an hour-old spike. */
 const CHART_WINDOW = 30
-
-/** How long a previously-active peer can go without moving a byte before
- *  we treat it as disconnected. Peer configs ship `PersistentKeepalive =
- *  30s`, so a live peer's rx advances at least that often; ~3× that gives
- *  a robust, flicker-free drop signal that's far quicker than waiting out
- *  the ~3-min WireGuard handshake window. See `DeviceLive.lastSeenTs`. */
-const ACTIVITY_STALE_MS = 90_000
 
 /** Pill the header shows — combines connection state with peer state
  *  (admin lifecycle) so a paused or revoked device always wins over the
@@ -117,33 +109,11 @@ export function DeviceCard({
   // expiry + keepalive drop both surface within ~1s, no event needed).
   const now = useNow()
 
-  // Timestamp the tab last (re)gained focus. While hidden we stop
-  // receiving stats, so `lastSeenTs` goes stale for peers that are still
-  // up; without this guard, refocusing would flash a live device
-  // "offline" until its next keepalive lands. We only trust the drop
-  // signal once stats have had a full staleness window to flow in again.
-  const [visibleSince, setVisibleSince] = useState(() => Date.now())
-  useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState !== "hidden") setVisibleSince(Date.now())
-    }
-    document.addEventListener("visibilitychange", onVis)
-    return () => document.removeEventListener("visibilitychange", onVis)
-  }, [])
-
   const hasEverHandshook = d.last_handshake_at != null
-  // Connectivity = the coarse handshake window, refined by keepalive
-  // activity. A live peer's rx ticks every ~30s (PersistentKeepalive); if
-  // we've seen activity and it's since gone stale, the peer dropped — flip
-  // offline now instead of waiting out the full handshake window. When
-  // we've never seen activity (just connected, or no keepalive) we fall
-  // back to the handshake gate, so this never produces a false "offline".
-  const lastSeenTs = live?.lastSeenTs ?? 0
-  const settledAfterFocus = now - visibleSince > ACTIVITY_STALE_MS
-  const activityStale =
-    lastSeenTs > 0 && now - lastSeenTs > ACTIVITY_STALE_MS && settledAfterFocus
-  const isOnline =
-    hasEverHandshook && connState(d) === "online" && !activityStale
+  // Effective connectivity: the handshake window refined by live keepalive
+  // activity, so a dropped peer flips offline in ~90s instead of waiting out
+  // the full ~3-min handshake window. See useDeviceOnline.
+  const isOnline = useDeviceOnline(d)
   const rxBps = isOnline ? (live?.rxBps ?? 0) : 0
   const txBps = isOnline ? (live?.txBps ?? 0) : 0
   // Slice histories to the last N frames before feeding the chart. When
@@ -175,6 +145,10 @@ export function DeviceCard({
   const peerHost = d.last_peer_endpoint
     ? endpointHost(d.last_peer_endpoint)
     : null
+
+  // Device-type icon before the name — a glanceable indicator of what the
+  // peer is (laptop / phone / server …).
+  const TypeIcon = DEVICE_TYPE_ICONS[d.device_type]
 
   return (
     <div
@@ -221,9 +195,13 @@ export function DeviceCard({
           <Link
             to={`/app/devices/${d.id}`}
             draggable={false}
-            className="text-foreground hover:text-foreground min-w-0 flex-1 truncate text-sm font-medium transition-colors"
+            className="text-foreground hover:text-foreground inline-flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium transition-colors"
           >
-            {d.name}
+            <TypeIcon
+              className="text-muted-foreground size-4 shrink-0"
+              title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
+            />
+            <span className="truncate">{d.name}</span>
           </Link>
           <div className="flex shrink-0 items-center gap-1">
             <StatusPill status={rowPill(isOnline ? "online" : "offline", peerState(d))} />

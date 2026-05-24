@@ -127,6 +127,21 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
     ? (auditQ.data?.items ?? []).map(auditToItem)
     : userTail.slice(-limit).reverse().map(tailToItem)
 
+  // Always offered — for users the preview above is the ephemeral live tail,
+  // so the persisted full log (which may have history the tail doesn't) must
+  // stay reachable even when the preview is empty.
+  const viewAllFooter = (
+    <div className="border-border bg-card/70 sticky bottom-0 border-t px-4 py-2">
+      <Link
+        to={isAdmin ? "/admin/audit" : "/app/activity"}
+        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 font-mono text-[11px]"
+      >
+        {isAdmin ? "View full audit log" : "View all activity"}
+        <IconArrowUpRight size={12} aria-hidden />
+      </Link>
+    </div>
+  )
+
   if (isAdmin && auditQ.isLoading) {
     return (
       <Shell>
@@ -161,6 +176,7 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
             change state.
           </p>
         </div>
+        {viewAllFooter}
       </Shell>
     )
   }
@@ -172,17 +188,7 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
           <ActivityRow key={a.id} item={a} />
         ))}
       </ul>
-      {isAdmin && (
-        <div className="border-border bg-card/70 sticky bottom-0 border-t px-4 py-2">
-          <Link
-            to="/admin/audit"
-            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 font-mono text-[11px]"
-          >
-            View full audit log
-            <IconArrowUpRight size={12} aria-hidden />
-          </Link>
-        </div>
-      )}
+      {viewAllFooter}
     </Shell>
   )
 }

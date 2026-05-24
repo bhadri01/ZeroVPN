@@ -90,6 +90,36 @@ pub async fn list_for_target(
     .await
 }
 
+/// Keyset-paginated variant of [`list_for_target`] for infinite scroll. When
+/// `before_id` is `Some`, returns only entries older than that id (the cursor
+/// is the last row's id from the previous page). Ordering by `id DESC` matches
+/// `created_at DESC` because audit ids are assigned monotonically at insert
+/// time, so the cursor stays stable even as new rows land at the top — no
+/// offset drift or duplicate rows mid-scroll. `limit` is hard-capped at 500.
+pub async fn list_for_target_before(
+    pool: &PgPool,
+    target_type: &str,
+    target_id: Uuid,
+    before_id: Option<i64>,
+    limit: i64,
+) -> sqlx::Result<Vec<TimelineEntry>> {
+    let limit = limit.clamp(1, 500);
+    sqlx::query_as::<_, TimelineEntry>(
+        r#"SELECT id, action, metadata, created_at
+             FROM audit_logs
+            WHERE target_type = $1 AND target_id = $2
+              AND ($3::bigint IS NULL OR id < $3)
+            ORDER BY id DESC
+            LIMIT $4"#,
+    )
+    .bind(target_type)
+    .bind(target_id)
+    .bind(before_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
 /// Richer row for the per-user activity timeline. Includes the IP / UA
 /// captured at write time + the target so the frontend can render
 /// "user X edited device Y" in one line.
@@ -127,4 +157,45 @@ pub async fn list_for_user(
     .bind(limit)
     .fetch_all(pool)
     .await
+}
+
+/// Offset-paginated form of [`list_for_user`] for the user-facing "Activity"
+/// page. Same scope (the user as actor or as a `user`-target) and ordering;
+/// pair with [`count_for_user`] for the total. `limit` hard-capped at 200.
+pub async fn list_for_user_paged(
+    pool: &PgPool,
+    user_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> sqlx::Result<Vec<UserActivityEntry>> {
+    let limit = limit.clamp(1, 200);
+    let offset = offset.max(0);
+    sqlx::query_as::<_, UserActivityEntry>(
+        r#"SELECT id, action, metadata, ip, user_agent, target_type, target_id, created_at
+             FROM audit_logs
+            WHERE actor_user_id = $1
+               OR (target_type = 'user' AND target_id = $1)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2 OFFSET $3"#,
+    )
+    .bind(user_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
+/// Total audit entries in scope for a user (same predicate as
+/// [`list_for_user`]) — drives the Activity page's pagination control.
+pub async fn count_for_user(pool: &PgPool, user_id: Uuid) -> sqlx::Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COUNT(*)::BIGINT
+             FROM audit_logs
+            WHERE actor_user_id = $1
+               OR (target_type = 'user' AND target_id = $1)"#,
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
 }

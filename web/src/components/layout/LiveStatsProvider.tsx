@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef } from "react"
 import { isPageVisible } from "@/hooks/usePageVisible"
 import { useWebSocket } from "@/hooks/useWebSocket"
 import type { PublicDevice } from "@/lib/api"
-import { notify } from "@/lib/notify"
+import { notify, osNotify } from "@/lib/notify"
 import type { Event } from "@/lib/wire"
 import { useEventTail } from "@/stores/eventTail"
 import { useLiveStats } from "@/stores/liveStats"
@@ -23,6 +23,21 @@ import { useAuth } from "@/stores/auth"
  *
  * Renders nothing — purely a side-effect host.
  */
+/** Past-tense labels for device lifecycle changes, used to compose the
+ *  background OS notification a user's *other* sessions get when a device is
+ *  added/changed elsewhere. `reordered` is intentionally omitted — too trivial
+ *  to interrupt for. */
+const DEVICE_ACTION_LABEL: Record<string, string> = {
+  created: "added",
+  connected: "connected",
+  updated: "updated",
+  deleted: "removed",
+  paused: "paused",
+  unpaused: "resumed",
+  keys_rotated: "keys rotated",
+  dns_updated: "DNS updated",
+}
+
 export function LiveStatsProvider() {
   const user = useAuth((s) => s.user)
   const qc = useQueryClient()
@@ -105,6 +120,11 @@ export function LiveStatsProvider() {
           }
           void qc.invalidateQueries({ queryKey: ["devices"] })
           void qc.invalidateQueries({ queryKey: ["device", event.device_id] })
+          // The admin user-detail page lists this user's devices (status +
+          // per-device quota) — refresh it instantly on a pause/resume/revoke.
+          void qc.invalidateQueries({
+            queryKey: ["admin", "user", event.user_id],
+          })
           break
         }
         case "handshake_change": {
@@ -161,7 +181,17 @@ export function LiveStatsProvider() {
           // while hidden) — it's only cache invalidation, and it means the
           // view is already correct when the tab regains focus.
           switch (event.resource) {
-            case "device":
+            case "device": {
+              // Look up the device name from cache BEFORE invalidating (the
+              // cached list is still present synchronously) so a background
+              // heads-up can name the device.
+              const label = DEVICE_ACTION_LABEL[event.action]
+              const name =
+                event.id != null
+                  ? qc
+                      .getQueryData<PublicDevice[]>(["devices"])
+                      ?.find((d) => d.id === event.id)?.name
+                  : undefined
               void qc.invalidateQueries({ queryKey: ["devices"] })
               void qc.invalidateQueries({ queryKey: ["admin", "devices"] })
               void qc.invalidateQueries({ queryKey: ["me", "topology"] })
@@ -171,7 +201,26 @@ export function LiveStatsProvider() {
                   queryKey: ["admin", "device", event.id],
                 })
               }
+              // Owner's admin user-detail page (device list + per-device quota)
+              // reflects device add/edit/delete/quota changes in real time.
+              if (event.user_id) {
+                void qc.invalidateQueries({
+                  queryKey: ["admin", "user", event.user_id],
+                })
+              }
+              // OS heads-up for the user's *other* (backgrounded) sessions.
+              // osNotify only fires while the tab is hidden, so the session
+              // that performed the action (already showed its own toast) and
+              // any actively-viewing session aren't double-notified.
+              if (label) {
+                osNotify(`Device ${label}`, {
+                  body: name,
+                  url: event.id ? `/app/devices/${event.id}` : "/app/devices",
+                  tag: event.id ? `dev-${event.id}-${event.action}` : undefined,
+                })
+              }
               break
+            }
             case "user":
               void qc.invalidateQueries({ queryKey: ["admin", "users"] })
               void qc.invalidateQueries({ queryKey: ["admin", "stats"] })
@@ -196,6 +245,20 @@ export function LiveStatsProvider() {
               void qc.invalidateQueries({ queryKey: ["maintenance-banner"] })
               break
           }
+          break
+        }
+        case "notify": {
+          // Server-composed notification (connectivity / quota / security).
+          // Render it as a toast + OS notification (the latter only when the
+          // tab is hidden, handled inside notify()). Processed regardless of
+          // visibility so the OS heads-up still fires for a backgrounded tab.
+          const fn = notify[event.level]
+          fn(event.title, {
+            description: event.body ?? undefined,
+            important: true,
+            url: event.url ?? undefined,
+            id: event.tag ?? undefined,
+          })
           break
         }
         default:

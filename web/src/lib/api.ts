@@ -124,6 +124,14 @@ export interface PublicDevice {
    *  the WS store). `0` until the device transmits. Only on list / get. */
   total_rx_bytes: number
   total_tx_bytes: number
+  /** Per-device monthly byte cap (null/0 = no device cap; account cap still
+   *  applies). Admin-set. Only on list / get responses. */
+  monthly_byte_cap: number | null
+  /** This device's own bandwidth used this monthly cycle. list / get only. */
+  current_month_bytes: number
+  /** True when the quota sweep auto-paused this device (device or account
+   *  cap), vs. a manual pause. */
+  auto_paused: boolean
 }
 
 export interface CreatedDevice {
@@ -169,6 +177,38 @@ export interface MyServerInfo {
 }
 
 export const meServer = () => apiFetch<MyServerInfo>("/me/server")
+
+/** The signed-in user's account-level monthly bandwidth quota — usage, cap,
+ *  and the next reset. Powers the dashboard "Quota" card. `monthly_byte_cap`
+ *  is `null` when the account is uncapped (unlimited). */
+export interface MyUsage {
+  current_month_bytes: number
+  monthly_byte_cap: number | null
+  quota_resets_at: string
+}
+
+export const myUsage = () => apiFetch<MyUsage>("/me/usage")
+
+/** One row in the user's own activity log — the self-service equivalent of
+ *  the admin audit log, scoped to actions the user took or admin actions on
+ *  their account. */
+export interface MyActivityRow {
+  id: number
+  /** Dotted action key, e.g. `device.created`, `auth.login`. */
+  action: string
+  target_type: string | null
+  target_id: string | null
+  metadata: unknown
+  created_at: string
+}
+
+export interface MyActivityPage {
+  items: MyActivityRow[]
+  total: number
+}
+
+export const listMyActivity = (limit = 50, offset = 0) =>
+  apiFetch<MyActivityPage>(`/me/activity?limit=${limit}&offset=${offset}`)
 
 // ── User preferences ──────────────────────────────────────────────────
 // Settings-page values the server persists per-user so they sync across
@@ -385,8 +425,21 @@ export interface DeviceEvent {
   created_at: string
 }
 
-export const listDeviceEvents = (id: string, limit = 100) =>
-  apiFetch<DeviceEvent[]>(`/devices/${id}/events?limit=${limit}`)
+/**
+ * Audit-log entries targeting a device, newest first. Supports keyset
+ * pagination for infinite scroll: pass `beforeId` (the last row's id from the
+ * previous page) to fetch the next, older page.
+ */
+export const listDeviceEvents = (
+  id: string,
+  opts: { limit?: number; beforeId?: number } = {},
+) => {
+  const params = new URLSearchParams()
+  if (opts.limit != null) params.set("limit", String(opts.limit))
+  if (opts.beforeId != null) params.set("before_id", String(opts.beforeId))
+  const qs = params.toString()
+  return apiFetch<DeviceEvent[]>(`/devices/${id}/events${qs ? `?${qs}` : ""}`)
+}
 
 /** Pre-flight DNS-name availability probe used by the create-device
  *  dialog. Returns whether the candidate FQDN matches the server regex
@@ -549,6 +602,30 @@ export const serverCandles = (
 export const userCandles = (tf: Timeframe = "1m", limit = 120, before?: string) =>
   apiFetch<CandleResponse>(`/candles?${candleQs(tf, limit, before)}`)
 
+/** Admin: per-device candles for any device — backs the live bandwidth chart
+ *  on the admin device-detail page. */
+export const adminDeviceCandles = (
+  deviceId: string,
+  tf: Timeframe = "1m",
+  limit = 120,
+  before?: string,
+) =>
+  apiFetch<CandleResponse>(
+    `/admin/devices/${deviceId}/candles?${candleQs(tf, limit, before)}`,
+  )
+
+/** Admin: aggregate candles across all of a target user's devices — backs the
+ *  live bandwidth chart on the admin user-detail page. */
+export const adminUserCandles = (
+  userId: string,
+  tf: Timeframe = "1m",
+  limit = 120,
+  before?: string,
+) =>
+  apiFetch<CandleResponse>(
+    `/admin/users/${userId}/candles?${candleQs(tf, limit, before)}`,
+  )
+
 // --- 2FA -----------------------------------------------------------------
 
 export interface TotpSetupResponse {
@@ -664,6 +741,14 @@ interface AdminUserDevice {
   /** Wall-clock when the current `last_peer_endpoint` was first seen. */
   last_peer_endpoint_at: string | null
   created_at: string
+  /** Per-device monthly byte cap (null/0 = no device cap; account cap still
+   *  applies). Enforced alongside the account cap by the quota sweep. */
+  monthly_byte_cap: number | null
+  /** The device's own bandwidth used this monthly cycle. */
+  current_month_bytes: number
+  /** True when the quota sweep auto-paused this device (device or account
+   *  cap), vs. a manual user pause. */
+  auto_paused: boolean
 }
 
 export interface EndpointHistoryRow {
@@ -714,6 +799,7 @@ interface AdminDeviceDetail {
   server_id: string
   name: string
   os: DeviceOs
+  device_type: DeviceType
   status: DeviceStatus
   allocated_ip: string
   public_key: string
@@ -723,6 +809,14 @@ interface AdminDeviceDetail {
   last_peer_endpoint: string | null
   last_peer_endpoint_at: string | null
   created_at: string
+  /** Authoritative lifetime totals (same source as the user device card) so
+   *  the admin RX/TX/Total KPIs match the owner's view. */
+  total_rx_bytes: number
+  total_tx_bytes: number
+  /** Per-device monthly quota for the Quota KPI. */
+  monthly_byte_cap: number | null
+  current_month_bytes: number
+  auto_paused: boolean
 }
 
 interface AdminDeviceActivity {
@@ -902,6 +996,16 @@ export const adminSetUserStatus = (id: string, status: UserStatus) =>
 
 export const adminSetUserQuota = (id: string, monthly_byte_cap: number | null) =>
   apiFetch<{ status: string }>(`/admin/users/${id}/quota`, {
+    method: "PUT",
+    body: JSON.stringify({ monthly_byte_cap }),
+  })
+
+/** Set (or clear, with null) a single device's monthly byte cap. */
+export const adminSetDeviceQuota = (
+  deviceId: string,
+  monthly_byte_cap: number | null,
+) =>
+  apiFetch<{ status: string }>(`/admin/devices/${deviceId}/quota`, {
     method: "PUT",
     body: JSON.stringify({ monthly_byte_cap }),
   })
@@ -1176,6 +1280,10 @@ export interface AdminServerRow {
   dns_servers: string[]
   mtu: number
   is_active: boolean
+  /** Cumulative lifetime RX/TX across this server's devices (accurate
+   *  device-lifetime sum). Powers the server-live card's RX/TX totals. */
+  rx_total: number
+  tx_total: number
 }
 
 export const adminListServers = () =>

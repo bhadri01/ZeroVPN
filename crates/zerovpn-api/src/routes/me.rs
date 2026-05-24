@@ -1,13 +1,18 @@
 use std::collections::HashMap;
 
-use axum::{Json, extract::State, http::HeaderMap, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{Query, State},
+    http::HeaderMap,
+    response::IntoResponse,
+};
 use garde::Validate;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use time::OffsetDateTime;
 use tower_sessions::Session;
 use tracing::{info, warn};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use zerovpn_db::repos::{
     audit, devices, servers, session_events, topology_positions, user_prefs, users,
 };
@@ -274,6 +279,141 @@ pub async fn get_preferences(
 ) -> ApiResult<impl IntoResponse> {
     let prefs = user_prefs::get(&state.pool, user.id).await?;
     Ok(Json(prefs))
+}
+
+/// The signed-in user's own account-level monthly bandwidth quota: usage, cap,
+/// and the next reset. Powers the dashboard "Quota" card — the self-service
+/// equivalent of the admin user-detail quota (which only admins can see).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UsageResponse {
+    /// Bytes used in the current monthly cycle (rx + tx, all devices), treated
+    /// as 0 once the cycle rolls over even before the next byte re-zeroes it.
+    pub current_month_bytes: i64,
+    /// Account monthly byte cap. `null` means unlimited (no cap set, or 0).
+    pub monthly_byte_cap: Option<i64>,
+    /// Instant the current cycle resets — first of next month, UTC.
+    #[serde(with = "time::serde::rfc3339")]
+    pub quota_resets_at: OffsetDateTime,
+}
+
+#[utoipa::path(
+    get,
+    path = "/me/usage",
+    tag = "Account",
+    responses(
+        (status = 200, description = "Account monthly quota usage", body = UsageResponse),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn usage(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> ApiResult<impl IntoResponse> {
+    let now = OffsetDateTime::now_utc();
+    let cycle_start = users::first_of_month(now);
+    // Derive this month's usage from the trustworthy per-device LIFETIME totals
+    // (the device cards' "Total"), not the drift-prone monthly accumulators or
+    // aggregates: used = (lifetime now) − (lifetime at this cycle's start). It's
+    // therefore always ≤ Total usage and resets cleanly each month.
+    let lifetime_total = devices::user_lifetime_total(&state.pool, user.id).await?;
+    let (cap, baseline, baseline_at) = users::month_quota(&state.pool, user.id)
+        .await?
+        .unwrap_or((None, 0, None));
+
+    let used = match baseline_at {
+        // Baseline belongs to the current cycle — usage is growth since then.
+        Some(at) if at >= cycle_start => (lifetime_total - baseline).max(0),
+        // A previous cycle's baseline → rolled into a new month. Re-snapshot to
+        // the current lifetime so the new month starts at 0 and grows from here.
+        Some(_) => {
+            let _ = users::set_month_baseline(&state.pool, user.id, lifetime_total, cycle_start)
+                .await;
+            0
+        }
+        // Never initialised — seed a 0 baseline so this first tracked month
+        // counts current lifetime (matching the "Total usage" the user sees);
+        // the next rollover re-snapshots and accurate monthly tracking begins.
+        None => {
+            let _ = users::set_month_baseline(&state.pool, user.id, 0, cycle_start).await;
+            lifetime_total.max(0)
+        }
+    };
+
+    Ok(Json(UsageResponse {
+        current_month_bytes: used,
+        // Cap is config; the stored value is authoritative. 0/None = unlimited.
+        monthly_byte_cap: cap.filter(|c| *c > 0),
+        quota_resets_at: users::first_of_next_month(now),
+    }))
+}
+
+// ── Activity log (self-service) ───────────────────────────────────────────
+// The user-facing equivalent of the admin audit log, scoped to the signed-in
+// user's own activity (actions they took + admin actions taken on their
+// account). Paginated so the dashboard's "Recent activity" can link to a full
+// "view all" record.
+
+#[derive(Debug, Deserialize, Default, IntoParams)]
+pub struct ActivityQuery {
+    /// Page size. Clamped to [1, 200] server-side. Defaults to 50.
+    pub limit: Option<i64>,
+    /// Row offset for pagination. Defaults to 0.
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ActivityRow {
+    pub id: i64,
+    /// Dotted action key, e.g. `device.created`, `auth.login`.
+    pub action: String,
+    pub target_type: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub target_id: Option<uuid::Uuid>,
+    pub metadata: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ActivityPage {
+    pub items: Vec<ActivityRow>,
+    /// Total entries in scope (for the pagination control).
+    pub total: i64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/me/activity",
+    tag = "Account",
+    params(ActivityQuery),
+    responses(
+        (status = 200, description = "The user's own activity, newest first", body = ActivityPage),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn activity(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Query(q): Query<ActivityQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let limit = q.limit.unwrap_or(50);
+    let offset = q.offset.unwrap_or(0);
+    let rows = audit::list_for_user_paged(&state.pool, user.id, limit, offset).await?;
+    let total = audit::count_for_user(&state.pool, user.id).await?;
+    let items = rows
+        .into_iter()
+        .map(|r| ActivityRow {
+            id: r.id,
+            action: r.action,
+            target_type: r.target_type,
+            target_id: r.target_id,
+            metadata: r.metadata,
+            created_at: r.created_at,
+        })
+        .collect();
+    Ok(Json(ActivityPage { items, total }))
 }
 
 /// Partial update of the user's preferences. Validates the constrained

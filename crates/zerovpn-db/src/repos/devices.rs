@@ -90,6 +90,24 @@ pub async fn peer_endpoints_for_user(
     .await
 }
 
+/// Per-device monthly quota snapshot for a user's non-revoked devices:
+/// `(device_id, monthly_byte_cap, current_month_bytes, auto_paused)`. Kept off
+/// the core `Device` model (like endpoints / totals) and merged into the
+/// list/get responses so the device card can render a quota bar.
+pub async fn quota_for_user(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> sqlx::Result<Vec<(Uuid, Option<i64>, i64, bool)>> {
+    sqlx::query_as(
+        r#"SELECT id, monthly_byte_cap, current_month_bytes, auto_paused
+             FROM devices
+            WHERE user_id = $1 AND status <> 'revoked'"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// Admin-only: every non-revoked device across all users. Powers the
 /// admin topology view, so devices come back in a stable order
 /// (`user_id`, then `created_at`) — the renderer groups by user, and
@@ -352,6 +370,92 @@ pub async fn accumulate_lifetime(
     .bind(add_tx)
     .fetch_one(pool)
     .await
+}
+
+/// Sum of every non-revoked device's lifetime RX+TX for a user — the
+/// authoritative all-time usage (the device cards' "Total"). The dashboard
+/// derives accurate monthly usage as a delta off this trustworthy figure
+/// (see the `/me/usage` handler), sidestepping the drift-prone monthly
+/// accumulators.
+pub async fn user_lifetime_total(pool: &PgPool, user_id: Uuid) -> sqlx::Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        r#"SELECT COALESCE(SUM(lifetime_rx_bytes + lifetime_tx_bytes), 0)::BIGINT
+             FROM devices
+            WHERE user_id = $1 AND status <> 'revoked'"#,
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+/// Per-server cumulative lifetime RX/TX, keyed by `server_id` — the sum of
+/// each server's (non-revoked) devices' lifetime counters. Powers the admin
+/// server-live card's RX/TX totals. Same trustworthy source as the fleet /
+/// device totals (not the drift-prone aggregates).
+pub async fn server_lifetime_totals(
+    pool: &PgPool,
+) -> sqlx::Result<Vec<(Uuid, i64, i64)>> {
+    sqlx::query_as(
+        r#"SELECT server_id,
+                  COALESCE(SUM(lifetime_rx_bytes), 0)::BIGINT,
+                  COALESCE(SUM(lifetime_tx_bytes), 0)::BIGINT
+             FROM devices
+            WHERE status <> 'revoked'
+            GROUP BY server_id"#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Fold this tick's RX+TX delta into the device's monthly quota counter,
+/// resetting the counter (and advancing `quota_resets_at`) when the month has
+/// rolled over — mirrors [`crate::repos::users::add_monthly_usage`] but scoped
+/// to one device. Returns the new monthly total + the device's own cap so the
+/// caller can decide whether the per-device limit was crossed.
+pub async fn add_monthly_usage(
+    pool: &PgPool,
+    device_id: Uuid,
+    delta_bytes: i64,
+) -> sqlx::Result<(i64, Option<i64>)> {
+    let now = time::OffsetDateTime::now_utc();
+    let next_reset = crate::repos::users::first_of_next_month(now);
+    let row: Option<(i64, Option<i64>)> = sqlx::query_as(
+        r#"UPDATE devices
+              SET current_month_bytes = CASE
+                    WHEN quota_resets_at IS NULL OR quota_resets_at < $2
+                      THEN $3
+                    ELSE current_month_bytes + $3
+                  END,
+                  quota_resets_at = CASE
+                    WHEN quota_resets_at IS NULL OR quota_resets_at < $2
+                      THEN $4
+                    ELSE quota_resets_at
+                  END
+            WHERE id = $1
+        RETURNING current_month_bytes, monthly_byte_cap"#,
+    )
+    .bind(device_id)
+    .bind(now)
+    .bind(delta_bytes)
+    .bind(next_reset)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.unwrap_or((0, None)))
+}
+
+/// Admin: set (or clear, with `None`) a device's monthly byte cap.
+pub async fn set_quota(
+    pool: &PgPool,
+    device_id: Uuid,
+    cap: Option<i64>,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query("UPDATE devices SET monthly_byte_cap = $2 WHERE id = $1")
+        .bind(device_id)
+        .bind(cap)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
 }
 
 /// All allocated IPs for a server, used to seed the in-memory bitmap on boot.

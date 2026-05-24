@@ -24,11 +24,24 @@ use zerovpn_db::{
     PgPool,
     repos::{
         audit, bandwidth, candles, connection_sessions, devices, peer_endpoint_history,
-        server_samples, servers,
+        server_samples, servers, users,
     },
 };
 use zerovpn_db::repos::candles::CandleRow;
-use zerovpn_wire::Event;
+use zerovpn_wire::{Event, NotifyLevel};
+
+/// How long a peer can go without us seeing inbound bytes before we treat it
+/// as offline. Peer configs ship `PersistentKeepalive = 30s`, so a connected
+/// peer's rx advances at least that often even when idle; ~3 missed keepalives
+/// (90s) is a robust drop signal that's far quicker than waiting out the
+/// ~2-min WireGuard rekey/handshake. WG peers behind NAT can't be reliably
+/// probed from the server, so this keepalive-driven liveness is the fast,
+/// correct substitute for a server-initiated heartbeat. Kept in sync with the
+/// frontend's `ACTIVITY_STALE_MS`.
+const OFFLINE_AFTER_SECS: i64 = 90;
+/// Upper bound: a handshake older than this is always offline regardless of
+/// activity (matches the previous behaviour / the frontend's connState).
+const HANDSHAKE_STALE_SECS: i64 = 180;
 
 /// Per-pubkey in-memory state between poll ticks. Holds the cumulative
 /// rx/tx counters (so we can emit deltas) and the last-observed
@@ -177,6 +190,14 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
     // `StatsDelta` carry the absolute total — including idle ticks where we
     // skip the DB write — so the client's "Total" tracks the server exactly.
     let mut lifetimes: HashMap<Uuid, (u64, u64)> = HashMap::new();
+    // Highest monthly-quota tier each user has already been notified about
+    // (0 none · 1 ≥90% · 2 ≥100%). Lets us fire the warning/limit notification
+    // exactly once per crossing and re-arm when usage resets next month.
+    let mut quota_tier: HashMap<Uuid, u8> = HashMap::new();
+    // Last unix-second at which we saw inbound bytes (a keepalive or real
+    // traffic) from each peer. Drives the fast, keepalive-based offline
+    // detection in place of the slow handshake window.
+    let mut last_activity: HashMap<Uuid, i64> = HashMap::new();
     // Per-device online flag from the previous tick. Powers transition
     // detection — when the value flips we write an audit_logs row so the
     // device-detail "Activity" timeline can render online/offline
@@ -196,6 +217,8 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
             &iface,
             &mut last,
             &mut lifetimes,
+            &mut quota_tier,
+            &mut last_activity,
             &mut prev_online,
             &mut candles,
             interval,
@@ -215,6 +238,8 @@ async fn poll_once(
     iface: &str,
     last: &mut HashMap<String, Cumulative>,
     lifetimes: &mut HashMap<Uuid, (u64, u64)>,
+    quota_tier: &mut HashMap<Uuid, u8>,
+    last_activity: &mut HashMap<Uuid, i64>,
     prev_online: &mut HashMap<Uuid, bool>,
     candle_acc: &mut CandleAccumulator,
     interval: Duration,
@@ -386,8 +411,24 @@ async fn poll_once(
         entry.1 = entry.1.saturating_add(dtx);
         entry.2 += 1; // peer_count
         // online = handshake within last ~180s (WG default keepalive scope).
+        // Record inbound activity (a keepalive counts) so we can detect a drop
+        // from the *absence* of bytes within OFFLINE_AFTER_SECS — much faster
+        // than the handshake window. `drx` is the bytes the peer sent us this
+        // tick; with PersistentKeepalive it advances ~every 30s while alive.
+        let now_secs = now.unix_timestamp();
+        if drx > 0 {
+            last_activity.insert(device_id, now_secs);
+        }
+        // Online = has handshaked AND we've heard from it recently — either a
+        // keepalive/traffic within OFFLINE_AFTER_SECS, or a fresh handshake.
+        // The handshake also bootstraps liveness right after a worker restart,
+        // before the next keepalive lands. Still bounded by the handshake
+        // staleness ceiling so a long-dead peer can never read as online.
+        let last_act = last_activity.get(&device_id).copied().unwrap_or(0);
+        let liveness_ts = latest_handshake.max(last_act);
         let online = latest_handshake > 0
-            && (now.unix_timestamp() - latest_handshake) < 180;
+            && (now_secs - liveness_ts) < OFFLINE_AFTER_SECS
+            && (now_secs - latest_handshake) < HANDSHAKE_STALE_SECS;
         if online {
             entry.3 += 1;
         }
@@ -427,6 +468,35 @@ async fn poll_once(
                 {
                     warn!(?e, %device_id, online, "audit record (transition) failed");
                 }
+
+                // Live notification to the owner's sessions (+ admins). One
+                // name lookup per transition is cheap — transitions are rare.
+                let name = devices::get_by_id(pool, device_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|d| d.name)
+                    .unwrap_or_else(|| "A device".to_string());
+                let (title, level) = if online {
+                    (format!("{name} came online"), NotifyLevel::Success)
+                } else {
+                    (format!("{name} went offline"), NotifyLevel::Warning)
+                };
+                let _ = tx
+                    .send((
+                        format!("events.user.{user_id}"),
+                        Event::Notify {
+                            user_id: Some(user_id),
+                            level,
+                            title,
+                            body: None,
+                            url: Some(format!("/app/devices/{device_id}")),
+                            // Same tag both directions so an offline notice
+                            // replaces a stale "came online" and vice versa.
+                            tag: Some(format!("conn-{device_id}")),
+                        },
+                    ))
+                    .await;
             }
         }
 
@@ -534,6 +604,66 @@ async fn poll_once(
         }
         let (total_rx_bytes, total_tx_bytes) =
             lifetimes.get(&device_id).copied().unwrap_or((0, 0));
+
+        // Per-user monthly quota: fold this device's traffic into the owner's
+        // monthly counter and notify once on crossing 90% (warning) then 100%
+        // (limit). `quota_tier` tracks the highest tier already announced so we
+        // don't repeat, and re-arms when the month resets (usage drops back).
+        if report_rates && (drx > 0 || dtx > 0) {
+            // Per-device monthly counter — feeds the per-device quota that the
+            // API's enforcement sweep reads. Fire-and-forget: the worker only
+            // measures; the API (which owns the WG controller) pauses/resumes.
+            if let Err(e) =
+                devices::add_monthly_usage(pool, device_id, (drx + dtx) as i64).await
+            {
+                warn!(?e, %device_id, "device monthly usage update failed");
+            }
+            match users::add_monthly_usage(pool, user_id, (drx + dtx) as i64).await {
+                Ok((current, Some(cap))) if cap > 0 => {
+                    let tier: u8 = if current >= cap {
+                        2
+                    } else if current.saturating_mul(10) >= cap.saturating_mul(9) {
+                        1
+                    } else {
+                        0
+                    };
+                    let prev_tier = quota_tier.get(&user_id).copied().unwrap_or(0);
+                    if tier > prev_tier {
+                        let (title, body, level) = if tier >= 2 {
+                            (
+                                "Monthly data limit reached",
+                                "You've used your full monthly data allowance.",
+                                NotifyLevel::Error,
+                            )
+                        } else {
+                            (
+                                "Approaching your data limit",
+                                "You've used over 90% of this month's data.",
+                                NotifyLevel::Warning,
+                            )
+                        };
+                        let _ = tx
+                            .send((
+                                format!("events.user.{user_id}"),
+                                Event::Notify {
+                                    user_id: Some(user_id),
+                                    level,
+                                    title: title.to_string(),
+                                    body: Some(body.to_string()),
+                                    url: Some("/app".to_string()),
+                                    tag: Some(format!("quota-{user_id}")),
+                                },
+                            ))
+                            .await;
+                    }
+                    if tier != prev_tier {
+                        quota_tier.insert(user_id, tier);
+                    }
+                }
+                Ok(_) => {} // no cap configured → unlimited, nothing to warn
+                Err(e) => warn!(?e, %user_id, "monthly usage update failed"),
+            }
+        }
 
         let rate_rx_bps = if report_rates { drx / secs * 8 } else { 0 };
         let rate_tx_bps = if report_rates { dtx / secs * 8 } else { 0 };

@@ -427,3 +427,69 @@ pub async fn user_candles(
         candles: rows.into_iter().map(Into::into).collect(),
     }))
 }
+
+/// Admin: per-device candles for any device — the same shape as
+/// `/devices/{id}/candles` but not scoped to the caller, powering the live
+/// bandwidth chart on the admin device-detail page.
+#[utoipa::path(
+    get,
+    path = "/admin/devices/{id}/candles",
+    tag = "Admin",
+    params(
+        ("id" = uuid::Uuid, Path, description = "Device UUID"),
+        CandleQuery,
+    ),
+    responses(
+        (status = 200, description = "OHLC bandwidth candles", body = CandleResponse),
+        (status = 400, description = "Invalid timeframe"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_device_candles(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(id): Path<Uuid>,
+    Query(q): Query<CandleQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let (tf, tf_str) = parse_tf(q.tf)?;
+    let limit = q.limit.unwrap_or(120).clamp(1, 1000);
+    let rows = candles::device_candles(&state.pool, id, tf, q.before, limit).await?;
+    Ok(Json(CandleResponse {
+        tf: tf_str,
+        candles: rows.into_iter().map(Into::into).collect(),
+    }))
+}
+
+/// Admin: aggregate candles across all of a *target* user's devices — the same
+/// shape as `/candles` but for any user, powering the live bandwidth chart on
+/// the admin user-detail page.
+#[utoipa::path(
+    get,
+    path = "/admin/users/{id}/candles",
+    tag = "Admin",
+    params(
+        ("id" = uuid::Uuid, Path, description = "Target user UUID"),
+        CandleQuery,
+    ),
+    responses(
+        (status = 200, description = "User-aggregate OHLC candles", body = CandleResponse),
+        (status = 400, description = "Invalid timeframe"),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_user_candles(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+    Query(q): Query<CandleQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let (tf, tf_str) = parse_tf(q.tf)?;
+    let limit = q.limit.unwrap_or(120).clamp(1, 1000);
+    let rows = candles::user_candles(&state.pool, target_id, tf, q.before, limit).await?;
+    Ok(Json(CandleResponse {
+        tf: tf_str,
+        candles: rows.into_iter().map(Into::into).collect(),
+    }))
+}

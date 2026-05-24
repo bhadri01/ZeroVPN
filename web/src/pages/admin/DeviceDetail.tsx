@@ -1,9 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
-import { IconArrowLeft, IconExternalLink } from "@tabler/icons-react"
-import { useState } from "react"
+import { IconArrowLeft } from "@tabler/icons-react"
 import { Link, useParams } from "react-router"
 
-import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
+import { CandleChart } from "@/components/charts/CandleChart"
 import { CopyableCode } from "@/components/CopyableCode"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { RelativeTime } from "@/components/RelativeTime"
@@ -17,46 +16,40 @@ import {
   Pill,
   type PillTone,
 } from "@/components/swiss"
-import { StatusPill, type Status } from "@/components/StatusPill"
+import { StatusPill } from "@/components/StatusPill"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   ApiError,
-  type BandwidthRange,
   type ConnectionSessionRow,
-  type DeviceStatus,
   type EndpointHistoryRow,
-  adminDeviceBandwidth,
+  type PublicDevice,
   adminGetDeviceDetail,
   adminListDeviceConnectionHistory,
   adminListDeviceEndpointHistory,
 } from "@/lib/api"
-import { formatBytes } from "@/lib/units"
+import { DEVICE_TYPE_ICONS, deviceTypeLabel, osLabel } from "@/lib/deviceIcons"
+import { formatBps, formatBytes } from "@/lib/units"
+import { useDeviceOnline } from "@/hooks/useDeviceOnline"
+import { useLiveTotal } from "@/hooks/useLiveTotal"
+import { useLiveStats } from "@/stores/liveStats"
 
-const DEVICE_STATUS_TO_PILL: Record<DeviceStatus, Status> = {
-  active: "active",
-  paused: "paused",
-  revoked: "revoked",
-}
-
-const RANGE_OPTIONS: { value: BandwidthRange; label: string }[] = [
-  { value: "24h", label: "24 h" },
-  { value: "7d", label: "7 d" },
-  { value: "30d", label: "30 d" },
-]
-
+/**
+ * Admin device detail. Mirrors the user-facing device page's layout — a live
+ * RX / TX / Total / Quota KPI strip and the OHLC bandwidth candle chart — but
+ * read-only (admins view, they don't control another user's device). Admin
+ * depth (owner, endpoint history, connection sessions, activity, identifiers)
+ * lives below.
+ */
 export function AdminDeviceDetailPage() {
   const { id = "" } = useParams<{ id: string }>()
   const detailQ = useQuery({
     queryKey: ["admin", "device", id],
     queryFn: () => adminGetDeviceDetail(id),
     enabled: id.length > 0,
-  })
-  const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
-  const bwQ = useQuery({
-    queryKey: ["admin", "device", id, "bandwidth", bwRange],
-    queryFn: () => adminDeviceBandwidth(id, bwRange),
-    enabled: id.length > 0,
+    // Keep status / totals / quota fresh without a manual refresh (the user
+    // page polls the same way; live WS deltas tick the KPIs in between).
+    refetchInterval: 20_000,
   })
   const endpointQ = useQuery({
     queryKey: ["admin", "device", id, "endpoint-history"],
@@ -74,18 +67,63 @@ export function AdminDeviceDetailPage() {
   const endpoints: EndpointHistoryRow[] = endpointQ.data ?? []
   const connections: ConnectionSessionRow[] = connectionQ.data ?? []
 
+  // Live wiring — identical to the user page. Admins receive `stats_delta` for
+  // every device over the WS (server-side `visible_to`), so the live store has
+  // this device's throughput + lifetime totals keyed by id. Hooks run
+  // unconditionally (before the conditional render) to keep hook order stable.
+  const live = useLiveStats((s) => s.devices[id])
+  const { rx: totalRx, tx: totalTx } = useLiveTotal(
+    id,
+    d?.total_rx_bytes ?? 0,
+    d?.total_tx_bytes ?? 0,
+  )
+  const isOnline = useDeviceOnline((d as PublicDevice | undefined) ?? null)
+
+  const TypeIcon = d ? DEVICE_TYPE_ICONS[d.device_type] : null
+  const rxHistory = live?.rxHistory ?? []
+  const txHistory = live?.txHistory ?? []
+  const totalHistory = rxHistory.map((v, i) => v + (txHistory[i] ?? 0))
+  const isPaused = d?.status === "paused"
+  const isRevoked = d?.status === "revoked"
+
   return (
     <PageStagger>
       <StaggerItem>
         <PageHead
-          eyebrow="Admin · device"
-          title={d?.name ?? (detailQ.isLoading ? "Loading…" : "Unknown device")}
-          sub={
+          eyebrow={
             d
-              ? `${d.os} · ${d.allocated_ip}`
-              : detailQ.isLoading
-                ? undefined
-                : "Device not found"
+              ? `${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)} · ${d.id
+                  .slice(0, 8)
+                  .toUpperCase()}`
+              : "Admin · device"
+          }
+          title={
+            d ? (
+              <span className="inline-flex items-center gap-2">
+                {TypeIcon && (
+                  <TypeIcon className="text-muted-foreground size-[0.8em] shrink-0" />
+                )}
+                <span className="min-w-0 break-words">{d.name}</span>
+              </span>
+            ) : detailQ.isLoading ? (
+              "Loading…"
+            ) : (
+              "Unknown device"
+            )
+          }
+          sub={
+            d ? (
+              <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                <span className="font-mono">{d.allocated_ip}</span>
+                {owner && (
+                  <span className="text-muted-foreground/70">
+                    · owner {owner.email}
+                  </span>
+                )}
+              </span>
+            ) : detailQ.isLoading ? undefined : (
+              "Device not found"
+            )
           }
           right={
             <div className="flex items-center gap-2">
@@ -99,8 +137,15 @@ export function AdminDeviceDetailPage() {
               )}
               {d && (
                 <StatusPill
-                  status={DEVICE_STATUS_TO_PILL[d.status] ?? "offline"}
-                  label={d.status}
+                  status={
+                    isRevoked
+                      ? "revoked"
+                      : isPaused
+                        ? "paused"
+                        : isOnline
+                          ? "online"
+                          : "offline"
+                  }
                 />
               )}
             </div>
@@ -128,99 +173,94 @@ export function AdminDeviceDetailPage() {
 
       {d && owner && (
         <>
+          {/* KPI strip — mirrors the user device page: RX live, TX live,
+              Total (lifetime), Quota. */}
           <StaggerItem>
             <KpiStrip>
               <Kpi
-                label="Owner"
-                value={owner.email.split("@")[0]}
-                footL={owner.email}
-                footR={
-                  <Link
-                    to={`/admin/users/${owner.id}`}
-                    className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
-                  >
-                    user detail <IconExternalLink className="size-3" />
-                  </Link>
-                }
-              />
-              <Kpi
-                label="Last handshake"
+                label="RX"
                 value={
-                  d.last_handshake_at ? (
-                    <RelativeTime
-                      value={d.last_handshake_at}
-                      fallback="Never"
-                    />
-                  ) : (
-                    "Never"
-                  )
+                  <span className="tabular-nums">{formatBytes(totalRx)}</span>
                 }
-                footL="WireGuard heartbeat"
+                spark={isOnline ? rxHistory.slice(-32) : []}
+                sparkColor="var(--chart-1)"
+                footL={isOnline ? formatBps(live?.rxBps ?? 0) : "idle"}
+                footR={isOnline ? "live" : undefined}
+                deltaTone={isOnline ? "up" : undefined}
               />
               <Kpi
-                label="Last endpoint"
+                label="TX"
                 value={
-                  d.last_peer_endpoint ? (
-                    <span className="font-mono text-base">
-                      {d.last_peer_endpoint}
-                    </span>
-                  ) : (
-                    "—"
-                  )
+                  <span className="tabular-nums">{formatBytes(totalTx)}</span>
                 }
-                footL={
-                  d.last_peer_endpoint_at ? (
-                    <RelativeTime value={d.last_peer_endpoint_at} />
-                  ) : (
-                    "no handshake yet"
-                  )
-                }
+                spark={isOnline ? txHistory.slice(-32) : []}
+                sparkColor="var(--primary)"
+                footL={isOnline ? formatBps(live?.txBps ?? 0) : "idle"}
+                footR={isOnline ? "live" : undefined}
+                deltaTone={isOnline ? "up" : undefined}
               />
               <Kpi
-                label="Created"
-                value={<RelativeTime value={d.created_at} />}
+                label="Total"
+                value={
+                  <span className="tabular-nums">
+                    {formatBytes(totalRx + totalTx)}
+                  </span>
+                }
+                spark={isOnline ? totalHistory.slice(-32) : []}
+                sparkColor="var(--primary)"
+                footL="rx + tx"
+              />
+              <QuotaKpi
+                used={d.current_month_bytes}
+                cap={d.monthly_byte_cap}
+                autoPaused={d.auto_paused}
               />
             </KpiStrip>
           </StaggerItem>
 
+          {/* Bandwidth — same self-contained OHLC candle chart as the user
+              page (admin-scoped data source). */}
           <StaggerItem>
             <Panel
               title="Bandwidth"
-              sub="Per-device rollups: hourly for 24h/7d, daily for 30d"
-              right={
-                <div className="flex items-center gap-1 font-mono text-[11px]">
-                  {RANGE_OPTIONS.map((o) => (
-                    <button
-                      key={o.value}
-                      type="button"
-                      onClick={() => setBwRange(o.value)}
-                      className={`hover:text-foreground transition-colors ${
-                        bwRange === o.value
-                          ? "text-foreground"
-                          : "text-muted-foreground"
-                      }`}
+              sub="scroll to zoom · drag to pan"
+            >
+              <CandleChart scope="admin-device" id={id} height={260} />
+            </Panel>
+          </StaggerItem>
+
+          {/* DNS names — read-only (admin view). */}
+          <StaggerItem>
+            <Panel
+              title="DNS names"
+              sub="Reach this peer from others via name.vpn.local"
+              flush
+            >
+              {d.dns_names.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5 p-3">
+                  {d.dns_names.map((n) => (
+                    <span
+                      key={n}
+                      className="border-border bg-card font-mono text-xs"
                     >
-                      {o.label}
-                    </button>
+                      <Kbd>{n}</Kbd>
+                    </span>
                   ))}
                 </div>
-              }
-            >
-              {bwQ.isLoading ? (
-                <Skeleton className="h-[220px] rounded-none" />
               ) : (
-                <BandwidthChart
-                  buckets={bwQ.data?.buckets ?? []}
-                  height={220}
-                />
+                <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                  No DNS names configured.
+                </div>
               )}
             </Panel>
           </StaggerItem>
 
+          {/* ── Admin depth below ─────────────────────────────────────── */}
+
           <StaggerItem>
             <Panel
               title="Configuration"
-              sub="Public key, peer overrides, DNS names"
+              sub="Public key, peer overrides (read-only)"
             >
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
@@ -231,23 +271,13 @@ export function AdminDeviceDetailPage() {
                   <Eyebrow>Allocated IP</Eyebrow>
                   <CopyableCode value={d.allocated_ip} />
                 </div>
-                <div className="flex flex-col gap-1.5">
+                <div className="sm:col-span-2 flex flex-col gap-1.5">
                   <Eyebrow>DNS override</Eyebrow>
                   {d.dns_override && d.dns_override.length > 0 ? (
                     <CopyableCode value={d.dns_override.join(", ")} />
                   ) : (
                     <p className="text-muted-foreground font-mono text-xs">
                       none · server default
-                    </p>
-                  )}
-                </div>
-                <div className="sm:col-span-2 flex flex-col gap-1.5">
-                  <Eyebrow>DNS names</Eyebrow>
-                  {d.dns_names.length > 0 ? (
-                    <CopyableCode value={d.dns_names.join(", ")} />
-                  ) : (
-                    <p className="text-muted-foreground font-mono text-xs">
-                      none assigned
                     </p>
                   )}
                 </div>
@@ -357,9 +387,7 @@ export function AdminDeviceDetailPage() {
                             </td>
                             <td className="font-mono text-xs">
                               {s.peer_endpoint_at_start ?? (
-                                <span className="text-muted-foreground">
-                                  —
-                                </span>
+                                <span className="text-muted-foreground">—</span>
                               )}
                               {endpointChanged && (
                                 <span
@@ -375,18 +403,14 @@ export function AdminDeviceDetailPage() {
                               {rx != null ? (
                                 formatBytes(rx)
                               ) : (
-                                <span className="text-muted-foreground">
-                                  —
-                                </span>
+                                <span className="text-muted-foreground">—</span>
                               )}
                             </td>
                             <td className="text-muted-foreground text-right font-mono text-xs tabular-nums">
                               {tx != null ? (
                                 formatBytes(tx)
                               ) : (
-                                <span className="text-muted-foreground">
-                                  —
-                                </span>
+                                <span className="text-muted-foreground">—</span>
                               )}
                             </td>
                           </tr>
@@ -451,7 +475,6 @@ export function AdminDeviceDetailPage() {
             </Panel>
           </StaggerItem>
 
-          {/* Trailing meta strip: device + server ids for ops handoff */}
           <StaggerItem>
             <Panel title="Identifiers" sub="For ops / debugging">
               <div className="grid gap-3 sm:grid-cols-2">
@@ -469,6 +492,50 @@ export function AdminDeviceDetailPage() {
         </>
       )}
     </PageStagger>
+  )
+}
+
+/** "Quota" KPI card — this device's month-to-date usage against its per-device
+ *  cap (green < 70%, amber ≥ 70%, red ≥ 90%); shows usage + "no cap" when
+ *  uncapped, and flags an auto-pause. Mirrors the user device page. */
+function QuotaKpi({
+  used,
+  cap,
+  autoPaused,
+}: {
+  used: number
+  cap: number | null
+  autoPaused: boolean
+}) {
+  const cap0 = cap ?? 0
+  const hasCap = cap0 > 0
+  const pct = hasCap ? Math.min(100, Math.round((used / cap0) * 100)) : 0
+  const tone =
+    pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"
+  return (
+    <div className="zv-kpi">
+      <div className="zv-kpi-label">
+        <span>Quota</span>
+      </div>
+      <div className="zv-kpi-val font-heading">
+        <span className="tabular-nums">{formatBytes(used)}</span>
+      </div>
+      <div className="mt-1.5 h-1.5 w-full overflow-hidden bg-muted">
+        {hasCap && (
+          <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />
+        )}
+      </div>
+      <div className="zv-kpi-foot">
+        <span>{hasCap ? `/ ${formatBytes(cap0)} this month` : "this month"}</span>
+        <span
+          className={
+            autoPaused ? "text-amber-600 dark:text-amber-400" : undefined
+          }
+        >
+          {autoPaused ? "auto-paused" : hasCap ? `${pct}%` : "no cap"}
+        </span>
+      </div>
+    </div>
   )
 }
 

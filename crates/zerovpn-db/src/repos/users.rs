@@ -209,7 +209,57 @@ pub async fn add_monthly_usage(
     Ok(row.unwrap_or((0, None)))
 }
 
-fn first_of_next_month(t: OffsetDateTime) -> OffsetDateTime {
+/// Inputs the dashboard "Quota" card needs: `(monthly_byte_cap, baseline,
+/// baseline_at)` — the account cap plus the lifetime-usage snapshot taken at
+/// the start of the current cycle. Monthly usage is then derived as
+/// `(lifetime now) − baseline` by the caller (see the `/me/usage` handler).
+pub async fn month_quota(
+    pool: &PgPool,
+    id: Uuid,
+) -> sqlx::Result<Option<(Option<i64>, i64, Option<OffsetDateTime>)>> {
+    sqlx::query_as(
+        r#"SELECT monthly_byte_cap, month_baseline_bytes, month_baseline_at
+             FROM users
+            WHERE id = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Re-snapshot the monthly usage baseline (lifetime total at cycle start) and
+/// stamp which cycle it belongs to. Called lazily when a new month is detected.
+pub async fn set_month_baseline(
+    pool: &PgPool,
+    id: Uuid,
+    baseline_bytes: i64,
+    cycle_start: OffsetDateTime,
+) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        r#"UPDATE users
+              SET month_baseline_bytes = $2, month_baseline_at = $3
+            WHERE id = $1"#,
+    )
+    .bind(id)
+    .bind(baseline_bytes)
+    .bind(cycle_start)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
+/// First-of-this-month at midnight UTC — the start of the current monthly
+/// quota cycle. The cycle runs `[first_of_month, first_of_next_month)`.
+pub fn first_of_month(t: OffsetDateTime) -> OffsetDateTime {
+    let date =
+        time::Date::from_calendar_date(t.year(), t.month(), 1).expect("valid first-of-month");
+    OffsetDateTime::new_utc(date, time::Time::MIDNIGHT)
+}
+
+/// First-of-next-month at midnight UTC — the monthly quota reset boundary,
+/// shared by the per-user counter here, the per-device counter, and the
+/// quota-enforcement sweep so every reset lands on the same instant.
+pub fn first_of_next_month(t: OffsetDateTime) -> OffsetDateTime {
     let (y, m, _d) = (t.year(), t.month(), t.day());
     let (ny, nm) = if m == time::Month::December {
         (y + 1, time::Month::January)

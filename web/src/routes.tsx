@@ -45,6 +45,9 @@ const FinderPage = lazy(() =>
 const TopologyPage = lazy(() =>
   import("@/pages/app/Topology").then((m) => ({ default: m.TopologyPage })),
 )
+const ActivityPage = lazy(() =>
+  import("@/pages/app/Activity").then((m) => ({ default: m.ActivityPage })),
+)
 const SettingsPage = lazy(() =>
   import("@/pages/app/Settings").then((m) => ({ default: m.SettingsPage })),
 )
@@ -167,6 +170,11 @@ export const router = createBrowserRouter([
             path: "/app/topology",
             handle: { breadcrumb: "Topology" },
             element: <TopologyPage />,
+          },
+          {
+            path: "/app/activity",
+            handle: { breadcrumb: "Activity" },
+            element: <ActivityPage />,
           },
           {
             path: "/app/settings",

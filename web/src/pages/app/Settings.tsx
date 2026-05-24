@@ -34,7 +34,7 @@ import {
   type UnitsPref,
   type UserPreferences,
 } from "@/lib/api"
-import { notify } from "@/lib/notify"
+import { notify, previewChime } from "@/lib/notify"
 import { AccountSections } from "@/pages/app/Account"
 import { ChangePasswordForm, SecuritySections } from "@/pages/app/Security"
 
@@ -576,7 +576,10 @@ function NotificationsSection() {
             label="Play sound on toast"
             hint="Subtle chime when a toast appears. Off by default."
             checked={p.toast_sound}
-            onCheckedChange={(v) => m.mutate({ toast_sound: v })}
+            onCheckedChange={(v) => {
+              m.mutate({ toast_sound: v })
+              if (v) previewChime()
+            }}
             id="pref-toast-sound"
           />
         </div>
