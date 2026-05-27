@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 use zerovpn_auth::kek::Kek;
+use zerovpn_core::config::GoogleOAuthConfig;
 use zerovpn_db::PgPool;
 use zerovpn_mail::Mailer;
 use zerovpn_wg::{WgController, ip_alloc::IpAllocator};
@@ -25,6 +26,10 @@ pub struct AppState {
     pub public_url: String,
     /// WG runtime controller. Defaults to NoopController in dev.
     pub wg: Arc<dyn WgController>,
+    /// Google OAuth 2.0 client config. `None` when the operator hasn't set
+    /// `ZEROVPN_GOOGLE_OAUTH__*` — `/auth/google/*` routes return 503 in
+    /// that case so the rest of the API still boots without credentials.
+    pub google_oauth: Option<Arc<GoogleOAuthConfig>>,
 }
 
 impl AppState {
@@ -45,6 +50,7 @@ impl AppState {
         mailer: Option<Mailer>,
         public_url: String,
         wg: Arc<dyn WgController>,
+        google_oauth: Option<GoogleOAuthConfig>,
     ) -> Self {
         let (events, _) = broadcast::channel::<Event>(BROADCAST_BUFFER);
         Self {
@@ -55,6 +61,7 @@ impl AppState {
             mailer: mailer.map(Arc::new),
             public_url,
             wg,
+            google_oauth: google_oauth.map(Arc::new),
         }
     }
 }

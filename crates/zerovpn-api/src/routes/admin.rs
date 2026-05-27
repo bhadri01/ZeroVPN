@@ -100,13 +100,28 @@ async fn restore_user_peers(state: &AppState, user_id: Uuid) {
             return;
         }
     };
+    // Cache the per-server keepalive across this user's devices (they often
+    // share a server) so we don't refetch the same row N times.
+    let mut keepalive_cache: std::collections::HashMap<Uuid, u16> =
+        std::collections::HashMap::new();
     for d in user_devices {
         if d.status != zerovpn_core::models::DeviceStatus::Active {
             continue;
         }
+        let keepalive = match keepalive_cache.get(&d.server_id) {
+            Some(v) => *v,
+            None => {
+                let v = match servers::find_by_id(&state.pool, d.server_id).await {
+                    Ok(Some(s)) => s.persistent_keepalive as u16,
+                    Ok(None) | Err(_) => PERSISTENT_KEEPALIVE,
+                };
+                keepalive_cache.insert(d.server_id, v);
+                v
+            }
+        };
         if let Err(e) = state
             .wg
-            .add_peer(&d.public_key, d.allocated_ip.ip(), None, PERSISTENT_KEEPALIVE)
+            .add_peer(&d.public_key, d.allocated_ip.ip(), None, keepalive)
             .await
         {
             warn!(?e, device_id = %d.id, "restore_user_peers: wg add_peer failed");
@@ -1627,6 +1642,92 @@ pub async fn set_maintenance(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+// ---- Non-admin user policy ------------------------------------------------
+//
+// Small set of admin-set toggles that govern what *non-admin* users see in the
+// user-facing app. Stored on the existing `app_settings` singleton next to
+// maintenance mode. Surfaced to every session via the `user_policy` field on
+// the `/me` response; the frontend uses that to gate routes/links and the
+// admin Users page reads/writes them here.
+
+#[derive(Debug, Serialize, sqlx::FromRow, ToSchema)]
+pub struct UserPolicy {
+    /// When ON, the user app hides "View details" links on its device cards
+    /// and bounces non-admin navigations to /app/devices/{id} back to the
+    /// device list. Admins are exempt.
+    pub hide_device_detail: bool,
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/user-policy",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Current global non-admin user policy", body = UserPolicy),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn get_user_policy(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+) -> ApiResult<impl IntoResponse> {
+    let row: UserPolicy = sqlx::query_as(
+        "SELECT policy_hide_device_detail AS hide_device_detail
+           FROM app_settings WHERE id = 1",
+    )
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(row))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UserPolicyBody {
+    pub hide_device_detail: bool,
+}
+
+#[utoipa::path(
+    put,
+    path = "/admin/user-policy",
+    tag = "Admin",
+    request_body = UserPolicyBody,
+    responses(
+        (status = 200, description = "Policy updated; live sessions see the change on their next /me", body = StatusAck),
+        (status = 403, description = "Not an admin"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn set_user_policy(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Json(body): Json<UserPolicyBody>,
+) -> ApiResult<impl IntoResponse> {
+    sqlx::query(
+        "UPDATE app_settings SET policy_hide_device_detail = $1 WHERE id = 1",
+    )
+    .bind(body.hide_device_detail)
+    .execute(&state.pool)
+    .await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_policy",
+            target_type: None,
+            target_id: None,
+            metadata: json!({ "hide_device_detail": body.hide_device_detail }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(
+        hide_device_detail = body.hide_device_detail,
+        "non-admin user policy updated"
+    );
+    notify_admin(&state, ResourceKind::Maintenance, None, ChangeAction::Updated);
+    Ok(Json(json!({ "status": "ok" })))
+}
+
 // --- Server admin -----------------------------------------------------------
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -1643,6 +1744,9 @@ pub struct AdminServer {
     pub dns_servers: Vec<String>,
     pub mtu: i32,
     pub is_active: bool,
+    /// WireGuard PersistentKeepalive (seconds) for peers on this server.
+    /// `0` disables keepalive.
+    pub persistent_keepalive: i32,
     /// Cumulative lifetime RX/TX across this server's (non-revoked) devices —
     /// the accurate per-device lifetime sum (not the drift-prone aggregates).
     /// Merged in by `list_servers`; `0` on responses that don't compute it.
@@ -1663,6 +1767,7 @@ impl From<Server> for AdminServer {
             dns_servers: s.dns_servers.into_iter().map(|n| n.ip().to_string()).collect(),
             mtu: s.mtu,
             is_active: s.is_active,
+            persistent_keepalive: s.persistent_keepalive as i32,
             // Totals are merged in by handlers that compute them (list_servers).
             rx_total: 0,
             tx_total: 0,
@@ -1713,6 +1818,9 @@ pub struct PatchServerBody {
     pub endpoint_port: Option<i32>,
     pub mtu: Option<i32>,
     pub dns_servers: Option<Vec<String>>,
+    /// WireGuard `PersistentKeepalive` (seconds). `0` disables. Bounded to
+    /// match the DB CHECK constraint (`0..=3600`).
+    pub persistent_keepalive: Option<i32>,
 }
 
 #[utoipa::path(
@@ -1746,6 +1854,13 @@ pub async fn patch_server(
             return Err(ApiError::Validation("mtu must be 576..=9000".into()));
         }
     }
+    if let Some(ka) = body.persistent_keepalive {
+        if !(0..=3600).contains(&ka) {
+            return Err(ApiError::Validation(
+                "persistent_keepalive must be 0..=3600 (0 disables)".into(),
+            ));
+        }
+    }
     let dns_parsed: Option<Vec<IpNetwork>> = match body.dns_servers.as_ref() {
         Some(list) => {
             let mut out = Vec::with_capacity(list.len());
@@ -1761,10 +1876,11 @@ pub async fn patch_server(
     };
     sqlx::query(
         r#"UPDATE servers
-           SET endpoint_host = COALESCE($2, endpoint_host),
-               endpoint_port = COALESCE($3, endpoint_port),
-               mtu           = COALESCE($4, mtu),
-               dns_servers   = COALESCE($5, dns_servers)
+           SET endpoint_host        = COALESCE($2, endpoint_host),
+               endpoint_port        = COALESCE($3, endpoint_port),
+               mtu                  = COALESCE($4, mtu),
+               dns_servers          = COALESCE($5, dns_servers),
+               persistent_keepalive = COALESCE($6, persistent_keepalive)
            WHERE id = $1"#,
     )
     .bind(id)
@@ -1772,6 +1888,7 @@ pub async fn patch_server(
     .bind(body.endpoint_port)
     .bind(body.mtu)
     .bind(dns_parsed)
+    .bind(body.persistent_keepalive.map(|v| v as i16))
     .execute(&state.pool)
     .await?;
     audit::record(
@@ -1786,6 +1903,7 @@ pub async fn patch_server(
                 "endpoint_port": body.endpoint_port,
                 "mtu": body.mtu,
                 "dns_servers": body.dns_servers,
+                "persistent_keepalive": body.persistent_keepalive,
             }),
             ip: None,
         },

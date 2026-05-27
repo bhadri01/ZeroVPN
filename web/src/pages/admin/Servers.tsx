@@ -66,11 +66,14 @@ function ServerEditor({ server }: { server: AdminServerRow }) {
   const [endpointPort, setEndpointPort] = useState(String(server.endpoint_port))
   const [mtu, setMtu] = useState(String(server.mtu))
   const [dnsServers, setDnsServers] = useState(server.dns_servers.join(", "))
+  const [keepalive, setKeepalive] = useState(String(server.persistent_keepalive))
   const [rotateOpen, setRotateOpen] = useState(false)
 
   const save = useMutation({
-    mutationFn: () =>
-      adminPatchServer(server.id, {
+    mutationFn: () => {
+      // Treat empty / NaN keepalive as "leave unchanged"; 0 is valid (disables).
+      const ka = keepalive.trim() === "" ? NaN : Number(keepalive)
+      return adminPatchServer(server.id, {
         endpoint_host: endpointHost.trim() || undefined,
         endpoint_port: Number(endpointPort) || undefined,
         mtu: Number(mtu) || undefined,
@@ -78,7 +81,9 @@ function ServerEditor({ server }: { server: AdminServerRow }) {
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
-      }),
+        persistent_keepalive: Number.isFinite(ka) ? ka : undefined,
+      })
+    },
     onSuccess: () => {
       toast.success("Server config saved")
       qc.invalidateQueries({ queryKey: ["admin", "servers"] })
@@ -161,17 +166,34 @@ function ServerEditor({ server }: { server: AdminServerRow }) {
           />
         </div>
       </div>
-      <div className="mt-3 flex flex-col gap-1.5">
-        <Label htmlFor={`mtu-${server.id}`} className="zv-eyebrow">
-          MTU
-        </Label>
-        <Input
-          id={`mtu-${server.id}`}
-          type="number"
-          value={mtu}
-          onChange={(e) => setMtu(e.target.value)}
-          className="font-mono"
-        />
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`mtu-${server.id}`} className="zv-eyebrow">
+            MTU
+          </Label>
+          <Input
+            id={`mtu-${server.id}`}
+            type="number"
+            value={mtu}
+            onChange={(e) => setMtu(e.target.value)}
+            className="font-mono"
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`ka-${server.id}`} className="zv-eyebrow">
+            Persistent keepalive (seconds)
+          </Label>
+          <Input
+            id={`ka-${server.id}`}
+            type="number"
+            min={0}
+            max={3600}
+            value={keepalive}
+            onChange={(e) => setKeepalive(e.target.value)}
+            placeholder="30 (0 disables)"
+            className="font-mono"
+          />
+        </div>
       </div>
       <div className="mt-3 flex flex-col gap-1.5">
         <Label htmlFor={`dns-${server.id}`} className="zv-eyebrow">

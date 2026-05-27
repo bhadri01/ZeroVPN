@@ -8,7 +8,7 @@ import {
   IconUsers,
 } from "@tabler/icons-react"
 import { AnimatePresence, motion } from "motion/react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo } from "react"
 import { toast } from "sonner"
 
 import { CandleChart } from "@/components/charts/CandleChart"
@@ -27,7 +27,7 @@ import {
   adminStats,
 } from "@/lib/api"
 import { useReducedMotion } from "@/lib/motion"
-import { formatBytes } from "@/lib/units"
+import { formatBps, formatBytes } from "@/lib/units"
 import { useLiveStats } from "@/stores/liveStats"
 
 export function AdminOverviewPage() {
@@ -53,14 +53,12 @@ export function AdminOverviewPage() {
   })
 
   // Per-server live cards: list servers; live `ServerSample` events from the
-  // WS drive the KPI strip, and each card's <CandleChart> owns its own
-  // bandwidth history. (The old live RX/TX line chart was removed — the candle
-  // chart already covers throughput over time.)
+  // WS drive the KPI strip (Peers, Online, RX/TX rate) and each card's
+  // <CandleChart> owns its own bandwidth history. The list itself just needs
+  // to refresh occasionally to pick up server adds/removes/renames.
   const serversQ = useQuery({
     queryKey: ["admin", "servers", "overview"],
     queryFn: adminListServers,
-    // Refresh so the cumulative RX/TX totals on the cards stay current
-    // (Peers/Online still update live over the WS).
     refetchInterval: 30_000,
   })
 
@@ -219,25 +217,11 @@ function ServerLiveCard({
   const live = useLiveStats((s) => s.servers[server.id])
   const reduceMotion = useReducedMotion()
 
-  // Drive a "tick freshness" indicator off the latest server_sample.
-  // Re-renders every second so "updated 3s ago" stays current even when
-  // no new data is arriving (which is itself useful info — a stale value
-  // means the worker stopped emitting).
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  const lastTs = live?.lastTs ?? 0
-  const ageSec = lastTs ? Math.max(0, Math.floor((now - lastTs) / 1000)) : null
-  const isFresh = ageSec !== null && ageSec <= 3
-  const isStale = ageSec !== null && ageSec > 30
-
   return (
     <div
       className={`flex flex-col gap-4 p-5 ${divider ? "border-border border-t" : ""}`}
     >
-      {/* Header — server identity + live freshness pill on the right */}
+      {/* Header — server identity + active/disabled tag on the right */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <span className="border-border bg-muted/40 flex size-8 shrink-0 items-center justify-center border">
@@ -253,19 +237,15 @@ function ServerLiveCard({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <FreshnessPill
-            ageSec={ageSec}
-            isFresh={isFresh}
-            isStale={isStale}
-          />
           <Pill tone={server.is_active ? "ok" : "warn"} dot={false}>
             {server.is_active ? "active" : "disabled"}
           </Pill>
         </div>
       </div>
 
-      {/* KPI strip — Peers · Online (live) and cumulative RX · TX totals.
-          Each value pop-animates when it changes so updates are obvious. */}
+      {/* KPI strip — Peers · Online · RX/TX live rate, streamed from
+          `server_sample` over the WS. Each value pop-animates when it
+          changes so updates are obvious. */}
       <div className="border-border grid grid-cols-2 border md:grid-cols-4">
         <LiveStat
           label="Peers"
@@ -282,13 +262,13 @@ function ServerLiveCard({
         />
         <LiveStat
           label="RX"
-          value={formatBytes(server.rx_total)}
+          value={formatBps(live?.rxBps ?? 0)}
           icon={<IconArrowDown className="size-3.5 text-[var(--chart-1)]" />}
           reduceMotion={reduceMotion}
         />
         <LiveStat
           label="TX"
-          value={formatBytes(server.tx_total)}
+          value={formatBps(live?.txBps ?? 0)}
           icon={<IconArrowUp className="size-3.5 text-primary" />}
           reduceMotion={reduceMotion}
         />
@@ -352,55 +332,6 @@ function LiveStat({
         </AnimatePresence>
       </div>
     </div>
-  )
-}
-
-/**
- * Right-aligned freshness indicator. Pulses green for ≤3 s after a tick
- * lands, fades to muted when stale, hidden until the first sample.
- */
-function FreshnessPill({
-  ageSec,
-  isFresh,
-  isStale,
-}: {
-  ageSec: number | null
-  isFresh: boolean
-  isStale: boolean
-}) {
-  if (ageSec === null) {
-    return (
-      <span className="text-muted-foreground/70 inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide">
-        <span className="size-1.5 rounded-full bg-amber-500/60" />
-        waiting
-      </span>
-    )
-  }
-  const tone = isFresh
-    ? "text-emerald-600 dark:text-emerald-400"
-    : isStale
-      ? "text-amber-600 dark:text-amber-400"
-      : "text-muted-foreground"
-  const dotTone = isFresh
-    ? "bg-emerald-500"
-    : isStale
-      ? "bg-amber-500"
-      : "bg-muted-foreground/60"
-  const label =
-    ageSec === 0
-      ? "now"
-      : ageSec < 60
-        ? `${ageSec}s ago`
-        : `${Math.round(ageSec / 60)}m ago`
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide ${tone}`}
-    >
-      <span
-        className={`size-1.5 rounded-full ${dotTone} ${isFresh ? "animate-pulse" : ""}`}
-      />
-      {label}
-    </span>
   )
 }
 

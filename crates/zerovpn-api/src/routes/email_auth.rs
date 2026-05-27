@@ -161,6 +161,9 @@ pub struct VerifiedUser {
     /// account hasn't enrolled yet), but kept in the shape so the
     /// frontend's `PublicUser` type stays uniform across endpoints.
     pub totp_enabled: bool,
+    /// Same admin-set policy snapshot returned by /me — included so the
+    /// post-verify auth-store hydrate doesn't have to make a second call.
+    pub user_policy: crate::routes::auth::UserPolicySnapshot,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -242,6 +245,7 @@ pub async fn verify_email(
     users::touch_last_login(&state.pool, user.id).await?;
 
     info!(user_id = %user.id, "email verified, session established");
+    let user_policy = crate::routes::auth::load_user_policy(&state.pool).await;
     Ok(Json(VerifyEmailResponse {
         status: "ok",
         user: VerifiedUser {
@@ -249,6 +253,7 @@ pub async fn verify_email(
             email: user.email,
             role: user.role,
             totp_enabled: user.totp_enabled,
+            user_policy,
         },
     }))
 }

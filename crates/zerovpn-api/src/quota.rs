@@ -17,7 +17,7 @@
 use std::time::Duration;
 
 use tracing::{info, warn};
-use zerovpn_db::repos::{quota, users};
+use zerovpn_db::repos::{quota, servers, users};
 use zerovpn_wire::{ChangeAction, Event, NotifyLevel, PeerStatus, ResourceKind};
 
 use crate::routes::devices::PERSISTENT_KEEPALIVE;
@@ -57,13 +57,28 @@ async fn run_once(state: &AppState) -> sqlx::Result<()> {
     }
 
     // 2. Resume devices previously auto-paused that are now under both caps.
+    //    Cache per-server keepalive across the candidate set (most fleets
+    //    cluster on a single server) so we don't refetch the row per device.
+    let mut keepalive_cache: std::collections::HashMap<uuid::Uuid, u16> =
+        std::collections::HashMap::new();
     for dev in quota::resume_candidates(&state.pool).await? {
         if quota::mark_resumed(&state.pool, dev.id).await? == 0 {
             continue; // raced with another transition; skip the WG/event work
         }
+        let keepalive = match keepalive_cache.get(&dev.server_id) {
+            Some(v) => *v,
+            None => {
+                let v = match servers::find_by_id(&state.pool, dev.server_id).await {
+                    Ok(Some(s)) => s.persistent_keepalive as u16,
+                    Ok(None) | Err(_) => PERSISTENT_KEEPALIVE,
+                };
+                keepalive_cache.insert(dev.server_id, v);
+                v
+            }
+        };
         if let Err(e) = state
             .wg
-            .add_peer(&dev.public_key, dev.allocated_ip.ip(), None, PERSISTENT_KEEPALIVE)
+            .add_peer(&dev.public_key, dev.allocated_ip.ip(), None, keepalive)
             .await
         {
             warn!(?e, device_id = %dev.id, "quota resume: wg add_peer failed");

@@ -36,8 +36,18 @@ impl Mailer {
         from: Mailbox,
         require_tls: bool,
     ) -> Result<Self, MailError> {
+        // SMTP convention: 465 = implicit TLS (wrap the socket from byte 1,
+        // lettre's `relay`), everything else with TLS required = STARTTLS
+        // (begin plaintext, upgrade with the STARTTLS verb — lettre's
+        // `starttls_relay`). Gmail / Outlook / most providers expose STARTTLS
+        // on 587 and IMPLICIT on 465; picking the right one from the port
+        // keeps the env config (just HOST/PORT) provider-agnostic.
         let mut builder = if require_tls {
-            AsyncSmtpTransport::<Tokio1Executor>::relay(host)?.port(port)
+            if port == 465 {
+                AsyncSmtpTransport::<Tokio1Executor>::relay(host)?.port(port)
+            } else {
+                AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)?.port(port)
+            }
         } else {
             AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
                 .port(port)

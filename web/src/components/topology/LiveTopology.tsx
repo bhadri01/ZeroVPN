@@ -64,39 +64,28 @@ const PEER_FROM_USER = 75
 const MAX_PEERS = 24
 const MAX_USERS = 12
 
-function iconFor(os: DeviceOs): Icon {
-  switch (os) {
-    case "ios":
-    case "android":
-      return os === "ios" ? IconBrandApple : IconBrandAndroid
-    case "macos":
-      return IconBrandApple
-    case "windows":
-      return IconBrandWindows
-    case "linux":
-      return IconBrandUbuntu
-    case "other":
-    default:
-      return IconDevices
-  }
+// Brand mark per OS (chip beside the peer glyph). A const map (member access)
+// rather than a function returning a component — the latter trips the
+// react-compiler "components created during render" rule even though the icon
+// refs are stable. See the same pattern in lib/deviceIcons.
+const OS_BRAND_ICON: Record<DeviceOs, Icon> = {
+  ios: IconBrandApple,
+  android: IconBrandAndroid,
+  macos: IconBrandApple,
+  windows: IconBrandWindows,
+  linux: IconBrandUbuntu,
+  other: IconDevices,
 }
 
-/** Picks a generic form-factor icon for the OS — used as the centered glyph
- *  inside the peer ring (the brand mark sits beside it as a chip). */
-function shapeFor(os: DeviceOs): Icon {
-  switch (os) {
-    case "ios":
-    case "android":
-      return IconDeviceMobile
-    case "macos":
-      return IconDeviceLaptop
-    case "windows":
-      return IconDeviceDesktop
-    case "linux":
-      return IconServer
-    default:
-      return IconDevices
-  }
+/** Generic form-factor glyph per OS — the centered icon inside the peer ring
+ *  (the brand mark sits beside it as a chip). */
+const OS_SHAPE_ICON: Record<DeviceOs, Icon> = {
+  ios: IconDeviceMobile,
+  android: IconDeviceMobile,
+  macos: IconDeviceLaptop,
+  windows: IconDeviceDesktop,
+  linux: IconServer,
+  other: IconDevices,
 }
 
 /** Visual tone for a peer node. Connection state (live handshake) is the
@@ -976,8 +965,8 @@ function PeerNode({
   hubX: number
   onPointerDown: (e: React.PointerEvent<SVGGElement>) => void
 }) {
-  const Shape = shapeFor(peer.device.os)
-  const Brand = iconFor(peer.device.os)
+  const Shape = OS_SHAPE_ICON[peer.device.os]
+  const Brand = OS_BRAND_ICON[peer.device.os]
   const strokeClass =
     peer.tone === "live" || peer.tone === "online"
       ? "zv-topo-peer-live"

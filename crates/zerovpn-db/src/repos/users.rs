@@ -139,6 +139,72 @@ pub async fn create(
     Ok(id)
 }
 
+/// Look up a user by their Google `sub` claim (linked at first OAuth sign-in
+/// or by `link_google` after an email match). Mirrors `find_by_email` —
+/// returns the full secrets row so the OAuth callback can run the same
+/// post-login plumbing (status check, password watermark) as `/auth/login`.
+pub async fn find_by_google_id(
+    pool: &PgPool,
+    google_id: &str,
+) -> sqlx::Result<Option<UserWithSecrets>> {
+    sqlx::query_as::<_, UserWithSecrets>(
+        r#"SELECT id, email::TEXT AS email, password_hash, role, status,
+                  must_change_password, email_verified_at, totp_enabled,
+                  created_at, last_login_at, password_changed_at
+             FROM users
+            WHERE google_id = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(google_id)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Provision a new user from a Google OAuth sign-in. The email is treated
+/// as pre-verified (Google asserts it), so the row lands `active` + with a
+/// verification timestamp — no email click-through required. `password_hash`
+/// uses the same `'!'` sentinel `soft_delete` writes: argon2 can't verify
+/// it, so the password-login path naturally refuses the account until the
+/// user runs the forgot-password flow to set a real hash.
+pub async fn create_google(
+    pool: &PgPool,
+    email: &str,
+    google_id: &str,
+    role: UserRole,
+) -> sqlx::Result<Uuid> {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        r#"INSERT INTO users (id, email, password_hash, role, status,
+                              google_id, email_verified_at)
+           VALUES ($1, $2::CITEXT, '!', $3, 'active', $4, NOW())"#,
+    )
+    .bind(id)
+    .bind(email)
+    .bind(role)
+    .bind(google_id)
+    .execute(pool)
+    .await?;
+    Ok(id)
+}
+
+/// Attach a Google `sub` to an existing (password-based) user. Called on
+/// first OAuth sign-in when the Google email matches an existing account —
+/// Google has already verified the email, so we treat that as proof of
+/// ownership and link silently. Idempotent: linking the same google_id
+/// again is a no-op.
+pub async fn link_google(pool: &PgPool, id: Uuid, google_id: &str) -> sqlx::Result<u64> {
+    let res = sqlx::query(
+        r#"UPDATE users
+              SET google_id = $2,
+                  email_verified_at = COALESCE(email_verified_at, NOW())
+            WHERE id = $1 AND deleted_at IS NULL AND google_id IS NULL"#,
+    )
+    .bind(id)
+    .bind(google_id)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 pub async fn touch_last_login(pool: &PgPool, id: Uuid) -> sqlx::Result<()> {
     sqlx::query("UPDATE users SET last_login_at = $2 WHERE id = $1")
         .bind(id)

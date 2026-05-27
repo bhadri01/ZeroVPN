@@ -17,6 +17,7 @@ import { CopyButton } from "@/components/CopyButton"
 import { StatusPill, type Status as PillStatus } from "@/components/StatusPill"
 import { WithTooltip } from "@/components/ui/with-tooltip"
 import { useDeviceOnline } from "@/hooks/useDeviceOnline"
+import { useDeviceDetailGated } from "@/hooks/useDeviceDetailGated"
 import { useLiveTotal } from "@/hooks/useLiveTotal"
 import { useNow } from "@/hooks/useNow"
 import type { PublicDevice } from "@/lib/api"
@@ -96,6 +97,7 @@ export function DeviceCard({
   ...divProps
 }: DeviceCardProps) {
   const live = useLiveStats((s) => s.devices[d.id])
+  const hideDetail = useDeviceDetailGated()
 
   // "Real data" gate. The wg-poller emits a StatsDelta for every peer
   // listed by `wg show dump`, including those whose `latest_handshake`
@@ -192,21 +194,31 @@ export function DeviceCard({
           card the same height across the grid. */}
       <div className="flex flex-col gap-0.5 px-4 pt-4 pb-3">
         <div className="flex items-center justify-between gap-2">
-          <Link
-            to={`/app/devices/${d.id}`}
-            draggable={false}
-            className="text-foreground hover:text-foreground inline-flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium transition-colors"
-          >
-            <TypeIcon
-              className="text-muted-foreground size-4 shrink-0"
-              title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
-            />
-            <span className="truncate">{d.name}</span>
-          </Link>
+          {hideDetail ? (
+            <span className="text-foreground inline-flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium">
+              <TypeIcon
+                className="text-muted-foreground size-4 shrink-0"
+                title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
+              />
+              <span className="truncate">{d.name}</span>
+            </span>
+          ) : (
+            <Link
+              to={`/app/devices/${d.id}`}
+              draggable={false}
+              className="text-foreground hover:text-foreground inline-flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium transition-colors"
+            >
+              <TypeIcon
+                className="text-muted-foreground size-4 shrink-0"
+                title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
+              />
+              <span className="truncate">{d.name}</span>
+            </Link>
+          )}
           <div className="flex shrink-0 items-center gap-1">
             <StatusPill status={rowPill(isOnline ? "online" : "offline", peerState(d))} />
             {actions}
-            {showOpenLink && !actions && (
+            {showOpenLink && !actions && !hideDetail && (
               <WithTooltip label="Open device">
                 <Link
                   to={`/app/devices/${d.id}`}
@@ -221,13 +233,19 @@ export function DeviceCard({
         </div>
         {/* IP — full card width, single line, with a copy affordance. */}
         <div className="flex items-center gap-1.5">
-          <Link
-            to={`/app/devices/${d.id}`}
-            draggable={false}
-            className="text-muted-foreground hover:text-foreground min-w-0 truncate font-mono text-xs transition-colors"
-          >
-            {d.allocated_ip}
-          </Link>
+          {hideDetail ? (
+            <span className="text-muted-foreground min-w-0 truncate font-mono text-xs">
+              {d.allocated_ip}
+            </span>
+          ) : (
+            <Link
+              to={`/app/devices/${d.id}`}
+              draggable={false}
+              className="text-muted-foreground hover:text-foreground min-w-0 truncate font-mono text-xs transition-colors"
+            >
+              {d.allocated_ip}
+            </Link>
+          )}
           <CopyButton value={d.allocated_ip} label="Copy IP" />
         </div>
         {/* WAN endpoint the peer connects from. Always rendered (with a dim

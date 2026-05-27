@@ -9,7 +9,6 @@ use zerovpn_db::{
 };
 use zerovpn_wg::{WgController, ip_alloc::IpAllocator, keys};
 
-use crate::routes::devices::PERSISTENT_KEEPALIVE;
 use crate::state::IpAllocators;
 
 /// Resolve `(host, port)` from `ZEROVPN_WG__SERVER_ENDPOINT` (documented as
@@ -42,18 +41,25 @@ fn resolve_server_endpoint() -> (String, i32) {
 /// to run on every api start (including hot-reload restarts). No-op on the
 /// noop backend and when there are no active devices.
 pub async fn reconcile_peers(pool: &PgPool, wg: &Arc<dyn WgController>) -> anyhow::Result<()> {
-    let rows: Vec<(String, IpNetwork)> =
-        sqlx::query_as("SELECT public_key, allocated_ip FROM devices WHERE status = 'active'")
-            .fetch_all(pool)
-            .await?;
+    // JOIN to pick up each peer's home server's PersistentKeepalive so the live
+    // WG interface state matches the per-server setting (default 30s if the
+    // column is NULL, though the migration sets a NOT NULL default).
+    let rows: Vec<(String, IpNetwork, i16)> = sqlx::query_as(
+        "SELECT d.public_key, d.allocated_ip, s.persistent_keepalive
+           FROM devices d
+           JOIN servers s ON s.id = d.server_id
+          WHERE d.status = 'active'",
+    )
+    .fetch_all(pool)
+    .await?;
     let total = rows.len();
     if total == 0 {
         return Ok(());
     }
     let mut restored = 0usize;
-    for (public_key, allocated_ip) in rows {
+    for (public_key, allocated_ip, keepalive) in rows {
         match wg
-            .add_peer(&public_key, allocated_ip.ip(), None, PERSISTENT_KEEPALIVE)
+            .add_peer(&public_key, allocated_ip.ip(), None, keepalive as u16)
             .await
         {
             Ok(()) => restored += 1,

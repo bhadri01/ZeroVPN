@@ -4,7 +4,7 @@ Self-hosted WireGuard VPN management platform. Rust backend + React frontend, si
 
 ## Status
 
-Phase 1A (foundation). See [TODO.md](TODO.md) and [CHANGELOG.md](CHANGELOG.md) for current state.
+See [CHANGELOG.md](CHANGELOG.md) for current state.
 
 ## Quickstart (dev)
 
@@ -68,7 +68,6 @@ See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace wit
 ├── docker-compose.yml
 ├── .env.example
 ├── CHANGELOG.md
-├── TODO.md
 └── README.md
 ```
 

@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   IconCopy,
   IconDotsVertical,
-  IconDownload,
   IconEye,
   IconKey,
   IconLogin2,
@@ -55,24 +54,27 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import {
   ApiError,
   type AdminCreatedUser,
   type AdminCreateUserBody,
   type AdminUser,
   type AdminUserListFilters,
+  type UserPolicySnapshot,
   type UserRole,
   type UserStatus,
   adminCreateUser,
   adminDeleteUser,
   adminDisableUser2FA,
+  adminGetUserPolicy,
   adminImpersonateUser,
   adminListUsers,
   adminRevokeUserSessions,
   adminSendPasswordReset,
+  adminSetUserPolicy,
   adminSetUserRole,
   adminSetUserStatus,
-  adminUsersCsvUrl,
   me,
 } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
@@ -308,27 +310,20 @@ export function UsersPage() {
           title="Users"
           sub={`${usersQ.data?.total ?? 0} total · ${items.filter((u) => u.status === "active").length} active`}
           right={
-            <>
-              <a
-                href={adminUsersCsvUrl(filters)}
-                download="users.csv"
-                className="border-border text-muted-foreground hover:text-foreground hover:border-foreground inline-flex h-8 items-center gap-1.5 border px-2.5 text-xs transition-colors"
-                title="Export CSV (current filters)"
-              >
-                <IconDownload className="size-3.5" />
-                CSV
-              </a>
-              <Button
-                size="sm"
-                onClick={() => setInviteOpen(true)}
-                className="gap-1.5"
-              >
-                <IconPlus className="size-4" />
-                Invite user
-              </Button>
-            </>
+            <Button
+              size="sm"
+              onClick={() => setInviteOpen(true)}
+              className="gap-1.5"
+            >
+              <IconPlus className="size-4" />
+              Invite user
+            </Button>
           }
         />
+      </StaggerItem>
+
+      <StaggerItem>
+        <UserPolicyPanel />
       </StaggerItem>
 
       <StaggerItem>
@@ -704,6 +699,67 @@ export function UsersPage() {
         }}
       />
     </PageStagger>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+
+/** Global non-admin policy toggles. Edits hit `/admin/user-policy`, which
+ *  is reflected in every session's next `/me` (login responses also carry
+ *  it for first-paint route gating). Admins are exempt from every toggle. */
+function UserPolicyPanel() {
+  const qc = useQueryClient()
+  const setSelfUser = useAuth((s) => s.setUser)
+  const selfUser = useAuth((s) => s.user)
+  const q = useQuery({
+    queryKey: ["admin", "user-policy"],
+    queryFn: adminGetUserPolicy,
+  })
+  const m = useMutation({
+    mutationFn: (next: UserPolicySnapshot) => adminSetUserPolicy(next),
+    onSuccess: async (_d, next) => {
+      // Refresh the cached row + the live auth-store snapshot so the
+      // editor sees the new value immediately (and so any admin-side
+      // gating that reads from auth picks it up without a reload).
+      void qc.invalidateQueries({ queryKey: ["admin", "user-policy"] })
+      if (selfUser) {
+        setSelfUser({ ...selfUser, user_policy: next })
+      }
+      toast.success("User policy updated")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const policy = q.data
+  return (
+    <Panel
+      title="User policy"
+      sub="Global gates for non-admin accounts · admins are exempt"
+    >
+      <div className="flex items-center justify-between gap-4 py-1">
+        <div className="flex flex-col">
+          <span className="text-foreground font-mono text-sm font-medium">
+            Hide device detail page
+          </span>
+          <span className="text-muted-foreground font-mono text-[11px]">
+            Users still see their device list but can't open
+            /app/devices/{"{id}"} — useful when the per-device charts and
+            activity log should stay admin-only.
+          </span>
+        </div>
+        <Switch
+          aria-label="Hide device detail page"
+          checked={!!policy?.hide_device_detail}
+          disabled={q.isLoading || m.isPending}
+          onCheckedChange={(checked) =>
+            policy &&
+            m.mutate({ ...policy, hide_device_detail: checked === true })
+          }
+        />
+      </div>
+    </Panel>
   )
 }
 

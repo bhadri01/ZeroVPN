@@ -189,6 +189,32 @@ pub struct PublicUser {
     /// `is_impersonated` is true.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub impersonator_email: Option<String>,
+    /// Admin-set global toggles that govern what *non-admin* users see in
+    /// the user-facing app. Always present on `/me`, the login response,
+    /// and the email-verify response so the SPA can gate routes/links from
+    /// first paint without an extra round-trip. Admins should ignore these
+    /// — backend handlers exempt admins from policy gating.
+    pub user_policy: UserPolicySnapshot,
+}
+
+#[derive(Debug, Serialize, ToSchema, Default, sqlx::FromRow)]
+pub struct UserPolicySnapshot {
+    pub hide_device_detail: bool,
+}
+
+/// Fetch the current global user policy. Mirrors the shape returned by
+/// `GET /admin/user-policy` but is used to enrich every PublicUser
+/// response so the frontend learns the policy on login / page-load
+/// without a separate request. Falls back to permissive defaults on
+/// query failure so a transient DB hiccup never locks users out.
+pub async fn load_user_policy(pool: &zerovpn_db::PgPool) -> UserPolicySnapshot {
+    sqlx::query_as::<_, UserPolicySnapshot>(
+        "SELECT policy_hide_device_detail AS hide_device_detail
+           FROM app_settings WHERE id = 1",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or_default()
 }
 
 #[utoipa::path(
@@ -294,6 +320,7 @@ pub async fn login(
             _ => {
                 // Correct password but missing second factor — return a
                 // hint to the client so the form can prompt for the code.
+                let user_policy = load_user_policy(&state.pool).await;
                 return Ok(Json(LoginResponse {
                     user: PublicUser {
                         id: user_with_secrets.id,
@@ -302,6 +329,7 @@ pub async fn login(
                         totp_enabled: user_with_secrets.totp_enabled,
                         is_impersonated: false,
                         impersonator_email: None,
+                        user_policy,
                     },
                     must_change_password: user_with_secrets.must_change_password,
                     totp_required: true,
@@ -464,6 +492,7 @@ pub async fn login(
     let must_change = user.must_change_password;
     info!(user_id = %user.id, role = ?user.role, totp = totp_enabled, "login");
 
+    let user_policy = load_user_policy(&state.pool).await;
     Ok(Json(LoginResponse {
         user: PublicUser {
             id: user.id,
@@ -472,6 +501,7 @@ pub async fn login(
             totp_enabled: user.totp_enabled,
             is_impersonated: false,
             impersonator_email: None,
+            user_policy,
         },
         must_change_password: must_change,
         totp_required: false,
@@ -579,6 +609,7 @@ pub async fn me(
         None
     };
 
+    let user_policy = load_user_policy(&state.pool).await;
     Ok(Json(PublicUser {
         id: user.id,
         email: user.email,
@@ -586,6 +617,7 @@ pub async fn me(
         totp_enabled: user.totp_enabled,
         is_impersonated: impersonator_email.is_some(),
         impersonator_email,
+        user_policy,
     }))
 }
 

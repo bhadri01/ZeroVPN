@@ -142,8 +142,37 @@ async fn main() -> Result<()> {
     };
 
     let wg_controller = zerovpn_wg::control::from_env();
-    let app_state =
-        AppState::new(pool, allocators, kek, mailer, public_url, wg_controller);
+
+    // Google OAuth is optional — when any of the three vars is missing the
+    // /auth/google/* routes return 503 and the rest of the API boots fine.
+    let google_oauth = match (
+        env::var("ZEROVPN_GOOGLE_OAUTH__CLIENT_ID").ok().filter(|s| !s.is_empty()),
+        env::var("ZEROVPN_GOOGLE_OAUTH__CLIENT_SECRET").ok().filter(|s| !s.is_empty()),
+        env::var("ZEROVPN_GOOGLE_OAUTH__REDIRECT_URL").ok().filter(|s| !s.is_empty()),
+    ) {
+        (Some(client_id), Some(client_secret), Some(redirect_url)) => {
+            info!(redirect_url, "google oauth configured");
+            Some(zerovpn_core::config::GoogleOAuthConfig {
+                client_id,
+                client_secret,
+                redirect_url,
+            })
+        }
+        _ => {
+            info!("ZEROVPN_GOOGLE_OAUTH__* not set; google sign-in disabled");
+            None
+        }
+    };
+
+    let app_state = AppState::new(
+        pool,
+        allocators,
+        kek,
+        mailer,
+        public_url,
+        wg_controller,
+        google_oauth,
+    );
 
     // Re-add active peers to the (possibly freshly recreated) WG interface so
     // existing tunnels keep working across restarts without re-creating each
@@ -192,6 +221,8 @@ async fn main() -> Result<()> {
                 .route("/auth/register", post(routes::auth::register))
                 .route("/auth/login", post(routes::auth::login))
                 .route("/auth/logout", post(routes::auth::logout))
+                .route("/auth/google/start", get(routes::oauth::google_start))
+                .route("/auth/google/callback", post(routes::oauth::google_callback))
                 .route("/me", get(routes::auth::me))
                 .route(
                     "/devices",
@@ -326,6 +357,10 @@ async fn main() -> Result<()> {
                 .route(
                     "/admin/maintenance",
                     get(routes::admin::get_maintenance).put(routes::admin::set_maintenance),
+                )
+                .route(
+                    "/admin/user-policy",
+                    get(routes::admin::get_user_policy).put(routes::admin::set_user_policy),
                 )
                 .route(
                     "/admin/users/{id}/quota",

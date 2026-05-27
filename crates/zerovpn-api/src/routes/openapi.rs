@@ -10,7 +10,7 @@
 use axum::{Json, response::IntoResponse};
 use utoipa::{Modify, OpenApi, openapi::security::{SecurityScheme, ApiKey, ApiKeyValue}};
 
-use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, totp, ws};
+use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, oauth, totp, ws};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -40,6 +40,8 @@ use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, t
         email_auth::forgot_password,
         email_auth::reset_password,
         email_auth::verify_reset_token,
+        oauth::google_start,
+        oauth::google_callback,
 
         // Account
         me::export,
@@ -85,6 +87,8 @@ use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, t
         admin::list_failed_logins,
         admin::get_maintenance,
         admin::set_maintenance,
+        admin::get_user_policy,
+        admin::set_user_policy,
         admin::list_devices,
         admin::device_detail,
         admin::device_bandwidth,

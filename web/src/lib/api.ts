@@ -91,6 +91,16 @@ export interface PublicUser {
   /** Email of the admin who initiated impersonation. Only present when
    *  `is_impersonated` is true. */
   impersonator_email?: string
+  /** Admin-set global toggles governing what *non-admin* users see in the
+   *  user-facing app. Admins are exempt — gate logic should always be
+   *  `policy.X && user.role !== "admin"`. Present on every auth-store
+   *  hydrate (login / verify / /me) so route guards work from first paint. */
+  user_policy: UserPolicySnapshot
+}
+
+export interface UserPolicySnapshot {
+  /** When true, hide /app/devices/{id} from non-admin users. */
+  hide_device_detail: boolean
 }
 
 export interface LoginResponse {
@@ -162,6 +172,23 @@ export const login = (body: {
 
 export const logout = () =>
   apiFetch<{ status: string }>("/auth/logout", { method: "POST" })
+
+/**
+ * URL that kicks off Google OAuth. Used as a top-level navigation target
+ * (window.location = googleStartUrl) — the backend 302s to Google's
+ * consent screen, which can only happen at the window level, not from
+ * inside a fetch().
+ */
+export const googleStartUrl = `${BASE}/auth/google/start`
+
+/** Complete the Google OAuth round-trip — called by the SPA's
+ *  `/google/callback` page with the `code` + `state` Google appended to
+ *  the redirect URL. Returns the same shape as `login`. */
+export const googleCallback = (body: { code: string; state: string }) =>
+  apiFetch<LoginResponse>("/auth/google/callback", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
 
 export const me = () => apiFetch<PublicUser>("/me")
 
@@ -1265,6 +1292,15 @@ export const adminSetMaintenance = (
     }),
   })
 
+export const adminGetUserPolicy = () =>
+  apiFetch<UserPolicySnapshot>("/admin/user-policy")
+
+export const adminSetUserPolicy = (policy: UserPolicySnapshot) =>
+  apiFetch<{ status: string }>("/admin/user-policy", {
+    method: "PUT",
+    body: JSON.stringify(policy),
+  })
+
 // ---------------------------------------------------------------------------
 // Servers (admin)
 // ---------------------------------------------------------------------------
@@ -1280,6 +1316,9 @@ export interface AdminServerRow {
   dns_servers: string[]
   mtu: number
   is_active: boolean
+  /** WireGuard PersistentKeepalive (seconds) handed to peers on this server.
+   *  `0` disables keepalive. */
+  persistent_keepalive: number
   /** Cumulative lifetime RX/TX across this server's devices (accurate
    *  device-lifetime sum). Powers the server-live card's RX/TX totals. */
   rx_total: number
@@ -1296,6 +1335,7 @@ export const adminPatchServer = (
     endpoint_port?: number
     mtu?: number
     dns_servers?: string[]
+    persistent_keepalive?: number
   },
 ) =>
   apiFetch<{ status: string }>(`/admin/servers/${id}`, {

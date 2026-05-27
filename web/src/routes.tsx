@@ -4,7 +4,12 @@ import { createBrowserRouter, Outlet } from "react-router"
 import { DashboardLayout } from "@/components/layout/DashboardLayout"
 import { PublicShell } from "@/components/layout/PublicShell"
 import { PublicRouteError, RouteError } from "@/components/RouteError"
-import { AdminRoute, ProtectedRoute, useBootstrapAuth } from "@/lib/auth-guard"
+import {
+  AdminRoute,
+  DeviceDetailRoute,
+  ProtectedRoute,
+  useBootstrapAuth,
+} from "@/lib/auth-guard"
 
 // All pages lazy-loaded to keep the entry chunk small. The DashboardLayout
 // wraps the lazy load with its own Suspense fallback (skeleton).
@@ -30,6 +35,11 @@ const ForgotPasswordPage = lazy(() =>
 const ResetPasswordPage = lazy(() =>
   import("@/pages/public/ResetPassword").then((m) => ({
     default: m.ResetPasswordPage,
+  })),
+)
+const GoogleCallbackPage = lazy(() =>
+  import("@/pages/public/GoogleCallback").then((m) => ({
+    default: m.GoogleCallbackPage,
   })),
 )
 
@@ -133,6 +143,7 @@ export const router = createBrowserRouter([
           { path: "/verify-email", element: <VerifyEmailPage /> },
           { path: "/forgot-password", element: <ForgotPasswordPage /> },
           { path: "/reset-password", element: <ResetPasswordPage /> },
+          { path: "/google/callback", element: <GoogleCallbackPage /> },
           // Force-change-password lives outside DashboardLayout because
           // ProtectedRoute would redirect us back here in a loop.
           { path: "/app/change-password", element: <ChangePasswordPage /> },
@@ -164,7 +175,11 @@ export const router = createBrowserRouter([
               breadcrumb: "Device",
               parents: [{ label: "Devices", to: "/app/devices" }],
             },
-            element: <DeviceDetailPage />,
+            element: (
+              <DeviceDetailRoute>
+                <DeviceDetailPage />
+              </DeviceDetailRoute>
+            ),
           },
           {
             path: "/app/topology",

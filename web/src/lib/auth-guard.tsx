@@ -77,3 +77,20 @@ export function AdminRoute({ children }: { children: React.ReactNode }) {
   if (user.role !== "admin") return <Navigate to="/app" replace />
   return <>{children}</>
 }
+
+/** Gate the /app/devices/{id} route behind the global "Hide device detail"
+ *  user-policy toggle. Non-admins get bounced back to the device list when
+ *  the policy is on; admins always pass through so they can still inspect
+ *  any device. The auth-store snapshot is hydrated from /me, login, and
+ *  verify-email, so this works from first paint without an extra fetch. */
+export function DeviceDetailRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuth((s) => s.user)
+  if (
+    user &&
+    user.role !== "admin" &&
+    user.user_policy?.hide_device_detail
+  ) {
+    return <Navigate to="/app/devices" replace />
+  }
+  return <>{children}</>
+}

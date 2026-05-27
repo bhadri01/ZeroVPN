@@ -504,6 +504,7 @@ pub async fn create(
     let address_str = format!("{}/32", ip);
     let allowed_ips = DEFAULT_ALLOWED_IPS.to_string();
 
+    let keepalive = server.persistent_keepalive as u16;
     let cfg = config::PeerConfig {
         private_key: &private_key,
         address: &address_str,
@@ -519,7 +520,7 @@ pub async fn create(
         preshared_key: None,
         allowed_ips: &allowed_ips,
         endpoint: &endpoint_str,
-        keepalive: PERSISTENT_KEEPALIVE,
+        keepalive,
     };
     let conf_text = cfg
         .render()
@@ -534,7 +535,7 @@ pub async fn create(
     // Hand the new peer to the running WG interface (Noop in dev).
     if let Err(e) = state
         .wg
-        .add_peer(&public_key, ip, None, PERSISTENT_KEEPALIVE)
+        .add_peer(&public_key, ip, None, keepalive)
         .await
     {
         tracing::warn!(?e, "wg add_peer failed (continuing — DB row persisted)");
@@ -675,13 +676,14 @@ pub async fn rotate_keys(
     if let Err(e) = state.wg.remove_peer(&old_public_key).await {
         tracing::warn!(?e, "wg remove_peer (rotate) failed");
     }
+    let keepalive = server.persistent_keepalive as u16;
     if let Err(e) = state
         .wg
         .add_peer(
             &public_key,
             device.allocated_ip.ip(),
             None,
-            PERSISTENT_KEEPALIVE,
+            keepalive,
         )
         .await
     {
@@ -722,7 +724,7 @@ pub async fn rotate_keys(
         preshared_key: None,
         allowed_ips: &allowed_ips,
         endpoint: &endpoint_str,
-        keepalive: PERSISTENT_KEEPALIVE,
+        keepalive,
     };
     let conf_text = cfg
         .render()
@@ -897,7 +899,7 @@ pub async fn redownload_conf(
         preshared_key: None,
         allowed_ips: &allowed_ips,
         endpoint: &endpoint_str,
-        keepalive: PERSISTENT_KEEPALIVE,
+        keepalive: server.persistent_keepalive as u16,
     };
     let conf_text = cfg
         .render()
@@ -1028,6 +1030,7 @@ fn render_profile(
     endpoint: &str,
     allowed_ips: &[String],
     mtu: u16,
+    keepalive: u16,
 ) -> ApiResult<(WgProfile, String, String)> {
     let dns_joined = dns.join(", ");
     let allowed_joined = allowed_ips.join(", ");
@@ -1041,7 +1044,7 @@ fn render_profile(
         preshared_key: None,
         allowed_ips: &allowed_joined,
         endpoint,
-        keepalive: PERSISTENT_KEEPALIVE,
+        keepalive,
     };
     let config = cfg
         .render()
@@ -1056,7 +1059,7 @@ fn render_profile(
         endpoint: endpoint.to_string(),
         allowed_ips: allowed_ips.to_vec(),
         mtu,
-        persistent_keepalive: PERSISTENT_KEEPALIVE,
+        persistent_keepalive: keepalive,
     };
     Ok((profile, config, qr_svg))
 }
@@ -1125,6 +1128,7 @@ pub async fn connect(
         };
         let allowed_ips = default_allowed_ips();
         let endpoint = format!("{}:{}", server.endpoint_host, server.endpoint_port);
+        let keepalive = server.persistent_keepalive as u16;
         let (profile, config, qr_svg) = render_profile(
             &private_key,
             &address,
@@ -1133,13 +1137,14 @@ pub async fn connect(
             &endpoint,
             &allowed_ips,
             server.mtu as u16,
+            keepalive,
         )?;
 
         // Re-assert the peer on the live interface (idempotent) so the tunnel
         // works even if the interface/worker restarted since provisioning.
         if let Err(e) = state
             .wg
-            .add_peer(&device.public_key, ip, None, PERSISTENT_KEEPALIVE)
+            .add_peer(&device.public_key, ip, None, keepalive)
             .await
         {
             tracing::warn!(?e, %device_id, "wg add_peer on reconnect failed (continuing)");
@@ -1276,6 +1281,7 @@ pub async fn connect(
         .collect();
     let allowed_ips = default_allowed_ips();
     let endpoint = format!("{}:{}", server.endpoint_host, server.endpoint_port);
+    let keepalive = server.persistent_keepalive as u16;
     let (profile, config, qr_svg) = render_profile(
         &private_key,
         &address,
@@ -1284,6 +1290,7 @@ pub async fn connect(
         &endpoint,
         &allowed_ips,
         server.mtu as u16,
+        keepalive,
     )?;
 
     let stored = devices::find_for_user(&state.pool, user.id, device_id)
@@ -1292,7 +1299,7 @@ pub async fn connect(
 
     if let Err(e) = state
         .wg
-        .add_peer(&public_key, ip, None, PERSISTENT_KEEPALIVE)
+        .add_peer(&public_key, ip, None, keepalive)
         .await
     {
         tracing::warn!(?e, "wg add_peer failed (continuing — DB row persisted)");
@@ -1464,13 +1471,25 @@ async fn set_pause_state(
             }
         }
         DeviceStatus::Active => {
+            // Look up the server to pull its per-server PersistentKeepalive —
+            // falls back to the historical default if the lookup fails so a
+            // transient DB blip doesn't block resume.
+            let keepalive = match zerovpn_db::repos::servers::find_by_id(
+                &state.pool,
+                device.server_id,
+            )
+            .await
+            {
+                Ok(Some(s)) => s.persistent_keepalive as u16,
+                Ok(None) | Err(_) => PERSISTENT_KEEPALIVE,
+            };
             if let Err(e) = state
                 .wg
                 .add_peer(
                     &device.public_key,
                     device.allocated_ip.ip(),
                     None,
-                    PERSISTENT_KEEPALIVE,
+                    keepalive,
                 )
                 .await
             {

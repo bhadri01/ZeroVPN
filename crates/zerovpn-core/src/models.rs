@@ -113,6 +113,10 @@ pub struct Server {
     pub dns_servers: Vec<IpNetwork>,
     pub mtu: i32,
     pub is_active: bool,
+    /// WireGuard `PersistentKeepalive` (seconds) handed to every peer on
+    /// this server — written into the client `.conf` and used by live
+    /// `wg set peer` calls. `0` disables keepalive (WG default semantics).
+    pub persistent_keepalive: i16,
 }
 
 impl Server {

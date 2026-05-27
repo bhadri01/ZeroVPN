@@ -1,0 +1,395 @@
+//! Google OAuth 2.0 sign-in.
+//!
+//! Two-step flow shaped to keep the user's browser doing the navigation
+//! (Google won't show the consent page inside an XHR):
+//!
+//!   1. `GET /auth/google/start` — top-level navigation from the SPA's
+//!      "Continue with Google" button. Mints a random `state` + PKCE
+//!      verifier, parks the (hashed) state and verifier in
+//!      `oauth_states`, and 302s the browser to Google's auth URL.
+//!
+//!   2. After Google bounces the browser back to the operator-registered
+//!      redirect URL (a SPA route under the frontend dev server),
+//!      `POST /auth/google/callback` is called by the SPA with the
+//!      `{code, state}` query params it just received. The server:
+//!         a. consumes the state row (one-shot — replay can't reuse it),
+//!         b. exchanges the code at Google's token endpoint using the
+//!            stored PKCE verifier,
+//!         c. fetches userinfo, refuses if `email_verified == false`,
+//!         d. looks up the user by google_id, then by email (auto-link),
+//!            or creates a fresh row (auto-provision),
+//!         e. mints a session exactly like `/auth/login` and returns the
+//!            `LoginResponse` shape so the SPA's auth store hydrates the
+//!            same way.
+//!
+//! TOTP is intentionally NOT re-prompted: the Google sign-in is treated as
+//! a complete authentication on its own (standard SSO behavior). A user
+//! who wants TOTP-required-everywhere should disable the Google link.
+
+use axum::{
+    Json,
+    extract::State,
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Redirect, Response},
+};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use rand::RngCore;
+use serde::Deserialize;
+use serde_json::json;
+use sha2::{Digest, Sha256};
+use time::{Duration, OffsetDateTime};
+use tracing::{info, warn};
+use url::Url;
+use utoipa::ToSchema;
+use zerovpn_core::models::{UserRole, UserStatus};
+use zerovpn_db::repos::{audit, oauth_states, session_events, users};
+
+use crate::{
+    error::{ApiError, ApiResult},
+    extractors::auth::{SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_USER_ID},
+    routes::auth::{LoginResponse, PublicUser, client_ip, client_user_agent, load_user_policy},
+    state::AppState,
+};
+
+const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const GOOGLE_USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v3/userinfo";
+
+/// Lifetime of an OAuth `state` row. The round-trip through Google should
+/// take seconds; ten minutes is generous and keeps the table small.
+const STATE_TTL: Duration = Duration::minutes(10);
+
+#[utoipa::path(
+    get,
+    path = "/auth/google/start",
+    tag = "Auth",
+    responses(
+        (status = 302, description = "Redirect to Google's consent screen"),
+        (status = 503, description = "Google OAuth not configured on this deployment"),
+    ),
+)]
+pub async fn google_start(State(state): State<AppState>) -> ApiResult<Response> {
+    let cfg = match &state.google_oauth {
+        Some(c) => c.clone(),
+        None => return Ok(google_disabled()),
+    };
+
+    let state_param = random_url_safe(32);
+    let verifier = random_url_safe(48);
+    let challenge = {
+        let mut h = Sha256::new();
+        h.update(verifier.as_bytes());
+        URL_SAFE_NO_PAD.encode(h.finalize())
+    };
+    let state_hash = sha256_hex(&state_param);
+
+    oauth_states::insert(
+        &state.pool,
+        &state_hash,
+        &verifier,
+        OffsetDateTime::now_utc() + STATE_TTL,
+    )
+    .await?;
+
+    // url::Url::query_pairs_mut handles percent-encoding for us so values
+    // with `+` / `=` / space don't break the URL.
+    let mut url = Url::parse(GOOGLE_AUTH_URL).map_err(|e| ApiError::Internal(e.to_string()))?;
+    url.query_pairs_mut()
+        .append_pair("client_id", &cfg.client_id)
+        .append_pair("redirect_uri", &cfg.redirect_url)
+        .append_pair("response_type", "code")
+        .append_pair("scope", "openid email profile")
+        .append_pair("state", &state_param)
+        .append_pair("code_challenge", &challenge)
+        .append_pair("code_challenge_method", "S256")
+        // `select_account` makes Google show the chooser even when the
+        // user is signed into exactly one Google account — useful for
+        // "switch account" flows from the SPA.
+        .append_pair("prompt", "select_account");
+
+    Ok(Redirect::to(url.as_str()).into_response())
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct GoogleCallbackBody {
+    /// The `code` Google appended to the redirect URL.
+    pub code: String,
+    /// The `state` we parked at `/auth/google/start`; matched against the
+    /// hashed copy in `oauth_states`.
+    pub state: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/auth/google/callback",
+    tag = "Auth",
+    request_body = GoogleCallbackBody,
+    responses(
+        (status = 200, description = "Session established", body = LoginResponse),
+        (status = 400, description = "Bad state, expired state, or unverified Google email"),
+        (status = 403, description = "Account suspended"),
+        (status = 502, description = "Token exchange or userinfo call failed at Google"),
+        (status = 503, description = "Google OAuth not configured on this deployment"),
+    ),
+)]
+pub async fn google_callback(
+    State(state): State<AppState>,
+    session: tower_sessions::Session,
+    headers: HeaderMap,
+    Json(body): Json<GoogleCallbackBody>,
+) -> ApiResult<impl IntoResponse> {
+    let cfg = match &state.google_oauth {
+        Some(c) => c.clone(),
+        None => {
+            return Err(ApiError::Internal(
+                "google oauth not configured".to_string(),
+            ));
+        }
+    };
+
+    let state_hash = sha256_hex(&body.state);
+    let verifier = oauth_states::consume(&state.pool, &state_hash)
+        .await?
+        .ok_or_else(|| ApiError::Validation("invalid or expired state".to_string()))?;
+
+    let token = exchange_code(&cfg, &body.code, &verifier).await?;
+    let info = fetch_userinfo(&token.access_token).await?;
+
+    if !info.email_verified {
+        return Err(ApiError::Validation(
+            "google account email is not verified".to_string(),
+        ));
+    }
+    let email = info.email.trim().to_lowercase();
+    let google_id = info.sub;
+    let req_ip = client_ip(&headers);
+    let req_ua = client_user_agent(&headers);
+
+    // 1) Already linked? Sign in directly.
+    let user = if let Some(u) = users::find_by_google_id(&state.pool, &google_id).await? {
+        u
+    }
+    // 2) Email matches an existing account — link it on the fly.
+    else if let Some(u) = users::find_by_email(&state.pool, &email).await? {
+        users::link_google(&state.pool, u.id, &google_id).await?;
+        info!(user_id = %u.id, "linked existing account to google");
+        let _ = audit::record_with_ua(
+            &state.pool,
+            audit::AuditEntry {
+                actor_user_id: Some(u.id),
+                action: "auth.google.linked",
+                target_type: Some("user"),
+                target_id: Some(u.id),
+                metadata: json!({ "google_sub": google_id }),
+                ip: req_ip,
+            },
+            req_ua.as_deref(),
+        )
+        .await;
+        // Re-fetch so the secrets row reflects the linked state (we want
+        // the updated email_verified_at, etc).
+        users::find_by_email(&state.pool, &email)
+            .await?
+            .ok_or_else(|| ApiError::Internal("user vanished after link".to_string()))?
+    }
+    // 3) Brand-new user — auto-provision. First user becomes admin to
+    //    mirror /auth/register's bootstrap rule.
+    else {
+        let admins = users::count_active_admins(&state.pool).await?;
+        let role = if admins == 0 { UserRole::Admin } else { UserRole::User };
+        let user_id = users::create_google(&state.pool, &email, &google_id, role).await?;
+        info!(%user_id, ?role, "user provisioned via google");
+        let _ = audit::record_with_ua(
+            &state.pool,
+            audit::AuditEntry {
+                actor_user_id: Some(user_id),
+                action: "user.registered",
+                target_type: Some("user"),
+                target_id: Some(user_id),
+                metadata: json!({ "role": role, "via": "google" }),
+                ip: req_ip,
+            },
+            req_ua.as_deref(),
+        )
+        .await;
+        users::find_by_email(&state.pool, &email)
+            .await?
+            .ok_or_else(|| ApiError::Internal("user vanished after create".to_string()))?
+    };
+
+    if user.status == UserStatus::Suspended {
+        return Err(ApiError::Forbidden);
+    }
+
+    session
+        .insert(SESSION_KEY_USER_ID, user.id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    session
+        .insert(
+            SESSION_KEY_PW_CHANGED_AT,
+            user.password_changed_at.unix_timestamp(),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    users::touch_last_login(&state.pool, user.id).await?;
+
+    if let Err(e) = session_events::record(
+        &state.pool,
+        user.id,
+        session_events::SessionEvent::Login,
+        req_ip,
+        req_ua.as_deref(),
+        json!({ "via": "google" }),
+    )
+    .await
+    {
+        warn!(?e, user_id = %user.id, "session_events google login record failed");
+    }
+
+    let user_policy = load_user_policy(&state.pool).await;
+    let totp_enabled = user.totp_enabled;
+    let must_change = user.must_change_password;
+    info!(user_id = %user.id, role = ?user.role, totp = totp_enabled, "google login");
+
+    Ok(Json(LoginResponse {
+        user: PublicUser {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            totp_enabled,
+            is_impersonated: false,
+            impersonator_email: None,
+            user_policy,
+        },
+        must_change_password: must_change,
+        // Google SSO bypasses the TOTP prompt by design (the Google sign-in
+        // itself is the second authentication path).
+        totp_required: false,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// HTTP calls to Google
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    id_token: Option<String>,
+}
+
+async fn exchange_code(
+    cfg: &zerovpn_core::config::GoogleOAuthConfig,
+    code: &str,
+    verifier: &str,
+) -> ApiResult<TokenResponse> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| ApiError::Internal(format!("http client: {e}")))?;
+
+    // Hand-rolled form encoding — reqwest's `.form()` is feature-gated and
+    // this workspace doesn't pull it in. `url::form_urlencoded` is already
+    // in our dep graph and gives us deterministic `application/x-www-form-urlencoded`.
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("code", code)
+        .append_pair("client_id", &cfg.client_id)
+        .append_pair("client_secret", &cfg.client_secret)
+        .append_pair("redirect_uri", &cfg.redirect_url)
+        .append_pair("grant_type", "authorization_code")
+        .append_pair("code_verifier", verifier)
+        .finish();
+
+    let res = client
+        .post(GOOGLE_TOKEN_URL)
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| ApiError::Internal(format!("token exchange: {e}")))?;
+
+    if !res.status().is_success() {
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        warn!(%status, %body, "google token exchange failed");
+        return Err(ApiError::Internal(format!(
+            "google token exchange returned {status}"
+        )));
+    }
+    res.json::<TokenResponse>()
+        .await
+        .map_err(|e| ApiError::Internal(format!("token response decode: {e}")))
+}
+
+#[derive(Debug, Deserialize)]
+struct UserInfo {
+    sub: String,
+    email: String,
+    #[serde(default)]
+    email_verified: bool,
+}
+
+async fn fetch_userinfo(access_token: &str) -> ApiResult<UserInfo> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| ApiError::Internal(format!("http client: {e}")))?;
+
+    let res = client
+        .get(GOOGLE_USERINFO_URL)
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .map_err(|e| ApiError::Internal(format!("userinfo: {e}")))?;
+
+    if !res.status().is_success() {
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        warn!(%status, %body, "google userinfo fetch failed");
+        return Err(ApiError::Internal(format!(
+            "google userinfo returned {status}"
+        )));
+    }
+    res.json::<UserInfo>()
+        .await
+        .map_err(|e| ApiError::Internal(format!("userinfo decode: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn random_url_safe(bytes: usize) -> String {
+    let mut buf = vec![0u8; bytes];
+    rand::thread_rng().fill_bytes(&mut buf);
+    URL_SAFE_NO_PAD.encode(buf)
+}
+
+fn sha256_hex(s: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    hex::encode(h.finalize())
+}
+
+fn google_disabled() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::CONTENT_TYPE, "application/json")],
+        Json(json!({
+            "error": {
+                "code": "google_oauth_disabled",
+                "message": "google oauth is not configured on this deployment",
+            }
+        })),
+    )
+        .into_response()
+}
+

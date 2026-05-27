@@ -17,6 +17,7 @@ use crate::PgPool;
 pub struct QuotaDevice {
     pub id: Uuid,
     pub user_id: Uuid,
+    pub server_id: Uuid,
     pub public_key: String,
     pub allocated_ip: IpNetwork,
     #[sqlx(default)]
@@ -69,7 +70,7 @@ pub async fn reset_due_devices(
 /// user's peers must stay off regardless of quota.
 pub async fn resume_candidates(pool: &PgPool) -> sqlx::Result<Vec<QuotaDevice>> {
     sqlx::query_as(
-        "SELECT d.id, d.user_id, d.public_key, d.allocated_ip, FALSE AS over_device_cap
+        "SELECT d.id, d.user_id, d.server_id, d.public_key, d.allocated_ip, FALSE AS over_device_cap
            FROM devices d
            JOIN users u ON u.id = d.user_id
           WHERE d.auto_paused = TRUE
@@ -89,7 +90,7 @@ pub async fn resume_candidates(pool: &PgPool) -> sqlx::Result<Vec<QuotaDevice>> 
 /// pauses these. `over_device_cap` distinguishes the two for messaging.
 pub async fn pause_candidates(pool: &PgPool) -> sqlx::Result<Vec<QuotaDevice>> {
     sqlx::query_as(
-        "SELECT d.id, d.user_id, d.public_key, d.allocated_ip,
+        "SELECT d.id, d.user_id, d.server_id, d.public_key, d.allocated_ip,
                 (d.monthly_byte_cap IS NOT NULL AND d.monthly_byte_cap > 0
                  AND d.current_month_bytes >= d.monthly_byte_cap) AS over_device_cap
            FROM devices d

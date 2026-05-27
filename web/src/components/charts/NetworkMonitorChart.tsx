@@ -90,6 +90,17 @@ export function NetworkMonitorChart({
   }
   const showXAxis = !!windowSec && windowSec > 0
 
+  // When showing the time axis, right-align the data inside the window so
+  // frames live at indices `[windowSec - len .. windowSec]` — a half-full
+  // chart still anchors "now" to the right edge instead of squashing frames
+  // into the leftmost slot. Declared BEFORE the early return below so the
+  // hook order stays stable across renders (rules-of-hooks).
+  const plotData = useMemo(() => {
+    if (!showXAxis || !windowSec) return data
+    const offset = windowSec - data.length
+    return data.map((d, idx) => ({ ...d, i: offset + idx }))
+  }, [data, showXAxis, windowSec])
+
   if (data.length === 0) {
     return (
       <div
@@ -100,16 +111,6 @@ export function NetworkMonitorChart({
       </div>
     )
   }
-
-  // When showing the time axis, right-align the data inside the window
-  // so frames live at indices `[windowSec - len .. windowSec]`. That way
-  // a half-full chart still anchors "now" to the right edge instead of
-  // squashing 10 frames into the leftmost slot.
-  const plotData = useMemo(() => {
-    if (!showXAxis || !windowSec) return data
-    const offset = windowSec - data.length
-    return data.map((d, idx) => ({ ...d, i: offset + idx }))
-  }, [data, showXAxis, windowSec])
 
   return (
     <ResponsiveContainer width="100%" height={height}>

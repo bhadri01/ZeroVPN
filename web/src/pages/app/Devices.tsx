@@ -46,6 +46,7 @@ import {
   ACTIVITY_STALE_MS,
   isLiveOnline,
 } from "@/hooks/useDeviceOnline"
+import { useDeviceDetailGated } from "@/hooks/useDeviceDetailGated"
 import { useNow } from "@/hooks/useNow"
 import {
   type PublicDevice,
@@ -108,6 +109,7 @@ function readViewMode(): ViewMode {
 export function DevicesPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const hideDetail = useDeviceDetailGated()
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
 
   // Two orthogonal multi-select dimensions: connection (is the tunnel
@@ -425,9 +427,11 @@ export function DevicesPage() {
               onCreated={(d) => {
                 // Sheet showed QR + config on step 2; on Done we close it
                 // and land the user on the new device's detail page so they
-                // can verify the row is live without hunting for it.
+                // can verify the row is live without hunting for it. When
+                // the admin policy hides the detail page, leave the user on
+                // /app/devices instead so they don't get bounced.
                 setAddOpen(false)
-                navigate(`/app/devices/${d.device.id}`)
+                if (!hideDetail) navigate(`/app/devices/${d.device.id}`)
               }}
             />
           </Sheet>
@@ -599,7 +603,11 @@ export function DevicesPage() {
                     isDragging={dragId === d.id}
                     onDragStart={() => setDragId(d.id)}
                     onDragEnd={handleDragRelease}
-                    onDoubleClick={() => navigate(`/app/devices/${d.id}`)}
+                    onDoubleClick={
+                      hideDetail
+                        ? undefined
+                        : () => navigate(`/app/devices/${d.id}`)
+                    }
                     actions={
                       <RowActions
                         device={d}
@@ -796,7 +804,9 @@ function SortableListRow({
   isDragging: boolean
   onDragStart: () => void
   onDragEnd: () => void
-  onDoubleClick: () => void
+  /** Undefined when the admin user-policy hides the device detail page;
+   *  the row then renders the name as plain text instead of a link. */
+  onDoubleClick?: () => void
   actions: React.ReactNode
 }) {
   const peerHost = d.last_peer_endpoint
@@ -804,6 +814,7 @@ function SortableListRow({
     : null
   const TypeIcon = DEVICE_TYPE_ICONS[d.device_type]
   const controls = useDragControls()
+  const hideDetail = useDeviceDetailGated()
   return (
     <Reorder.Item
       value={d}
@@ -830,17 +841,28 @@ function SortableListRow({
         <IconGripVertical size={14} />
       </div>
       <div className="zv-cell">
-        <Link
-          to={`/app/devices/${d.id}`}
-          className="hover:text-foreground inline-flex items-center gap-2 font-medium"
-        >
-          <StatusPill status={rowStatus} dotOnly />
-          <TypeIcon
-            className="text-muted-foreground size-4 shrink-0"
-            title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
-          />
-          {d.name}
-        </Link>
+        {hideDetail ? (
+          <span className="inline-flex items-center gap-2 font-medium">
+            <StatusPill status={rowStatus} dotOnly />
+            <TypeIcon
+              className="text-muted-foreground size-4 shrink-0"
+              title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
+            />
+            {d.name}
+          </span>
+        ) : (
+          <Link
+            to={`/app/devices/${d.id}`}
+            className="hover:text-foreground inline-flex items-center gap-2 font-medium"
+          >
+            <StatusPill status={rowStatus} dotOnly />
+            <TypeIcon
+              className="text-muted-foreground size-4 shrink-0"
+              title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
+            />
+            {d.name}
+          </Link>
+        )}
       </div>
       <div className="zv-cell font-mono">{d.allocated_ip}</div>
       <div
@@ -927,7 +949,8 @@ function GridDragCard({
   onDragStart: () => void
   onDragInflight: (point: { x: number; y: number }) => void
   onDragEnd: () => void
-  onDoubleClick: () => void
+  /** Undefined when the user-policy hides the device detail page. */
+  onDoubleClick?: () => void
   registerRef: (el: HTMLDivElement | null) => void
   actions: React.ReactNode
 }) {
