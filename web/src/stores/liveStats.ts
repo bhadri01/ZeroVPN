@@ -97,14 +97,19 @@ export interface ServerHealthLive {
   memUsedBytes: number
   memTotalBytes: number
   activePeers: number
-  diskReadBps: number
-  diskWriteBps: number
-  diskReadHistory: number[]
-  diskWriteHistory: number[]
-  netRxBps: number
-  netTxBps: number
-  netRxHistory: number[]
-  netTxHistory: number[]
+  /** wg0 tunnel rx/sec, used by the sidebar's "Real I/O" row. The worker
+   *  diffs cumulative wg0 counters against the previous tick and emits
+   *  the per-second rate. */
+  wgRxBps: number
+  wgTxBps: number
+  wgRxHistory: number[]
+  wgTxHistory: number[]
+  /** Container Net I/O — **cumulative bytes** since container start,
+   *  summed across every interface (eth0 + wg0 + …). Matches the
+   *  "Net I/O" column from `docker stats <name>`. No rolling history
+   *  because cumulative totals aren't meaningfully sparkline-able. */
+  netRxTotalBytes: number
+  netTxTotalBytes: number
   uptimeSec: number
   lastTs: number
 }
@@ -138,10 +143,10 @@ interface LiveStatsState {
     memUsedBytes: number,
     memTotalBytes: number,
     activePeers: number,
-    diskReadBps: number,
-    diskWriteBps: number,
-    netRxBps: number,
-    netTxBps: number,
+    wgRxBps: number,
+    wgTxBps: number,
+    netRxTotalBytes: number,
+    netTxTotalBytes: number,
     uptimeSec: number,
     ts?: number,
   ): void
@@ -194,14 +199,12 @@ const emptyServerHealth = (): ServerHealthLive => ({
   memUsedBytes: 0,
   memTotalBytes: 0,
   activePeers: 0,
-  diskReadBps: 0,
-  diskWriteBps: 0,
-  diskReadHistory: [],
-  diskWriteHistory: [],
-  netRxBps: 0,
-  netTxBps: 0,
-  netRxHistory: [],
-  netTxHistory: [],
+  wgRxBps: 0,
+  wgTxBps: 0,
+  wgRxHistory: [],
+  wgTxHistory: [],
+  netRxTotalBytes: 0,
+  netTxTotalBytes: 0,
   uptimeSec: 0,
   lastTs: 0,
 })
@@ -439,10 +442,10 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
     memUsedBytes,
     memTotalBytes,
     activePeers,
-    diskReadBps,
-    diskWriteBps,
-    netRxBps,
-    netTxBps,
+    wgRxBps,
+    wgTxBps,
+    netRxTotalBytes,
+    netTxTotalBytes,
     uptimeSec,
     ts,
   ) {
@@ -457,14 +460,12 @@ export const useLiveStats = create<LiveStatsState>((set) => ({
             memUsedBytes,
             memTotalBytes,
             activePeers,
-            diskReadBps,
-            diskWriteBps,
-            diskReadHistory: pushCapped(cur.diskReadHistory, diskReadBps, SERVER_HEALTH_HISTORY),
-            diskWriteHistory: pushCapped(cur.diskWriteHistory, diskWriteBps, SERVER_HEALTH_HISTORY),
-            netRxBps,
-            netTxBps,
-            netRxHistory: pushCapped(cur.netRxHistory, netRxBps, SERVER_HEALTH_HISTORY),
-            netTxHistory: pushCapped(cur.netTxHistory, netTxBps, SERVER_HEALTH_HISTORY),
+            wgRxBps,
+            wgTxBps,
+            wgRxHistory: pushCapped(cur.wgRxHistory, wgRxBps, SERVER_HEALTH_HISTORY),
+            wgTxHistory: pushCapped(cur.wgTxHistory, wgTxBps, SERVER_HEALTH_HISTORY),
+            netRxTotalBytes,
+            netTxTotalBytes,
             uptimeSec,
             lastTs: at,
           },

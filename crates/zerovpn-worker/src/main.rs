@@ -13,6 +13,7 @@ use zerovpn_events::Publisher;
 use zerovpn_wire::Event;
 
 mod aggregator;
+mod docker_stats;
 mod retention;
 mod server_health;
 mod wg_poller;

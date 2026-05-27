@@ -98,6 +98,10 @@ services:
       ZEROVPN_EVENTS__PUBLISHER_BIND: tcp://0.0.0.0:5555
       ZEROVPN_WG__BACKEND: shell        # poll the real wg0 in api-dev's netns
       ZEROVPN_WG__INTERFACE: wg0
+      # Tell the server_health emitter which container to scrape for
+      # CPU%/MEM/Net I/O. Matches what `docker stats` would show for the
+      # VPN host container. Unset → falls back to sysinfo (host-wide).
+      ZEROVPN_WORKER__VPN_HOST_CONTAINER: zerovpn-api-dev-1
       CARGO_TERM_COLOR: always
     command: ["watchexec", "--restart", "--poll", "1s", "-w", "crates", "--", "cargo", "run", "-p", "zerovpn-worker"]
     # Share api-dev's network namespace so wg0 + the api's loopback are visible.
@@ -110,6 +114,11 @@ services:
       # Same shared dir as api-dev — lets `wg show` reach the userspace UAPI
       # socket when wg-quick falls back to boringtun.
       - wg_run:/run/wireguard
+      # Docker engine socket (read-only) — the server_health emitter calls
+      # `/containers/<name>/stats` to surface the VPN host container's
+      # CPU/MEM/Net I/O. RO is enough; we never POST. Without this the
+      # emitter falls back to sysinfo (host-wide, not container-scoped).
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       db:
         condition: service_healthy

@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/stores/auth"
-import { formatBps, formatBytes } from "@/lib/units"
+import { formatBytes } from "@/lib/units"
 import { useLiveStats } from "@/stores/liveStats"
 
 type NavEntry = {
@@ -226,10 +226,18 @@ function ServerStats() {
   const memUsed = health.memUsedBytes
   const memTotal = health.memTotalBytes
   const memPct = memTotal > 0 ? (memUsed / memTotal) * 100 : 0
-  const diskRead = health.diskReadBps
-  const diskWrite = health.diskWriteBps
-  const netRx = health.netRxBps
-  const netTx = health.netTxBps
+  // "Real I/O" = wg0 tunnel rate. Worker computes (cur - prev) / interval
+  // each tick from the cumulative `/sys/class/net/wg0/statistics` counters
+  // (or Docker stats' `networks.wg0` when running in the dev compose), so
+  // these are already per-second values — no further conversion needed.
+  const wgRx = health.wgRxBps
+  const wgTx = health.wgTxBps
+  // Net I/O is the cumulative-since-container-start figure straight from
+  // `docker stats <name>` — not a per-second rate. We render it verbatim
+  // (e.g. `↓ 39.4 MB · ↑ 13.1 MB`) so the sidebar matches what an operator
+  // sees on the host.
+  const netRxTotal = health.netRxTotalBytes
+  const netTxTotal = health.netTxTotalBytes
 
   return (
     <div className="mx-2 mb-1 space-y-1.5">
@@ -249,21 +257,23 @@ function ServerStats() {
       />
 
       <div className="pt-1">
-        {/* Title + R/W values share a row so the read/write numbers sit
-            in the corner — same layout idiom as the Net I/O row below. */}
+        {/* Real I/O = wg0 tunnel rate. Title + ↓/↑ rate share the row so
+            the numbers sit in the corner, matching the Net I/O row below.
+            Worker already gives us bytes/sec; format as a byte rate (no
+            ÷8 since wg0 statistics are in bytes, not bits). */}
         <div className="flex items-center justify-between pb-0.5 font-mono text-[10px] tabular-nums">
           <span className="text-muted-foreground uppercase tracking-[0.08em]">
-            Real I/O
+            Real I/O · wg0
           </span>
           <span className="text-foreground">
-            <span className="text-primary">R</span> {formatBytes(diskRead)}
+            <span className="text-primary">↓</span> {formatBytes(wgRx)}/s
             <span className="text-muted-foreground px-1">·</span>
-            <span className="text-primary">W</span> {formatBytes(diskWrite)}
+            <span className="text-primary">↑</span> {formatBytes(wgTx)}/s
           </span>
         </div>
         <MiniAreaChart
-          rxHistory={health.diskReadHistory}
-          txHistory={health.diskWriteHistory}
+          rxHistory={health.wgRxHistory}
+          txHistory={health.wgTxHistory}
           height={32}
         />
       </div>
@@ -272,16 +282,13 @@ function ServerStats() {
         <div className="text-muted-foreground flex items-center justify-between font-mono text-[10px] tabular-nums">
           <span className="uppercase tracking-[0.08em]">Net I/O</span>
           <span className="text-foreground">
-            {/* Worker emits net rate in bits/sec to match the rest of the
-                wire format; the sidebar prefers byte units. Divide by 8 to
-                go bits → bytes, then format with formatBytes. No "/s"
-                suffix — keeps the row scannable and matches the Real I/O
-                row's compact "R 12 KB · W 4 KB" style. */}
-            <span className="text-primary">↓</span>{" "}
-            {formatBps(netRx)}
+            {/* Cumulative bytes-since-container-start, summed across every
+                interface. 1:1 with the "Net I/O" column from
+                `docker stats <name>` — no `/s` suffix since the figure
+                isn't a rate. */}
+            <span className="text-primary">↓</span> {formatBytes(netRxTotal)}
             <span className="text-muted-foreground px-1">·</span>
-            <span className="text-primary">↑</span>{" "}
-            {formatBps(netTx)}
+            <span className="text-primary">↑</span> {formatBytes(netTxTotal)}
           </span>
         </div>
       </div>

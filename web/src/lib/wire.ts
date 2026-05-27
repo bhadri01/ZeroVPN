@@ -45,10 +45,17 @@ export type Event =
       mem_used_bytes: number
       mem_total_bytes: number
       active_peers: number
-      disk_read_bps: number
-      disk_write_bps: number
-      net_rx_bps: number
-      net_tx_bps: number
+      /** wg0 tunnel: bytes received per second (Real I/O row in the
+       *  sidebar). Diff of cumulative counters since the previous tick. */
+      wg_rx_bps: number
+      /** wg0 tunnel: bytes transmitted per second. */
+      wg_tx_bps: number
+      /** Container Net I/O — **cumulative bytes** since container start,
+       *  summed across every interface. Matches the "Net I/O" column from
+       *  `docker stats <name>` exactly. Sidebar renders as `↓ 39.4 MB ·
+       *  ↑ 13.1 MB`, no per-second conversion. */
+      net_rx_total_bytes: number
+      net_tx_total_bytes: number
       uptime_sec: number
       ts_ms: number
     }

@@ -1,208 +1,177 @@
-//! Host-level system metrics emitter.
+//! Host-level metrics emitter for the admin sidebar.
 //!
-//! Polls the OS every `TICK` seconds for CPU%, memory, net I/O, disk I/O,
-//! uptime and publishes one `Event::ServerHealth` per active server. Net
-//! and disk are exposed as **rates** (bytes/sec since the previous poll),
-//! computed from the cumulative counters the OS exposes.
+//! Every `TICK` seconds we publish one `Event::ServerHealth` per active
+//! server. The numbers are sourced as follows:
 //!
-//! Admin-only on the wire — the api's `visible_to` filter drops
-//! `ServerHealth` for non-admins (see crates/zerovpn-api/src/routes/ws.rs).
+//! * **CPU %, memory, Net I/O** — `docker stats` for the VPN host
+//!   container (the api/api-dev container that owns `wg0`). Queried over
+//!   the local Docker socket so the figures match what the operator sees
+//!   from `docker stats <name>` on the host. The container name is taken
+//!   from `ZEROVPN_WORKER__VPN_HOST_CONTAINER`; absent → docker socket
+//!   missing → falls back to `sysinfo` so the panel is never empty.
+//!
+//! * **wg0 Real I/O** — per-second rate computed by diffing the cumulative
+//!   `rx_bytes`/`tx_bytes` counters on the `wg0` interface against the
+//!   previous tick. We try Docker stats' `networks.wg0` first (already
+//!   fetched) and fall back to `/sys/class/net/wg0/statistics/{rx,tx}_bytes`
+//!   so this works even when running outside Docker, as long as the
+//!   process can see the wg0 interface in its netns.
+//!
+//! All numbers on the wire are rates (per-second) and the diffing /
+//! previous-state bookkeeping happens here — consumers just plot the
+//! latest value.
 
 use std::time::{Duration, Instant};
 
-use sysinfo::{Networks, System};
+use sysinfo::System;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use zerovpn_db::{PgPool, repos::servers};
 use zerovpn_wire::Event;
 
+use crate::docker_stats;
+
 const TICK: Duration = Duration::from_secs(5);
-/// Linux /proc/diskstats reports I/O in 512-byte sectors regardless of the
-/// device's actual sector size (the kernel scales internally). Multiply by
-/// this to get bytes.
-const SECTOR_BYTES: u64 = 512;
 
-/// Read /proc/diskstats and return (cumulative sectors read, cumulative
-/// sectors written) summed across all "real" block devices — loop, ram,
-/// dm-, fd, sr (cdrom) are skipped to avoid inflated numbers from
-/// virtual mounts. Returns None on platforms without /proc/diskstats
-/// (macOS, Windows, anywhere procfs isn't mounted).
-///
-/// /proc/diskstats columns (kernel docs / Documentation/iostats.rst):
-///   col 3 = device name
-///   col 6 = sectors read
-///   col 10 = sectors written
-fn read_diskstats() -> Option<(u64, u64)> {
-    let content = std::fs::read_to_string("/proc/diskstats").ok()?;
-    let mut total_read: u64 = 0;
-    let mut total_write: u64 = 0;
-    for line in content.lines() {
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 10 {
-            continue;
-        }
-        let name = cols[2];
-        if name.starts_with("loop")
-            || name.starts_with("ram")
-            || name.starts_with("dm-")
-            || name.starts_with("fd")
-            || name.starts_with("sr")
-        {
-            continue;
-        }
-        // Skip partition entries (sda1, nvme0n1p1) so we don't double-count
-        // the same I/O that's already attributed to the parent device.
-        // Heuristic: partitions end in a digit and the device-without-trailing-
-        // digits has a sibling line. Cheap approximation: skip names that
-        // contain a digit followed by 'p' or end in a digit *and* aren't
-        // a known whole-device name like nvme0n1. Simpler: skip any name
-        // ending in a digit when there's a non-digit-ending sibling. For
-        // a first cut, just take whole disks (sd[a-z], nvme[0-9]+n[0-9]+,
-        // mmcblk[0-9]+, vd[a-z], xvd[a-z]):
-        let is_whole = matches!(
-            name.chars().next(),
-            Some('s') | Some('v') | Some('x') | Some('h') | Some('m') | Some('n')
-        ) && !ends_with_partition_suffix(name);
-        if !is_whole {
-            continue;
-        }
-        let sectors_read: u64 = cols[5].parse().unwrap_or(0);
-        let sectors_written: u64 = cols[9].parse().unwrap_or(0);
-        total_read = total_read.saturating_add(sectors_read);
-        total_write = total_write.saturating_add(sectors_written);
-    }
-    Some((total_read, total_write))
+/// Cumulative byte counters carried across ticks so we can compute a
+/// per-second rate by diffing. `None` until the first read populates it.
+#[derive(Default)]
+struct ByteCounters {
+    rx: u64,
+    tx: u64,
 }
 
-/// True if the interface looks like a real wire/physical NIC, not a
-/// loopback, Docker bridge, VPN tunnel, or other virtual device. Run as
-/// a block-list because new physical-NIC name prefixes ship every couple
-/// of years (enp*, wlp*, wlan*, en*, eth*, eno*, ens*, …) and the
-/// virtual-name space is more stable.
-fn is_physical_iface(name: &str) -> bool {
-    // Common patterns we never want to count:
-    //   lo, lo0           - loopback
-    //   docker0, br-*     - docker default bridge & user bridges
-    //   veth*             - container virtual ethernet
-    //   cni*              - kubernetes CNI plugins
-    //   vboxnet*, vmnet*  - VirtualBox / VMware host-only nets
-    //   tap*, tun*        - generic tunnel devices
-    //   utun*             - macOS tunnel (often VPN apps)
-    //   wg*, awg*         - WireGuard / AmneziaWG tunnels (avoid double-
-    //                      counting traffic that also flows through eth0)
-    //   bridge*, bond*    - aggregations, often duplicates of members
-    //   gif*, stf*        - macOS legacy 6-to-4 / tunnel pseudo-devices
-    let skip_prefixes = [
-        "lo", "docker", "br-", "veth", "cni", "vboxnet", "vmnet", "tap",
-        "tun", "utun", "wg", "awg", "bridge", "bond", "gif", "stf", "ipsec",
-        "anpi",
-    ];
-    for p in skip_prefixes {
-        if name == p || name.starts_with(p) {
-            return false;
-        }
-    }
-    true
+/// Read cumulative `rx_bytes` / `tx_bytes` for an interface from sysfs.
+/// Falls back to `None` when the path doesn't exist (non-Linux, or the
+/// interface isn't present in this netns) so the caller can substitute the
+/// Docker-reported counters or report 0.
+fn read_iface_counters(iface: &str) -> Option<(u64, u64)> {
+    let base = format!("/sys/class/net/{iface}/statistics");
+    let rx: u64 = std::fs::read_to_string(format!("{base}/rx_bytes"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let tx: u64 = std::fs::read_to_string(format!("{base}/tx_bytes"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    Some((rx, tx))
 }
 
-/// True if the device name looks like a partition rather than a whole disk.
-/// `sda1`, `nvme0n1p1`, `mmcblk0p1` → partition. `sda`, `nvme0n1`, `mmcblk0`
-/// → whole. Heuristic, intentionally conservative — false positives just
-/// mean we drop a real disk from the rollup.
-fn ends_with_partition_suffix(name: &str) -> bool {
-    // sdXN, hdXN, vdXN, xvdXN — trailing digit on a 3-or-4-char device.
-    if let Some(c) = name.chars().last() {
-        if c.is_ascii_digit() {
-            // nvme0n1, mmcblk0, sda → not partitions despite trailing digit.
-            // Partitions have a 'p' or are the digit-suffix on sdXN-style.
-            // Whole nvme/mmc have at most one 'n' or one 'blk' segment.
-            if name.starts_with("nvme") || name.starts_with("mmcblk") {
-                // Whole-disk forms: nvme0n1 / mmcblk0. Partitions: nvme0n1p1 / mmcblk0p1.
-                return name.contains('p')
-                    && name.rfind('p').map(|i| i > 4).unwrap_or(false);
-            }
-            // sda1, hda1, vda1, xvda1 → trailing digit IS the partition number.
-            return true;
-        }
+/// Compute a per-second byte rate from (prev, cur) cumulative counters.
+/// A counter reset (cur < prev) — container restart, interface re-create
+/// — is treated as "fresh baseline, no rate this tick" rather than a
+/// negative number wrapping around.
+fn rate_per_sec(prev: u64, cur: u64, secs: u64) -> u64 {
+    if cur < prev || secs == 0 {
+        return 0;
     }
-    false
+    (cur - prev) / secs
 }
 
 pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
     info!(?TICK, "server_health emitter started");
     let started = Instant::now();
+
+    // Name of the container whose CPU/MEM/Net we want to report. In dev
+    // compose this is `zerovpn-api-dev-1`; in prod it's typically
+    // `zerovpn-api-1`. Empty / unset → docker stats disabled, fall back
+    // to sysinfo.
+    let target_container = std::env::var("ZEROVPN_WORKER__VPN_HOST_CONTAINER")
+        .ok()
+        .filter(|s| !s.is_empty());
+    if let Some(name) = &target_container {
+        info!(container = %name, "server_health: using docker stats for CPU/MEM/Net");
+    } else {
+        info!(
+            "server_health: ZEROVPN_WORKER__VPN_HOST_CONTAINER not set; \
+             falling back to host-wide sysinfo for CPU/MEM/Net"
+        );
+    }
+
+    // Fallback path: prime sysinfo so its first non-noise sample arrives
+    // on the next refresh. Only used when docker stats are unavailable.
     let mut sys = System::new_all();
-    let mut nets = Networks::new_with_refreshed_list();
-    // The first refresh primes the deltas — sysinfo's *_received counters
-    // report the bytes seen since the previous refresh, so the very first
-    // call yields nonsense rates. Burn a tick on initial state.
     sys.refresh_cpu_usage();
     sys.refresh_memory();
-    nets.refresh();
-    // Disk I/O cumulative baseline. None means /proc/diskstats isn't
-    // available on this platform (macOS dev) — we still emit zeros
-    // rather than nothing, so the UI doesn't hide the row entirely.
-    let mut last_disk = read_diskstats();
-    if last_disk.is_none() {
-        info!("/proc/diskstats not available; disk I/O will report 0 (non-Linux host)");
-    }
+
+    // wg0 byte counters are diffed across ticks to compute a per-second
+    // rate ("Real I/O"). Net I/O is emitted as the raw cumulative total
+    // from Docker stats — matches the "Net I/O" column in `docker stats`
+    // and doesn't need a previous-tick sample.
+    let mut prev_wg: Option<ByteCounters> = None;
+
     let mut ticker = tokio::time::interval(TICK);
     ticker.tick().await; // first tick is immediate; skip it.
 
     loop {
         ticker.tick().await;
-        sys.refresh_cpu_usage();
-        sys.refresh_memory();
-        nets.refresh();
+        let secs = TICK.as_secs().max(1);
 
-        // CPU: average across logical cores.
-        let cpu_pct = {
+        // ── Pull stats from Docker if configured ──────────────────────
+        let docker = if let Some(name) = &target_container {
+            match docker_stats::fetch(name).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(?e, container = %name, "docker stats fetch failed");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // ── CPU / Memory ──────────────────────────────────────────────
+        let (cpu_pct, mem_used_bytes, mem_total_bytes) = if let Some(d) = &docker {
+            (d.cpu_pct(), d.mem_used_real(), d.mem_limit())
+        } else {
+            // sysinfo fallback (host-wide, not container-scoped).
+            sys.refresh_cpu_usage();
+            sys.refresh_memory();
             let cpus = sys.cpus();
-            if cpus.is_empty() {
+            let pct = if cpus.is_empty() {
                 0.0
             } else {
                 cpus.iter().map(|c| c.cpu_usage()).sum::<f32>() / cpus.len() as f32
-            }
+            };
+            (pct, sys.used_memory(), sys.total_memory())
         };
 
-        let mem_used_bytes = sys.used_memory();
-        let mem_total_bytes = sys.total_memory();
+        // ── Net I/O (cumulative totals, no rate) ─────────────────────
+        // Mirror the "Net I/O" column from `docker stats <name>` 1:1:
+        // sum across every interface visible in the container (wg0
+        // included), and ship the raw cumulative-since-container-start
+        // figure. The sidebar formats it as `↓ 39.4 MB · ↑ 13.1 MB`
+        // to match what an operator sees on the host.
+        let (net_rx_total, net_tx_total) = if let Some(d) = &docker {
+            d.net_io_total()
+        } else {
+            // No docker stats → unknown. Reporting 0 is the truthful
+            // "we couldn't measure this" signal; the sidebar's loading
+            // text already covers the first-paint moment.
+            (0, 0)
+        };
 
-        // Net I/O: sum byte deltas since the previous refresh across
-        // *real* network interfaces only. We skip loopback, Docker /
-        // container virtual bridges, WireGuard tunnels (would double-count
-        // traffic that also exits via the physical NIC), and other VPN
-        // tunnels. What's left is the user-meaningful "wire" traffic.
-        let secs = TICK.as_secs().max(1);
-        let mut net_rx_total: u64 = 0;
-        let mut net_tx_total: u64 = 0;
-        for (iface, data) in nets.iter() {
-            if !is_physical_iface(iface) {
-                continue;
+        // ── wg0 Real I/O ──────────────────────────────────────────────
+        // Prefer Docker's `networks.wg0` (already fetched, no extra
+        // syscall). Fall back to reading sysfs directly — works when
+        // running outside docker as long as wg0 is in our netns.
+        let wg_cum = docker
+            .as_ref()
+            .and_then(|d| d.networks.get("wg0").map(|n| (n.rx_bytes, n.tx_bytes)))
+            .or_else(|| read_iface_counters("wg0"));
+        let (wg_rx_bps, wg_tx_bps) = match (wg_cum, prev_wg.as_ref()) {
+            (Some((rx, tx)), Some(p)) => {
+                (rate_per_sec(p.rx, rx, secs), rate_per_sec(p.tx, tx, secs))
             }
-            net_rx_total = net_rx_total.saturating_add(data.received());
-            net_tx_total = net_tx_total.saturating_add(data.transmitted());
-        }
-        let net_rx_bps = net_rx_total / secs * 8;
-        let net_tx_bps = net_tx_total / secs * 8;
-
-        // Disk I/O: read current cumulative sectors, diff against the last
-        // sample, convert to bytes/sec. Treat counter resets (a fresh
-        // disk hot-plug, etc.) as a fresh baseline rather than reporting
-        // negative deltas.
-        let (disk_read_bps, disk_write_bps) = match (read_diskstats(), last_disk) {
-            (Some(cur), Some(prev)) => {
-                let dr = cur.0.saturating_sub(prev.0).saturating_mul(SECTOR_BYTES) / secs;
-                let dw = cur.1.saturating_sub(prev.1).saturating_mul(SECTOR_BYTES) / secs;
-                last_disk = Some(cur);
-                (dr, dw)
-            }
-            (Some(cur), None) => {
-                last_disk = Some(cur);
-                (0, 0)
-            }
+            (Some(_), None) => (0, 0),
             (None, _) => (0, 0),
         };
+        if let Some((rx, tx)) = wg_cum {
+            prev_wg = Some(ByteCounters { rx, tx });
+        }
 
         let uptime_sec = started.elapsed().as_secs();
         let now_ms = time::OffsetDateTime::now_utc().unix_timestamp() * 1000;
@@ -217,7 +186,6 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
             }
         };
         for s in active_servers {
-            // active_peers count: cheap query against devices for this server.
             let active_peers =
                 zerovpn_db::repos::devices::count_active_for_server(&pool, s.id)
                     .await
@@ -228,10 +196,10 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
                 mem_used_bytes,
                 mem_total_bytes,
                 active_peers,
-                disk_read_bps,
-                disk_write_bps,
-                net_rx_bps,
-                net_tx_bps,
+                wg_rx_bps,
+                wg_tx_bps,
+                net_rx_total_bytes: net_rx_total,
+                net_tx_total_bytes: net_tx_total,
                 uptime_sec,
                 ts_ms: now_ms,
             };
@@ -240,10 +208,10 @@ pub async fn run(pool: PgPool, tx: mpsc::Sender<(String, Event)>) {
                 cpu_pct,
                 mem_used_bytes,
                 mem_total_bytes,
-                disk_read_bps,
-                disk_write_bps,
-                net_rx_bps,
-                net_tx_bps,
+                wg_rx_bps,
+                wg_tx_bps,
+                net_rx_total = net_rx_total,
+                net_tx_total = net_tx_total,
                 uptime_sec,
                 active_peers,
                 "server_health emit"
