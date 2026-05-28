@@ -1,10 +1,12 @@
 import {
   IconArrowsMaximize,
   IconArrowsMinimize,
+  IconBinaryTree2,
   IconBrandAndroid,
   IconBrandApple,
   IconBrandUbuntu,
   IconBrandWindows,
+  IconCircleDotted,
   IconDeviceDesktop,
   IconDeviceLaptop,
   IconDeviceMobile,
@@ -42,6 +44,12 @@ interface LiveTopologyProps {
    *  map, the node falls back to "user · <first 6 of uuid>". For the
    *  current user, pass `{ [user.id]: { label: "me" } }` or similar. */
   userMap?: Map<string, { label: string }>
+  /** When true, the graph is filtered to only currently-connected peers
+   *  (connState === "online" — i.e. a fresh WireGuard handshake within
+   *  the live-handshake window). Users with no online peers drop off
+   *  the user tier so the graph shows "who's actually on the VPN right
+   *  now" instead of the entire fleet. Defaults to false. */
+  liveOnly?: boolean
 }
 
 // Baseline SVG-unit budget. Both dimensions are computed per-render
@@ -56,13 +64,107 @@ const DEFAULT_VB_W = 1000
 // container height; on landscape it grows horizontally past
 // DEFAULT_VB_W as before.
 // 2-level tree geometry. Hub at the center; user-tier nodes orbit on
-// USER_RING; each user's devices orbit on a small ring of radius
-// PEER_FROM_USER around their user. The vertical squash factor stays
-// the same for both rings so labels fit.
-const USER_RING = 130
-const PEER_FROM_USER = 75
+// `USER_RING`; each user's devices orbit on a per-user ring of radius
+// `peerRingFor(K)` around them. Both radii are now computed from the
+// **counts** so the layout never overlaps no matter how many users or
+// devices land on the graph (see `peerRingFor` / `userRingFor`). The
+// minimum floors keep small graphs from looking sparse.
 const MAX_PEERS = 24
 const MAX_USERS = 12
+
+// Halo footprints — the visual bounding-circle of each node type. Used by
+// the layout to compute "how close can two nodes sit before they touch".
+// Roughly matches the SVG glyph sizes below (`hub: r=24`, `peer: r=16`)
+// plus a bit of label slack.
+const HUB_HALO_R = 38
+const PEER_HALO_R = 22
+
+// Gap between adjacent halos. Larger = more breathing room, smaller =
+// tighter graph. 18 reads as "clearly separate, not glued together".
+const RING_GAP = 18
+
+// Floors so small graphs (1 user, 1 device) don't look sparse.
+const MIN_USER_RING = 130
+const MIN_PEER_RING = 60
+
+// Largest radii we'll grow to before clamping. Past these the graph
+// becomes hard to read; the SVG just scales down via preserveAspectRatio
+// to fit. Tuned for ~24 peers / 12 users on a 1000-unit viewBox.
+// Tuned for the worst realistic mix (12 users × 6 devices each gives
+// MAX_USER_RING ≳ 720). Past these ceilings the canvas just scales
+// down via SVG preserveAspectRatio.
+const MAX_USER_RING = 820
+const MAX_PEER_RING = 200
+
+/** Per-user sub-ring radius. Each user gets a **full circle** of K
+ *  devices around them, with devices at 2π/K angular spacing. Sized so
+ *  adjacent devices don't overlap.
+ *
+ *  Geometry: K nodes on a full ring of radius r are separated by chord
+ *  `2r·sin(π/K)`. For non-overlap we need `2r·sin(π/K) >=
+ *  2·(halo + halfGap)`, so `r >= (halo + halfGap) / sin(π/K)`. */
+function peerRingFor(deviceCount: number): number {
+  if (deviceCount <= 1) return MIN_PEER_RING
+  const halo = PEER_HALO_R + RING_GAP / 2
+  const r = halo / Math.max(Math.sin(Math.PI / deviceCount), 0.05)
+  return Math.min(Math.max(MIN_PEER_RING, r), MAX_PEER_RING)
+}
+
+// ── Radial-view geometry ───────────────────────────────────────────────
+// The radial view is a flat 2-ring layout: hub in the center, every
+// **user** on an inner ring, every **device** on a single outer ring
+// (devices ordered by user so each user's cluster sits roughly under
+// its own user node). Edges connect hub→user and user→device exactly
+// as in tree mode; only the device positions change.
+
+const RADIAL_DEVICE_GAP = 40 // gap between user ring and device ring
+
+/** Inner ring (users) radius for the radial view. Same chord-spacing
+ *  derivation as the tree view's userRingFor but without a sub-ring
+ *  width to clear — users alone, no devices clustered around them. */
+function radialUserRingFor(userCount: number): number {
+  if (userCount <= 1) return MIN_USER_RING
+  const halo = PEER_HALO_R + RING_GAP / 2
+  const r = halo / Math.sin(Math.PI / userCount)
+  return Math.min(Math.max(MIN_USER_RING, r), MAX_USER_RING)
+}
+
+/** Outer ring (devices) radius for the radial view. Sized to fit every
+ *  device on a single circle without overlap AND to clear the inner
+ *  user ring + halos by `RADIAL_DEVICE_GAP`. */
+function radialDeviceRingFor(
+  deviceCount: number,
+  userRing: number,
+): number {
+  const halo = PEER_HALO_R + RING_GAP / 2
+  const clear = userRing + PEER_HALO_R + RADIAL_DEVICE_GAP + PEER_HALO_R
+  if (deviceCount <= 1) return Math.max(clear, userRing + 90)
+  const r = halo / Math.sin(Math.PI / deviceCount)
+  return Math.max(r, clear)
+}
+
+/** Outer ring radius for the user tier. Two constraints:
+ *
+ *  1. Adjacent users' sub-rings (each `maxPeerRing` wide on the user-side
+ *     half) must not overlap. With a true circular user ring,
+ *     `2R·sin(π/N) >= 2·(maxPeerRing + halo + halfGap)`.
+ *
+ *  2. The inner edge of every sub-ring must clear the hub:
+ *     `R - maxPeerRing >= HUB_HALO_R + RING_GAP`.
+ *
+ *  Because devices now fan **outward** from the user (never inward), the
+ *  user ring no longer needs to oversize itself to keep sub-rings from
+ *  eating the hub — the devices only ever sit on the far side of the
+ *  user. The hub-clear constraint still bites for single-user graphs. */
+function userRingFor(userCount: number, maxPeerRing: number): number {
+  const halfWidth = maxPeerRing + PEER_HALO_R + RING_GAP / 2
+  const minHubClear = maxPeerRing + HUB_HALO_R + RING_GAP
+  if (userCount <= 1) return Math.max(MIN_USER_RING, minHubClear)
+  const ang = Math.sin(Math.PI / userCount)
+  const fromAngular = halfWidth / Math.max(ang, 0.05)
+  const r = Math.max(MIN_USER_RING, fromAngular, minHubClear)
+  return Math.min(r, MAX_USER_RING)
+}
 
 // Brand mark per OS (chip beside the peer glyph). A const map (member access)
 // rather than a function returning a component — the latter trips the
@@ -103,14 +205,22 @@ function toneFor(status: DeviceStatus, online: boolean, hasTraffic: boolean) {
   return hasTraffic ? "live" : "online"
 }
 
-/** Stable angle derived from device id — keeps positions consistent across
- *  re-renders even when devices come and go. */
-function angleFor(id: string, total: number, index: number): number {
-  // Even spread but offset by a hash so similar device IDs don't cluster.
-  let h = 0
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0
-  const jitter = ((h & 0xffff) / 0xffff) * 0.5 // 0–0.5 of a slot
-  return ((index + jitter) / total) * Math.PI * 2 - Math.PI / 2
+/** Angle of slot `index` on a ring divided into `total` equal sectors,
+ *  starting at -π/2 (north) so the first slot sits on top. Deterministic
+ *  by (total, index) — no per-id jitter. Used for user placement around
+ *  the hub; devices use the outward-arc helper below instead. */
+function angleFor(total: number, index: number): number {
+  if (total <= 0) return -Math.PI / 2
+  return ((index + 0.5) / total) * Math.PI * 2 - Math.PI / 2
+}
+
+/** Angle for device `index` (of `k`) on the user's **full-circle** sub-
+ *  ring. Slot 0 sits directly outward from the user (away from the hub)
+ *  so the user-to-first-device edge lines up with the radial; the
+ *  remaining devices wrap around the user evenly at 2π/K steps. */
+function deviceAngleFor(k: number, index: number, userAngle: number): number {
+  if (k <= 1) return userAngle
+  return userAngle + (index / k) * Math.PI * 2
 }
 
 interface LaidOutPeer {
@@ -149,12 +259,16 @@ interface View {
 
 const INITIAL_VIEW: View = { tx: 0, ty: 0, scale: 1 }
 
+type LayoutMode = "tree" | "radial"
+const DEFAULT_LAYOUT_MODE: LayoutMode = "tree"
+
 export function LiveTopology({
   devices,
   rates,
   serverLabel = "vpn-server",
   serverMeta,
   userMap,
+  liveOnly = false,
 }: LiveTopologyProps) {
   const [tick, setTick] = useState(0)
   const pageVisible = usePageVisible()
@@ -180,33 +294,145 @@ export function LiveTopology({
   //
   // Strategy: pin whichever dimension is "long" to its DEFAULT, then
   // grow the other dimension to match aspect. That keeps the content
-  // (USER_RING, PEER_FROM_USER) at a sensible scale relative to the
+  // (per-user ring + user ring) at a sensible scale relative to the
   // canvas regardless of container shape.
-  const [vbW, setVbW] = useState<number>(DEFAULT_VB_W)
-  const [vbH, setVbH] = useState<number>(DEFAULT_H)
+  // Aspect-derived baseline viewBox — keeps the visible area matching
+  // the container shape so we don't letterbox. The viewBox actually used
+  // is computed below from this + the laid-out content envelope.
+  const [containerAspect, setContainerAspect] = useState<number>(
+    DEFAULT_VB_W / DEFAULT_H,
+  )
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
     const update = () => {
       const r = el.getBoundingClientRect()
       if (r.height <= 0 || r.width <= 0) return
-      const containerAspect = r.width / r.height
-      const defaultAspect = DEFAULT_VB_W / DEFAULT_H
-      if (containerAspect >= defaultAspect) {
-        // Landscape (or close to it) — keep H at default, grow W to match.
-        setVbW(Math.round(DEFAULT_H * containerAspect))
-        setVbH(DEFAULT_H)
-      } else {
-        // Portrait — keep W at default, grow H to match.
-        setVbW(DEFAULT_VB_W)
-        setVbH(Math.round(DEFAULT_VB_W / containerAspect))
-      }
+      setContainerAspect(r.width / r.height)
     }
     update()
     const ro = new ResizeObserver(update)
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // Two layout modes the user can toggle between:
+  //   - "tree"   (default): hub → user-tier → per-user device fans on
+  //              outward arcs. Reads like a 2-level org chart.
+  //   - "radial": hub center, *all* users on one inner ring, *all*
+  //              devices on a single outer ring (ordered by user so
+  //              each user's devices cluster under its own angle).
+  // Persisted in localStorage so the choice survives reloads. Per-node
+  // drag overrides (`nodePositions`) are still honored on top of the
+  // selected layout, so dragging in either mode sticks. Declared up
+  // here (before the layout-radii useMemo) because the viewBox sizing
+  // and userRingRadius pick branch on it — JS TDZ otherwise.
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(() =>
+    loadLayoutMode(),
+  )
+  useEffect(() => {
+    saveLayoutMode(layoutMode)
+  }, [layoutMode])
+
+  // ── Layout data flow ─────────────────────────────────────────────────
+  // The chain below has to live above the pointer handlers + wheel
+  // effect (which reference `vbW`/`vbH` in their deps) because of JS's
+  // temporal-dead-zone — those callbacks evaluate their deps array on
+  // render and can't see a `useMemo` declared further down. So we put
+  // every data-flow useMemo here, from `devices` → `visible` →
+  // `userGroups` → `layoutRadii` → `vbW/vbH` → `HUB_Y`.
+
+  const visible = useMemo(() => {
+    // Revoked is always excluded. `liveOnly` further trims to peers
+    // that have completed a recent WG handshake — see connState in
+    // lib/deviceState. Users whose entire device set is offline drop
+    // off the user tier naturally because they have nothing to render.
+    let live = devices.filter((d) => d.status !== "revoked")
+    if (liveOnly) live = live.filter((d) => connState(d) === "online")
+    return live.slice(0, MAX_PEERS)
+  }, [devices, liveOnly])
+
+  const hidden = Math.max(
+    0,
+    devices.filter((d) => d.status !== "revoked").length - visible.length,
+  )
+
+  // Group devices by their owning user. Each unique user_id becomes a
+  // node on the inner ring; their devices cluster around them on a
+  // small sub-ring.
+  const userGroups = useMemo(() => {
+    const groups = new Map<string, PublicDevice[]>()
+    for (const d of visible) {
+      const key = d.user_id
+      const list = groups.get(key) ?? []
+      list.push(d)
+      groups.set(key, list)
+    }
+    // Cap user count for sanity in admin-wide views; the rest drop off the
+    // graph but the HUD count still reflects them.
+    const entries = [...groups.entries()].slice(0, MAX_USERS)
+    return entries
+  }, [visible])
+
+  // Compute ring radii for BOTH layout modes — cheap, count-based math,
+  // and lets us switch modes without recomputing the userGroups.
+  //
+  //   tree.userRing   = inner ring users sit on (current default)
+  //   tree.perUser    = per-user sub-ring (sized by that user's device count)
+  //   tree.maxPeer    = largest sub-ring across all users
+  //   radial.userRing = inner ring users sit on in radial mode (smaller —
+  //                     no sub-rings around each user)
+  //   radial.devRing  = single outer ring every device sits on
+  const layoutRadii = useMemo(() => {
+    const perUser: Map<string, number> = new Map()
+    let maxPeer = MIN_PEER_RING
+    let totalDevices = 0
+    for (const [userId, userDevices] of userGroups) {
+      const r = peerRingFor(userDevices.length)
+      perUser.set(userId, r)
+      if (r > maxPeer) maxPeer = r
+      totalDevices += userDevices.length
+    }
+    const treeUserRing = userRingFor(userGroups.length, maxPeer)
+    const radialUserRing = radialUserRingFor(userGroups.length)
+    const radialDevRing = radialDeviceRingFor(totalDevices, radialUserRing)
+    return {
+      perUser,
+      maxPeer,
+      treeUserRing,
+      radialUserRing,
+      radialDevRing,
+      totalDevices,
+    }
+  }, [userGroups])
+
+  // Pick a viewBox that satisfies BOTH the container aspect (so we don't
+  // letterbox) AND the laid-out content envelope (so the outermost
+  // device ring isn't clipped). The envelope changes with layoutMode:
+  // in tree mode the farthest node is at `userRing + maxPeer`; in
+  // radial mode it's the device ring radius directly.
+  const { vbW, vbH } = useMemo(() => {
+    const pad = PEER_HALO_R + 60
+    const radial =
+      layoutMode === "tree"
+        ? layoutRadii.treeUserRing + layoutRadii.maxPeer
+        : layoutRadii.radialDevRing
+    const need = 2 * (radial + pad)
+    if (containerAspect >= 1) {
+      const h = Math.max(DEFAULT_H, need)
+      const w = Math.max(h * containerAspect, need)
+      return {
+        vbW: Math.round(w),
+        vbH: Math.round(Math.max(h, w / containerAspect)),
+      }
+    }
+    const w = Math.max(DEFAULT_VB_W, need)
+    const h = Math.max(w / containerAspect, need)
+    return {
+      vbW: Math.round(Math.max(w, h * containerAspect)),
+      vbH: Math.round(h),
+    }
+  }, [containerAspect, layoutRadii, layoutMode])
 
   // Derived hub centerline — re-computed whenever the canvas resizes so
   // the hub + user-ring stay centered as vbH grows on portrait viewports.
@@ -455,39 +681,26 @@ export function LiveTopology({
     }
   }, [isFullscreen])
 
-  const visible = useMemo(() => {
-    const live = devices.filter((d) => d.status !== "revoked")
-    return live.slice(0, MAX_PEERS)
-  }, [devices])
+  // `visible` / `userGroups` / `layoutRadii` / `vbW,vbH` / `HUB_Y`
+  // live above the pointer handlers — see the "Layout data flow"
+  // comment up there for why.
 
-  const hidden = Math.max(0, devices.filter((d) => d.status !== "revoked").length - visible.length)
-
-  // Group devices by their owning user. Each unique user_id becomes a
-  // node on the inner ring; their devices cluster around them on a
-  // small sub-ring.
-  const userGroups = useMemo(() => {
-    const groups = new Map<string, PublicDevice[]>()
-    for (const d of visible) {
-      const key = d.user_id
-      const list = groups.get(key) ?? []
-      list.push(d)
-      groups.set(key, list)
-    }
-    // Cap user count for sanity in admin-wide views; the rest drop off the
-    // graph but the HUD count still reflects them.
-    const entries = [...groups.entries()].slice(0, MAX_USERS)
-    return entries
-  }, [visible])
+  // User-ring radius picked by mode — tree mode oversizes to keep the
+  // per-user sub-rings from colliding; radial mode just spaces users
+  // evenly since their devices live on a separate outer ring.
+  const userRingRadius =
+    layoutMode === "tree" ? layoutRadii.treeUserRing : layoutRadii.radialUserRing
 
   const placedUsers: LaidOutUser[] = useMemo(() => {
     const n = userGroups.length
     if (n === 0) return []
     return userGroups.map(([userId, userDevices], i) => {
-      // Single-user case: park the user directly above the hub so the
-      // 2-level tree reads top-down for the common dashboard view.
-      const a = n === 1 ? -Math.PI / 2 : angleFor(userId, n, i)
-      const computedX = vbW / 2 + Math.cos(a) * USER_RING
-      const computedY = HUB_Y + Math.sin(a) * USER_RING * 0.62
+      // Users sit at evenly-spaced angles around the hub — true circle,
+      // starting at -π/2 (north). Single user docks at the top so the
+      // 2-level tree reads top-down on the dashboard.
+      const a = n === 1 ? -Math.PI / 2 : angleFor(n, i)
+      const computedX = vbW / 2 + Math.cos(a) * userRingRadius
+      const computedY = HUB_Y + Math.sin(a) * userRingRadius
       const override = nodePositions.get(`user-${userId}`)
       const x = override?.x ?? computedX
       const y = override?.y ?? computedY
@@ -513,42 +726,66 @@ export function LiveTopology({
         peerCount: userDevices.length,
       }
     })
-  }, [userGroups, nodePositions, vbW, vbH, userMap, rates])
+  }, [userGroups, nodePositions, vbW, HUB_Y, userMap, rates, userRingRadius])
 
   const placed: LaidOutPeer[] = useMemo(() => {
     if (placedUsers.length === 0) return []
     const out: LaidOutPeer[] = []
-    for (const u of placedUsers) {
+    const center = { x: vbW / 2, y: HUB_Y }
+    // In radial mode, every device sits on a single outer ring shared
+    // across all users. Slots are assigned in user-order so each user's
+    // devices land in a contiguous arc directly outward from that user
+    // — the user→device edges fan out cleanly without crossing other
+    // users' clusters. `slotCursor` walks the global ring as we iterate
+    // users in the same angular order they sit on the inner ring.
+    let slotCursor = 0
+    const totalDevices = layoutRadii.totalDevices
+    placedUsers.forEach((u, userIdx) => {
       const userDevices = userGroups.find(([id]) => id === u.userId)?.[1] ?? []
       const k = userDevices.length
+      const userAngle =
+        placedUsers.length === 1 ? -Math.PI / 2 : angleFor(placedUsers.length, userIdx)
+
+      // Anchor each user's cluster on its own angle. We center the k
+      // device slots on the global outer-ring step that's closest to
+      // the user's angle — guarantees the cluster falls under the user
+      // when device counts are balanced, and stays nearby when they're not.
+      const startCursor =
+        totalDevices > 0
+          ? slotCursor
+          : 0
+
       userDevices.forEach((d, idx) => {
         const online = connState(d) === "online"
         const rate = online ? rates.get(d.id) : undefined
         const rateBps = (rate?.rxBps ?? 0) + (rate?.txBps ?? 0)
         const hasTraffic = rateBps > 1024
         const tone = toneFor(d.status, online, hasTraffic)
-        // Distribute this user's devices on a small ring centered on the
-        // *default* user-node position (so dragging the user doesn't drag
-        // the whole sub-ring with it — same idiom as hub vs peer ring).
-        const a = k === 1 ? Math.PI / 2 : angleFor(d.id, k, idx)
-        const defaultUserX =
-          vbW / 2 +
-          Math.cos(
-            placedUsers.length === 1
-              ? -Math.PI / 2
-              : angleFor(u.userId, placedUsers.length, placedUsers.indexOf(u)),
-          ) * USER_RING
-        const defaultUserY =
-          HUB_Y +
-          Math.sin(
-            placedUsers.length === 1
-              ? -Math.PI / 2
-              : angleFor(u.userId, placedUsers.length, placedUsers.indexOf(u)),
-          ) *
-            USER_RING *
-            0.62
-        const computedX = defaultUserX + Math.cos(a) * PEER_FROM_USER
-        const computedY = defaultUserY + Math.sin(a) * PEER_FROM_USER * 0.62
+
+        let computedX: number
+        let computedY: number
+        if (layoutMode === "tree") {
+          // Per-user outward arc — devices fan outward from the user.
+          const peerRing = layoutRadii.perUser.get(u.userId) ?? MIN_PEER_RING
+          const userTreeX = center.x + Math.cos(userAngle) * userRingRadius
+          const userTreeY = center.y + Math.sin(userAngle) * userRingRadius
+          const a = deviceAngleFor(k, idx, userAngle)
+          computedX = userTreeX + Math.cos(a) * peerRing
+          computedY = userTreeY + Math.sin(a) * peerRing
+        } else {
+          // Radial: single outer ring; each device gets one slot of the
+          // global 2π/N step. Center the cluster on the user's angle so
+          // the user→device edge is short.
+          const slotStep = (Math.PI * 2) / Math.max(1, totalDevices)
+          const clusterCenter = startCursor + (k - 1) / 2
+          const slot = startCursor + idx
+          const baseAngle = -Math.PI / 2 + clusterCenter * slotStep
+          const angleShift = userAngle - baseAngle
+          const a = -Math.PI / 2 + slot * slotStep + angleShift
+          computedX = center.x + Math.cos(a) * layoutRadii.radialDevRing
+          computedY = center.y + Math.sin(a) * layoutRadii.radialDevRing
+        }
+
         const override = nodePositions.get(d.id)
         const x = override?.x ?? computedX
         const y = override?.y ?? computedY
@@ -562,9 +799,20 @@ export function LiveTopology({
           userY: u.y,
         })
       })
-    }
+      slotCursor += k
+    })
     return out
-  }, [placedUsers, userGroups, rates, nodePositions, vbW, vbH])
+  }, [
+    placedUsers,
+    userGroups,
+    rates,
+    nodePositions,
+    vbW,
+    HUB_Y,
+    layoutRadii,
+    layoutMode,
+    userRingRadius,
+  ])
 
   // Hub position can also be overridden by drag. Default to canvas center.
   const hubOverride = nodePositions.get("__hub__")
@@ -757,6 +1005,29 @@ export function LiveTopology({
       <div className="absolute bottom-2 right-2 flex flex-col gap-1">
         <WithTooltip
           side="left"
+          label={
+            layoutMode === "tree"
+              ? "Switch to radial view (devices on outer ring)"
+              : "Switch to tree view (devices clustered per user)"
+          }
+        >
+          <button
+            type="button"
+            aria-label="Toggle layout mode"
+            className="zv-icon-btn bg-card"
+            onClick={() =>
+              setLayoutMode((m) => (m === "tree" ? "radial" : "tree"))
+            }
+          >
+            {layoutMode === "tree" ? (
+              <IconCircleDotted size={14} />
+            ) : (
+              <IconBinaryTree2 size={14} />
+            )}
+          </button>
+        </WithTooltip>
+        <WithTooltip
+          side="left"
           label={isFullscreen ? "Exit fullscreen" : "Open fullscreen"}
         >
           <button
@@ -864,6 +1135,34 @@ function saveNodePositions(positions: Map<string, { x: number; y: number }>): vo
     const obj: Record<string, { x: number; y: number }> = {}
     for (const [id, pos] of positions) obj[id] = pos
     window.localStorage.setItem(POS_STORAGE_KEY, JSON.stringify(obj))
+  } catch {
+    // ignore — quota / private mode
+  }
+}
+
+// ── Layout-mode persistence ───────────────────────────────────────────
+//
+// The tree/radial choice is purely client-side ergonomics (no server
+// sync) so localStorage is enough. Wrapped in the same try/catch as
+// position persistence so a quota / private-mode failure doesn't
+// crash the chart.
+
+const LAYOUT_MODE_STORAGE_KEY = "zerovpn.topology.layoutMode.v1"
+
+function loadLayoutMode(): LayoutMode {
+  if (typeof window === "undefined") return DEFAULT_LAYOUT_MODE
+  try {
+    const v = window.localStorage.getItem(LAYOUT_MODE_STORAGE_KEY)
+    return v === "radial" || v === "tree" ? v : DEFAULT_LAYOUT_MODE
+  } catch {
+    return DEFAULT_LAYOUT_MODE
+  }
+}
+
+function saveLayoutMode(mode: LayoutMode): void {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(LAYOUT_MODE_STORAGE_KEY, mode)
   } catch {
     // ignore — quota / private mode
   }

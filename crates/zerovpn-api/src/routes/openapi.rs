@@ -10,7 +10,10 @@
 use axum::{Json, response::IntoResponse};
 use utoipa::{Modify, OpenApi, openapi::security::{SecurityScheme, ApiKey, ApiKeyValue}};
 
-use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, oauth, totp, ws};
+use super::{
+    admin, auth, bandwidth, connections, devices, dns, dto, email_auth, health, me, oauth,
+    totp, ws,
+};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -64,6 +67,7 @@ use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, o
         devices::delete,
         devices::redownload_conf,
         devices::patch,
+        devices::set_my_quota,
         devices::pause,
         devices::unpause,
         dns::set,
@@ -89,6 +93,8 @@ use super::{admin, auth, bandwidth, devices, dns, dto, email_auth, health, me, o
         admin::set_maintenance,
         admin::get_user_policy,
         admin::set_user_policy,
+        connections::list_for_user,
+        connections::list_all,
         admin::list_devices,
         admin::device_detail,
         admin::device_bandwidth,

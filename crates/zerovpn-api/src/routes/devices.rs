@@ -15,7 +15,7 @@ use tracing::info;
 use utoipa::ToSchema;
 use uuid::Uuid;
 use zerovpn_core::models::{Device, DeviceOs, DeviceStatus, DeviceType};
-use zerovpn_db::repos::{audit, devices, servers};
+use zerovpn_db::repos::{audit, devices, servers, users};
 use zerovpn_wg::{config, ip_alloc::IpAllocator, keys, qr};
 use zerovpn_wire::{ChangeAction, Event, ResourceKind};
 
@@ -70,6 +70,14 @@ pub struct CreateBody {
     /// isn't inside the server's CIDR.
     #[garde(skip)]
     pub allocated_ip: Option<String>,
+    /// Optional per-device monthly byte cap. When the body omits this
+    /// field, the device inherits the user's own monthly cap so it
+    /// stays bounded by the account quota by default. An explicit value
+    /// is clamped to the user's cap (a device can't exceed the account).
+    /// Null/0 with a finite user cap still defaults to the user cap;
+    /// null/0 with an unlimited account means no device cap.
+    #[garde(skip)]
+    pub monthly_byte_cap: Option<i64>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -468,6 +476,28 @@ pub async fn create(
             .map_err(|e| ApiError::Internal(format!("apply create overrides: {e}")))?;
     }
 
+    // Seed the per-device monthly cap. If the body supplied one, it's
+    // clamped to the user's account cap (a device can't exceed the
+    // account quota). If omitted, the device inherits the user's cap by
+    // default so a new device is automatically bounded by the account.
+    // None ↔ 0 in admin semantics both mean "no per-device cap" — when
+    // the user has no account cap and the body omits the value we leave
+    // the device row's cap null.
+    let user_cap = users::month_quota(&state.pool, user.id)
+        .await?
+        .and_then(|(c, _, _)| c)
+        .filter(|c| *c > 0);
+    let requested_cap = body.monthly_byte_cap.filter(|c| *c > 0);
+    let effective_cap = match (requested_cap, user_cap) {
+        (Some(req), Some(uc)) => Some(req.min(uc)),
+        (Some(req), None) => Some(req),
+        (None, Some(uc)) => Some(uc),
+        (None, None) => None,
+    };
+    if let Some(cap) = effective_cap {
+        devices::set_quota(&state.pool, device_id, Some(cap)).await?;
+    }
+
     audit::record(
         &state.pool,
         audit::AuditEntry {
@@ -479,6 +509,7 @@ pub async fn create(
                 "name": body.name,
                 "server": server.name,
                 "dns_override": body.dns_override,
+                "monthly_byte_cap": effective_cap,
             }),
             ip: None,
         },
@@ -1398,6 +1429,74 @@ pub async fn patch(
     )
     .await?;
     info!(user_id = %user.id, device_id = %id, "device patched");
+    notify_device(&state, user.id, Some(id), ChangeAction::Updated);
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeviceQuotaBody {
+    /// Per-device cap in bytes for the current month. Null/0 = no
+    /// per-device cap (the account cap still applies). Clamped to the
+    /// caller's own account cap server-side — a user can't grant a
+    /// device more headroom than their own quota.
+    pub monthly_byte_cap: Option<i64>,
+}
+
+/// User-facing per-device quota setter. Lets the device owner cap their
+/// own device below the account quota (e.g. throttle a phone separately
+/// from a laptop). Distinct from the admin endpoint
+/// `PUT /admin/devices/{id}/quota` because the user route enforces
+/// ownership *and* clamps to the user's own cap, while the admin route
+/// can set any cap (including above the owner's account cap, in case
+/// the admin is also raising the account cap in the same flow).
+#[utoipa::path(
+    put,
+    path = "/devices/{id}/quota",
+    tag = "Devices",
+    params(
+        ("id" = Uuid, Path, description = "Device UUID"),
+    ),
+    request_body = DeviceQuotaBody,
+    responses(
+        (status = 200, description = "Per-device cap updated (clamped to account cap)", body = StatusAck),
+        (status = 404, description = "Not found / not owned"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn set_my_quota(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<DeviceQuotaBody>,
+) -> ApiResult<impl IntoResponse> {
+    devices::find_for_user(&state.pool, user.id, id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let user_cap = users::month_quota(&state.pool, user.id)
+        .await?
+        .and_then(|(c, _, _)| c)
+        .filter(|c| *c > 0);
+    let requested = body.monthly_byte_cap.filter(|c| *c > 0);
+    // Clamp to the user's own cap so a device can't exceed the account.
+    let cap = match (requested, user_cap) {
+        (Some(req), Some(uc)) => Some(req.min(uc)),
+        (Some(req), None) => Some(req),
+        (None, _) => None,
+    };
+    devices::set_quota(&state.pool, id, cap).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "device.quota_set",
+            target_type: Some("device"),
+            target_id: Some(id),
+            metadata: json!({ "monthly_byte_cap": cap }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(user_id = %user.id, device_id = %id, ?cap, "user set device quota");
     notify_device(&state, user.id, Some(id), ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }

@@ -225,6 +225,10 @@ async fn main() -> Result<()> {
                 .route("/auth/google/callback", post(routes::oauth::google_callback))
                 .route("/me", get(routes::auth::me))
                 .route(
+                    "/connections",
+                    get(routes::connections::list_for_user),
+                )
+                .route(
                     "/devices",
                     get(routes::devices::list).post(routes::devices::create),
                 )
@@ -264,6 +268,10 @@ async fn main() -> Result<()> {
                     get(routes::devices::redownload_conf),
                 )
                 .route("/devices/{id}/dns", axum::routing::put(routes::dns::set))
+                .route(
+                    "/devices/{id}/quota",
+                    axum::routing::put(routes::devices::set_my_quota),
+                )
                 .route("/devices/{id}/events", get(routes::devices::events))
                 .route("/devices/{id}/bandwidth", get(routes::bandwidth::for_device))
                 .route("/devices/{id}/history", get(routes::bandwidth::device_history))
@@ -361,6 +369,10 @@ async fn main() -> Result<()> {
                 .route(
                     "/admin/user-policy",
                     get(routes::admin::get_user_policy).put(routes::admin::set_user_policy),
+                )
+                .route(
+                    "/admin/connections",
+                    get(routes::connections::list_all),
                 )
                 .route(
                     "/admin/users/{id}/quota",

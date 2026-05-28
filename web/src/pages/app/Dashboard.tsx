@@ -1,58 +1,36 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { IconDeviceTablet, IconDownload, IconPlus, IconQrcode } from "@tabler/icons-react"
-import { AnimatePresence, motion } from "motion/react"
+import { useQuery } from "@tanstack/react-query"
+import { IconDeviceTablet, IconPlus } from "@tabler/icons-react"
 import { useMemo, useState } from "react"
-import { Link } from "react-router"
-import { toast } from "sonner"
+import { Link, useNavigate } from "react-router"
 
 import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
 import { CandleChart } from "@/components/charts/CandleChart"
-import { CopyableCode } from "@/components/CopyableCode"
 import { LiveEventStream } from "@/components/dashboard/LiveEventStream"
 import { RecentActivity } from "@/components/dashboard/RecentActivity"
+import { AddDeviceDialog } from "@/components/devices/AddDeviceDialog"
 import { EmptyState } from "@/components/EmptyState"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { Kpi, KpiStrip, PageHead, Panel } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
+import { Sheet, SheetTrigger } from "@/components/ui/sheet"
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  ApiError,
-  type CreatedDevice,
-  type DeviceOs,
   adminListServers,
-  createDevice,
   listDevices,
   myUsage,
 } from "@/lib/api"
-import { copyText } from "@/lib/clipboard"
 import { formatDate } from "@/lib/datetime"
 import { connState } from "@/lib/deviceState"
 import { formatBytes } from "@/lib/units"
+import { useDeviceDetailGated } from "@/hooks/useDeviceDetailGated"
 import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import { useAuth } from "@/stores/auth"
 import { useLiveStats } from "@/stores/liveStats"
 
 export function DashboardPage() {
-  const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const user = useAuth((s) => s.user)
   const isAdmin = user?.role === "admin"
+  const hideDetail = useDeviceDetailGated()
 
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
   // Hydrate the rolling per-device live history from the server-side
@@ -67,10 +45,7 @@ export function DashboardPage() {
     [devicesQ.data],
   )
   useHistoryHydration({ deviceIds, windowSec: 300 })
-  const [created, setCreated] = useState<CreatedDevice | null>(null)
   const [addOpen, setAddOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [osChoice, setOsChoice] = useState<DeviceOs>("other")
 
   const liveDevices = useLiveStats((s) => s.devices)
   const rates = useMemo(() => {
@@ -96,20 +71,6 @@ export function DashboardPage() {
     queryKey: ["me", "usage"],
     queryFn: myUsage,
     refetchInterval: 60_000,
-  })
-
-  const addM = useMutation({
-    mutationFn: () => createDevice({ name: name.trim(), os: osChoice }),
-    onSuccess: (data) => {
-      setCreated(data)
-      setName("")
-      setAddOpen(false)
-      void queryClient.invalidateQueries({ queryKey: ["devices"] })
-      toast.success("Device added")
-    },
-    onError: (e: unknown) => {
-      if (e instanceof ApiError) toast.error(e.message)
-    },
   })
 
   // Stable reference so the totals/online memos below don't recompute on
@@ -217,67 +178,6 @@ export function DashboardPage() {
         <PageHead eyebrow="Workspace · 01" title="Dashboard" />
       </StaggerItem>
 
-      {/* Add-device dialog. The header trigger button is intentionally gone;
-          the empty-state CTA below calls `setAddOpen(true)` when the user
-          has no devices yet. Once they have at least one, this dialog is
-          only reachable via /app/devices. */}
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add device</DialogTitle>
-            <DialogDescription>
-              We generate a fresh keypair, allocate an IP, and hand you a
-              WireGuard config. The private key never leaves the page.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="dev-name" className="zv-eyebrow">
-                Name
-              </Label>
-              <Input
-                id="dev-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Pixel 8, MacBook Pro…"
-                autoFocus
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label className="zv-eyebrow">Operating system</Label>
-              <Select
-                value={osChoice}
-                onValueChange={(v) => setOsChoice(v as DeviceOs)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(["ios", "android", "macos", "windows", "linux", "other"] as DeviceOs[]).map(
-                    (o) => (
-                      <SelectItem key={o} value={o}>
-                        {o}
-                      </SelectItem>
-                    ),
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="ghost">Cancel</Button>
-            </DialogClose>
-            <Button
-              onClick={() => addM.mutate()}
-              disabled={addM.isPending || name.trim().length === 0}
-            >
-              {addM.isPending ? "Adding…" : "Add"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* KPI strip — 4-up. Devices online · Usage (range) · TX · RX.
           Headline numbers are window-scoped totals from the user's
           bandwidth rollups so the dashboard reflects the same activity
@@ -348,12 +248,6 @@ export function DashboardPage() {
         </KpiStrip>
       </StaggerItem>
 
-      <AnimatePresence>
-        {created && (
-          <CreatedDeviceCard data={created} onClose={() => setCreated(null)} />
-        )}
-      </AnimatePresence>
-
       {/* Row 2: bandwidth — OHLC candle chart aggregated across all the user's
           devices. Owns its own timeframe + zoom/pan controls (same chart as
           the device detail + admin overview pages). */}
@@ -364,21 +258,33 @@ export function DashboardPage() {
       </StaggerItem>
 
       {/* First-device empty state — surfaced only when there are zero
-          devices, since the devices table is no longer on this page. */}
+          devices, since the devices table is no longer on this page. The
+          CTA opens the same side-sheet wizard used on /app/devices so the
+          two surfaces stay in lockstep (DNS + OS tiles + step-2 QR). */}
       {devicesQ.data && devicesQ.data.length === 0 && (
         <StaggerItem>
           <Panel>
-            <EmptyState
-              icon={IconDeviceTablet}
-              title="No devices yet"
-              description="Add your first device to receive a WireGuard config."
-              action={
-                <Button onClick={() => setAddOpen(true)}>
-                  <IconPlus />
-                  Add device
-                </Button>
-              }
-            />
+            <Sheet open={addOpen} onOpenChange={setAddOpen}>
+              <EmptyState
+                icon={IconDeviceTablet}
+                title="No devices yet"
+                description="Add your first device to receive a WireGuard config."
+                action={
+                  <SheetTrigger asChild>
+                    <Button>
+                      <IconPlus />
+                      Add device
+                    </Button>
+                  </SheetTrigger>
+                }
+              />
+              <AddDeviceDialog
+                onCreated={(d) => {
+                  setAddOpen(false)
+                  if (!hideDetail) navigate(`/app/devices/${d.device.id}`)
+                }}
+              />
+            </Sheet>
           </Panel>
         </StaggerItem>
       )}
@@ -413,77 +319,6 @@ export function DashboardPage() {
         </Panel>
       </StaggerItem>
     </PageStagger>
-  )
-}
-
-function CreatedDeviceCard({
-  data,
-  onClose,
-}: {
-  data: CreatedDevice
-  onClose: () => void
-}) {
-  return (
-    <motion.div
-      key={data.device.id}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -4 }}
-      transition={{ duration: 0.18 }}
-    >
-      <Panel
-        title={`${data.device.name} · ready`}
-        sub="Save this config now — the private key isn't stored on the server."
-        className="border-status-online/40 bg-status-online/5"
-      >
-        <div className="grid gap-4 sm:grid-cols-[auto_1fr]">
-          <div className="zv-qr-box bg-card flex shrink-0 items-center justify-center">
-            <span
-              className="block size-32"
-              dangerouslySetInnerHTML={{ __html: data.qr_svg }}
-            />
-          </div>
-          <div className="min-w-0 space-y-2">
-            <p className="text-sm">
-              Allocated IP:{" "}
-              <span className="zv-kbd">{data.device.allocated_ip}</span>
-            </p>
-            <CopyableCode value={data.config} multiline />
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            onClick={() => {
-              const blob = new Blob([data.config], { type: "text/plain" })
-              const url = URL.createObjectURL(blob)
-              const a = document.createElement("a")
-              a.href = url
-              a.download = `${data.device.name}.conf`
-              a.click()
-              URL.revokeObjectURL(url)
-            }}
-          >
-            <IconDownload />
-            Download .conf
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              if (copyText(data.config)) toast.success("Config copied")
-              else toast.error("Failed to copy")
-            }}
-          >
-            <IconQrcode />
-            Copy config
-          </Button>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            Done
-          </Button>
-        </div>
-      </Panel>
-    </motion.div>
   )
 }
 

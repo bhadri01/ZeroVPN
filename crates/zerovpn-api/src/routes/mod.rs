@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod auth;
 pub mod bandwidth;
+pub mod connections;
 pub mod devices;
 pub mod dns;
 pub mod dto;

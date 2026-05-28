@@ -380,6 +380,10 @@ export const createDevice = (body: {
   /** Optional manual IPv4 — when set, the server reserves exactly this
    *  address. Omit to let the allocator pick the next free slot. */
   allocated_ip?: string
+  /** Optional per-device monthly cap in bytes. Server clamps to the
+   *  account cap and defaults to the user's own cap when omitted (so
+   *  the device stays bounded by the account quota out of the box). */
+  monthly_byte_cap?: number | null
 }) =>
   apiFetch<CreatedDevice>("/devices", {
     method: "POST",
@@ -440,6 +444,18 @@ export const setDeviceDns = (id: string, dns_names: string[]) =>
   apiFetch<{ dns_names: string[] }>(`/devices/${id}/dns`, {
     method: "PUT",
     body: JSON.stringify({ dns_names }),
+  })
+
+/** User-facing per-device monthly cap setter. Pass `null` (or 0) to
+ *  clear the device-level cap — the account cap still applies. The
+ *  server clamps explicit values to the caller's own account cap. */
+export const setMyDeviceQuota = (
+  id: string,
+  monthly_byte_cap: number | null,
+) =>
+  apiFetch<{ status: string }>(`/devices/${id}/quota`, {
+    method: "PUT",
+    body: JSON.stringify({ monthly_byte_cap }),
   })
 
 /** A single entry in the device's activity timeline. `action` is a dotted
@@ -1388,6 +1404,40 @@ export const adminServerBandwidth = (
  *  carrying its owning `user_id`. Powers the admin topology view. */
 export const adminListDevices = () =>
   apiFetch<PublicDevice[]>("/admin/devices")
+
+// ---------------------------------------------------------------------------
+// Connections (live conntrack flows for the topology view)
+// ---------------------------------------------------------------------------
+
+/** One side of a flow. When the IP matches a known peer, `device_id` /
+ *  `user_id` are populated and `name` is the device's display name; for
+ *  foreign endpoints (the internet target, NAT gateway, …) `name` is
+ *  `"External"` and the ids are absent. */
+export interface FlowEndpoint {
+  ip: string
+  name: string
+  device_id?: string
+  user_id?: string
+}
+
+/** One conntrack flow row. Ports are absent for connectionless protocols
+ *  (icmp) or partially-parsed lines. Protocol is lower-case
+ *  (`tcp` / `udp` / `icmp` / …). */
+export interface Flow {
+  source: FlowEndpoint
+  target: FlowEndpoint
+  source_port?: number
+  target_port?: number
+  protocol: string
+}
+
+/** Caller-scoped flows: only those where one endpoint is one of the
+ *  caller's own devices. Used by the user-app topology page. */
+export const listConnections = () => apiFetch<Flow[]>("/connections")
+
+/** Admin-wide flows: every flow touching any known peer, plus foreign
+ *  endpoints those peers talked to. Used by the admin topology page. */
+export const adminListConnections = () => apiFetch<Flow[]>("/admin/connections")
 
 export const adminImpersonateUser = (id: string) =>
   apiFetch<{ status: string }>(`/admin/users/${id}/impersonate`, {

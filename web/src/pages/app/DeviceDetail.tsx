@@ -89,6 +89,7 @@ import {
   getDevice,
   listDeviceEvents,
   meServer,
+  myUsage,
   pauseDevice,
   redownloadDeviceConf,
   rotateDeviceKeys,
@@ -150,6 +151,15 @@ export function DeviceDetailPage() {
     queryKey: ["me", "server"],
     queryFn: meServer,
     staleTime: 5 * 60_000,
+  })
+  // Account-level monthly usage — shown next to the device's own cap in
+  // the Quota KPI so the user sees both "this device this month" and
+  // "all my devices this month" against their account quota. Shared
+  // query key with the dashboard so the cache is reused.
+  const usageQ = useQuery({
+    queryKey: ["me", "usage"],
+    queryFn: myUsage,
+    refetchInterval: 60_000,
   })
 
   useBreadcrumbOverride(deviceQ.data?.name)
@@ -453,6 +463,8 @@ export function DeviceDetailPage() {
           used={d.current_month_bytes}
           cap={d.monthly_byte_cap}
           autoPaused={d.auto_paused}
+          accountUsed={usageQ.data?.current_month_bytes ?? null}
+          accountCap={usageQ.data?.monthly_byte_cap ?? null}
         />
       </KpiStrip>
       </StaggerItem>
@@ -873,46 +885,98 @@ function ActivitySheet({
   )
 }
 
-/** "Quota" KPI card — this device's month-to-date usage against its
- *  per-device cap. Colored progress bar (green < 70%, amber ≥ 70%, red ≥ 90%)
- *  when a cap exists; otherwise shows the usage with a "no cap" note. Flags an
- *  auto-pause (device hit its own or the account cap). Matches the surrounding
- *  `Kpi` cards' chrome via the `zv-kpi` class. */
+/** "Quota" KPI card — device and account usage side-by-side inside one
+ *  KPI cell so the card height matches the other tiles (RX / TX /
+ *  Total) instead of stacking and visually dominating the strip.
+ *
+ *  Each half renders a compact mini block: small label, used number,
+ *  progress bar, and a one-line footer. Both bars share the same green /
+ *  amber / red bucket (≥70% / ≥90%). The auto-pause badge sits in the
+ *  device half's footer since the device — not the account — is what
+ *  actually gets paused. */
 function QuotaKpi({
   used,
   cap,
   autoPaused,
+  accountUsed,
+  accountCap,
 }: {
   used: number
   cap: number | null
   autoPaused: boolean
+  accountUsed: number | null
+  accountCap: number | null
 }) {
-  const cap0 = cap ?? 0
-  const hasCap = cap0 > 0
-  const pct = hasCap ? Math.min(100, Math.round((used / cap0) * 100)) : 0
-  const tone =
-    pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"
+  const showAccount = accountUsed !== null
   return (
     <div className="zv-kpi">
       <div className="zv-kpi-label">
         <span>Quota</span>
       </div>
-      <div className="zv-kpi-val font-heading">
-        <span className="tabular-nums">{formatBytes(used)}</span>
+      <div className="mt-1 flex min-w-0 items-stretch gap-3">
+        <QuotaHalf
+          label="Device"
+          used={used}
+          cap={cap ?? 0}
+          autoPaused={autoPaused}
+        />
+        {showAccount && (
+          <>
+            <div className="border-border/40 border-l" />
+            <QuotaHalf
+              label="Account"
+              used={accountUsed ?? 0}
+              cap={accountCap ?? 0}
+            />
+          </>
+        )}
       </div>
-      <div className="mt-1.5 h-1.5 w-full overflow-hidden bg-muted">
+    </div>
+  )
+}
+
+/** One side of the Quota KPI — used in a 2-up flex row so device and
+ *  account info live in the same vertical band. `min-w-0` so the
+ *  numbers can truncate via `tabular-nums` instead of forcing the row
+ *  wider than the KPI cell. */
+function QuotaHalf({
+  label,
+  used,
+  cap,
+  autoPaused,
+}: {
+  label: string
+  used: number
+  cap: number
+  autoPaused?: boolean
+}) {
+  const hasCap = cap > 0
+  const pct = hasCap ? Math.min(100, Math.round((used / cap) * 100)) : 0
+  const tone =
+    pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"
+  return (
+    <div className="flex min-w-0 flex-1 flex-col">
+      <div className="text-muted-foreground font-mono text-[10px] uppercase tracking-[0.08em]">
+        {label}
+      </div>
+      <div className="font-heading text-foreground mt-0.5 truncate text-lg tabular-nums leading-tight">
+        {formatBytes(used)}
+      </div>
+      <div className="mt-1 h-1 w-full overflow-hidden bg-muted">
         {hasCap && (
           <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />
         )}
       </div>
-      <div className="zv-kpi-foot">
-        <span>{hasCap ? `/ ${formatBytes(cap0)} this month` : "this month"}</span>
+      <div className="text-muted-foreground mt-1 flex items-baseline justify-between font-mono text-[10px]">
+        <span className="truncate">
+          {hasCap ? `/ ${formatBytes(cap)}` : "no cap"}
+        </span>
         <span
           className={
             autoPaused ? "text-amber-600 dark:text-amber-400" : undefined
           }
         >
-          {autoPaused ? "auto-paused" : hasCap ? `${pct}%` : "no cap"}
+          {autoPaused ? "paused" : hasCap ? `${pct}%` : ""}
         </span>
       </div>
     </div>

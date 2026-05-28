@@ -195,6 +195,13 @@ export function LiveStatsProvider() {
               void qc.invalidateQueries({ queryKey: ["devices"] })
               void qc.invalidateQueries({ queryKey: ["admin", "devices"] })
               void qc.invalidateQueries({ queryKey: ["me", "topology"] })
+              // Topology Flows view: a new/changed peer means new possible
+              // source IPs in conntrack, so refresh the connections lists.
+              // The list is keyed by `["connections", ...]` (user) and
+              // `["admin", "connections"]` (admin); prefix-match is fine
+              // because react-query invalidates all matching subkeys.
+              void qc.invalidateQueries({ queryKey: ["connections"] })
+              void qc.invalidateQueries({ queryKey: ["admin", "connections"] })
               if (event.id) {
                 void qc.invalidateQueries({ queryKey: ["device", event.id] })
                 void qc.invalidateQueries({
