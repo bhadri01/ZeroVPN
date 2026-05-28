@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/stores/auth"
-import { formatBytes } from "@/lib/units"
+import { formatBytes, formatBytesSI } from "@/lib/units"
 import { useLiveStats } from "@/stores/liveStats"
 
 type NavEntry = {
@@ -249,7 +249,7 @@ function ServerStats() {
         </span>
       </div>
 
-      <ProgressRow label="CPU" pct={cpuPct} value={`${cpuPct.toFixed(0)}%`} />
+      <ProgressRow label="CPU" pct={cpuPct} value={`${cpuPct.toFixed(2)}%`} />
       <ProgressRow
         label="Mem"
         pct={memPct}
@@ -285,10 +285,13 @@ function ServerStats() {
             {/* Cumulative bytes-since-container-start, summed across every
                 interface. 1:1 with the "Net I/O" column from
                 `docker stats <name>` — no `/s` suffix since the figure
-                isn't a rate. */}
-            <span className="text-primary">↓</span> {formatBytes(netRxTotal)}
+                isn't a rate. `formatBytesSI` (decimal kB/MB/GB) is what
+                `docker stats` uses for that column; the binary
+                `formatBytes` would round ~5% smaller and make the
+                sidebar look out of sync with the CLI. */}
+            <span className="text-primary">↓</span> {formatBytesSI(netRxTotal)}
             <span className="text-muted-foreground px-1">·</span>
-            <span className="text-primary">↑</span> {formatBytes(netTxTotal)}
+            <span className="text-primary">↑</span> {formatBytesSI(netTxTotal)}
           </span>
         </div>
       </div>

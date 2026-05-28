@@ -51,6 +51,22 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** 4).toFixed(2)} TB`
 }
 
+/** Decimal / SI byte formatter (1 kB = 1000). Match this where the value
+ *  originates from a system that uses SI conventions — most notably
+ *  `docker stats`' Net I/O / Block I/O columns, which print `MB`/`GB`
+ *  (not `MiB`/`GiB`) and divide by 1000. Using the binary `formatBytes`
+ *  there produces numbers ~4–7% lower than `docker stats` and makes the
+ *  sidebar look subtly out of sync with the CLI. */
+export function formatBytesSI(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "0 B"
+  if (bytes < 1000) return `${Math.round(bytes)} B`
+  if (bytes < 1_000_000) return `${(bytes / 1000).toFixed(1)} kB`
+  if (bytes < 1_000_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`
+  if (bytes < 1_000_000_000_000)
+    return `${(bytes / 1_000_000_000).toFixed(2)} GB`
+  return `${(bytes / 1_000_000_000_000).toFixed(2)} TB`
+}
+
 /** Compact byte counter ("12k", "3.4M") for KPI strips where the unit
  * suffix would crowd the display. Pair with a fixed-unit label next to it.
  * Uses decimal prefixes — KPI cards traditionally show 1k = 1000. */
