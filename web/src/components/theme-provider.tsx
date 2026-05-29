@@ -4,12 +4,22 @@ import * as React from "react"
 type Theme = "dark" | "light" | "system"
 type ResolvedTheme = "dark" | "light"
 export type Accent = "lime" | "cobalt" | "orange" | "magenta" | "ink"
+/** Visual theme variant. Orthogonal to the light/dark mode toggle —
+ *  picks the entire visual language (palette + radius + font + spacing).
+ *  Each variant ships a light + dark token set in index.css. */
+export type ThemeVariant =
+  | "swiss"
+  | "brutalist"
+  | "terminal"
+  | "editorial"
+  | "soft"
 
 type ThemeProviderProps = {
   children: React.ReactNode
   defaultTheme?: Theme
   storageKey?: string
   accentStorageKey?: string
+  variantStorageKey?: string
   chartRxStorageKey?: string
   chartTxStorageKey?: string
   disableTransitionOnChange?: boolean
@@ -21,6 +31,8 @@ type ThemeProviderState = {
   setTheme: (theme: Theme) => void
   accent: Accent
   setAccent: (accent: Accent) => void
+  variant: ThemeVariant
+  setVariant: (variant: ThemeVariant) => void
   // Chart line colors. A hex string, or the literal "accent" (= follow the
   // accent / --primary). Applied as --chart-rx / --chart-tx on <html>.
   rxColor: string
@@ -32,10 +44,22 @@ type ThemeProviderState = {
 const COLOR_SCHEME_QUERY = "(prefers-color-scheme: dark)"
 const THEME_VALUES: Theme[] = ["dark", "light", "system"]
 const ACCENT_VALUES: Accent[] = ["lime", "cobalt", "orange", "magenta", "ink"]
+const VARIANT_VALUES: ThemeVariant[] = [
+  "swiss",
+  "brutalist",
+  "terminal",
+  "editorial",
+  "soft",
+]
 
 function isAccent(value: string | null): value is Accent {
   if (value === null) return false
   return ACCENT_VALUES.includes(value as Accent)
+}
+
+function isVariant(value: string | null): value is ThemeVariant {
+  if (value === null) return false
+  return VARIANT_VALUES.includes(value as ThemeVariant)
 }
 
 const ThemeProviderContext = React.createContext<
@@ -101,6 +125,7 @@ export function ThemeProvider({
   defaultTheme = "system",
   storageKey = "zerovpn-theme",
   accentStorageKey = "zerovpn-accent",
+  variantStorageKey = "zerovpn-theme-variant",
   chartRxStorageKey = "zerovpn-chart-rx",
   chartTxStorageKey = "zerovpn-chart-tx",
   disableTransitionOnChange = true,
@@ -144,6 +169,28 @@ export function ThemeProvider({
   React.useEffect(() => {
     document.documentElement.setAttribute("data-accent", accent)
   }, [accent])
+
+  // Theme variant — applied to <html> as `data-theme="..."`. index.css
+  // attaches per-variant overrides for the full color/radius/font/density
+  // family so swapping the attribute repaints the entire app without a
+  // remount. Persisted to localStorage for instant first-paint; the
+  // server-synced value (user prefs) overwrites it via setVariant once
+  // /me/preferences resolves, so the user's choice follows them across
+  // devices. Default "swiss" preserves the current look for new users.
+  const [variant, setVariantState] = React.useState<ThemeVariant>(() => {
+    const stored = localStorage.getItem(variantStorageKey)
+    return isVariant(stored) ? stored : "swiss"
+  })
+  const setVariant = React.useCallback(
+    (next: ThemeVariant) => {
+      localStorage.setItem(variantStorageKey, next)
+      setVariantState(next)
+    },
+    [variantStorageKey],
+  )
+  React.useEffect(() => {
+    document.documentElement.setAttribute("data-theme", variant)
+  }, [variant])
 
   // Chart line colors (RX/TX) — user-selectable, applied as CSS vars on
   // <html> so every chart (var(--chart-rx)/var(--chart-tx)) picks them up.
@@ -293,6 +340,8 @@ export function ThemeProvider({
       setTheme,
       accent,
       setAccent,
+      variant,
+      setVariant,
       rxColor,
       setRxColor,
       txColor,
@@ -304,6 +353,8 @@ export function ThemeProvider({
       setTheme,
       accent,
       setAccent,
+      variant,
+      setVariant,
       rxColor,
       setRxColor,
       txColor,

@@ -1,8 +1,9 @@
 //! Per-user UI preferences — settings the user sets via /app/settings
 //! that we persist server-side so they sync across signed-in sessions.
-//! Theme + accent stay client-local (localStorage) to avoid a flash of
-//! wrong paint on first render; everything in here can be fetched after
-//! mount without visible disruption.
+//! Light/dark mode + accent stay client-local (localStorage) to avoid a
+//! flash of wrong paint on first render; `theme` (visual variant) is
+//! persisted server-side so it follows the user to new devices —
+//! consistent with the rest of the prefs here.
 //!
 //! Defaults mirror the frontend's pre-settings behaviour, so a user who
 //! never visits the page sees no change in how the app reads.
@@ -39,6 +40,10 @@ pub struct UserPreferences {
     /// password change, 2FA enabled/disabled, admin actions on the
     /// account. Default ON — opt out reduces signal during incidents.
     pub email_on_security_event: bool,
+    /// Visual theme variant. One of `"swiss" | "brutalist" | "terminal"
+    /// | "editorial" | "soft"`. Orthogonal to the client-local light/dark
+    /// mode — each variant ships its own light + dark token set.
+    pub theme: String,
 }
 
 impl Default for UserPreferences {
@@ -55,6 +60,7 @@ impl Default for UserPreferences {
             email_on_new_device: true,
             email_on_quota_warning: true,
             email_on_security_event: true,
+            theme: "swiss".into(),
         }
     }
 }
@@ -75,6 +81,7 @@ pub struct UserPreferencesPatch {
     pub email_on_new_device: Option<bool>,
     pub email_on_quota_warning: Option<bool>,
     pub email_on_security_event: Option<bool>,
+    pub theme: Option<String>,
 }
 
 /// Fetch the user's preferences. Returns defaults (without persisting)
@@ -84,7 +91,8 @@ pub async fn get(pool: &PgPool, user_id: Uuid) -> sqlx::Result<UserPreferences> 
         r#"SELECT units, date_format, time_format, reduced_motion,
                   default_landing, toast_position, toast_sound,
                   browser_notifications, email_on_new_device,
-                  email_on_quota_warning, email_on_security_event
+                  email_on_quota_warning, email_on_security_event,
+                  theme
              FROM user_preferences
             WHERE user_id = $1"#,
     )
@@ -143,6 +151,9 @@ pub async fn upsert(
     if let Some(v) = patch.email_on_security_event {
         merged.email_on_security_event = v;
     }
+    if let Some(v) = &patch.theme {
+        merged.theme = v.clone();
+    }
 
     sqlx::query(
         r#"INSERT INTO user_preferences (
@@ -150,8 +161,8 @@ pub async fn upsert(
                 reduced_motion, default_landing, toast_position,
                 toast_sound, browser_notifications,
                 email_on_new_device, email_on_quota_warning,
-                email_on_security_event, updated_at
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+                email_on_security_event, theme, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
            ON CONFLICT (user_id) DO UPDATE SET
                 units = EXCLUDED.units,
                 date_format = EXCLUDED.date_format,
@@ -164,6 +175,7 @@ pub async fn upsert(
                 email_on_new_device = EXCLUDED.email_on_new_device,
                 email_on_quota_warning = EXCLUDED.email_on_quota_warning,
                 email_on_security_event = EXCLUDED.email_on_security_event,
+                theme = EXCLUDED.theme,
                 updated_at = NOW()"#,
     )
     .bind(user_id)
@@ -178,6 +190,7 @@ pub async fn upsert(
     .bind(merged.email_on_new_device)
     .bind(merged.email_on_quota_warning)
     .bind(merged.email_on_security_event)
+    .bind(&merged.theme)
     .execute(pool)
     .await?;
     Ok(merged)

@@ -473,6 +473,11 @@ pub async fn set_preferences(
             )));
         }
     }
+    if let Some(v) = patch.theme.as_deref() {
+        if !matches!(v, "swiss" | "brutalist" | "terminal" | "editorial" | "soft") {
+            return Err(ApiError::Validation(format!("invalid theme: {v}")));
+        }
+    }
     let prefs = user_prefs::upsert(&state.pool, user.id, &patch).await?;
     Ok(Json(prefs))
 }

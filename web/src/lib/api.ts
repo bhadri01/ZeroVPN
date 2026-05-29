@@ -253,6 +253,22 @@ export type ToastPositionPref =
   | "bottom-left"
   | "bottom-center"
   | "bottom-right"
+/** Visual theme variant. Each ships its own light + dark color tokens,
+ *  font stack, radius, and spacing scale. Orthogonal to the light/dark
+ *  mode toggle (stored client-side). */
+export type ThemePref =
+  | "swiss"
+  | "brutalist"
+  | "terminal"
+  | "editorial"
+  | "soft"
+export const THEME_VALUES: ThemePref[] = [
+  "swiss",
+  "brutalist",
+  "terminal",
+  "editorial",
+  "soft",
+]
 
 export interface UserPreferences {
   units: UnitsPref
@@ -270,6 +286,8 @@ export interface UserPreferences {
   /** Email for security-relevant events (new IP sign-in, password
    *  change, 2FA enable/disable, admin actions on the account). */
   email_on_security_event: boolean
+  /** Visual theme variant. */
+  theme: ThemePref
 }
 
 export const getMyPreferences = () =>

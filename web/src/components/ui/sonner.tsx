@@ -16,7 +16,7 @@ import { setNotifyConfig } from "@/lib/notify"
 import { setUnitsPref } from "@/lib/units"
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { resolvedTheme } = useTheme()
+  const { resolvedTheme, variant, setVariant } = useTheme()
 
   // Reflect the user's saved notification preferences into the global
   // toaster (position) and the notify() helper (sound, browser alerts).
@@ -45,7 +45,17 @@ const Toaster = ({ ...props }: ToasterProps) => {
     // query, so it doubles as the global preferences applier.
     setUnitsPref(prefsQ.data.units)
     setDateTimePrefs(prefsQ.data.date_format, prefsQ.data.time_format)
-  }, [prefsQ.data])
+    // Reflect the server's saved theme variant. localStorage holds the
+    // first-paint choice for an instant render; this writes the
+    // authoritative server value when /me/preferences resolves, so a
+    // user who picked "soft" on their laptop sees "soft" on their phone
+    // without re-picking. Guarded so we don't trip a render loop —
+    // setVariant is a stable callback but it still re-runs effects when
+    // value differs.
+    if (prefsQ.data.theme && prefsQ.data.theme !== variant) {
+      setVariant(prefsQ.data.theme)
+    }
+  }, [prefsQ.data, variant, setVariant])
 
   return (
     <Sonner

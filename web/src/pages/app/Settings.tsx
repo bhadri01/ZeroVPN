@@ -18,7 +18,11 @@ import { PageStagger, StaggerItem } from "@/components/motion"
 import { formatDateWith, formatTimeWith } from "@/lib/datetime"
 import { EASING, TIMING, useReducedMotion } from "@/lib/motion"
 import { formatBpsWith } from "@/lib/units"
-import { useTheme, type Accent } from "@/components/theme-provider"
+import {
+  useTheme,
+  type Accent,
+  type ThemeVariant,
+} from "@/components/theme-provider"
 import { Eyebrow, PageHead, Panel, Seg } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -331,11 +335,221 @@ function ChartColorPicker({
   )
 }
 
+// Visual theme variants surfaced by the picker. Each tile shows a mini
+// preview of the theme's canvas + primary + a couple of chrome bars so
+// the user can pick by look before committing. `previewBg / previewInk /
+// previewAccent` are *literal* colors (not CSS vars), since each tile
+// has to render in its own swatch independent of the currently-active
+// theme. Keep these in sync with the theme blocks in index.css.
+const THEME_VARIANTS: Array<{
+  value: ThemeVariant
+  label: string
+  blurb: string
+  previewBg: string
+  previewInk: string
+  previewAccent: string
+  font: string
+  radius: number
+}> = [
+  {
+    value: "swiss",
+    label: "Swiss",
+    blurb: "Sharp · paper + ink · lime",
+    previewBg: "#fafaf7",
+    previewInk: "#0a0a0a",
+    previewAccent: "#c6ff3d",
+    font: "'Geist Variable', sans-serif",
+    radius: 2,
+  },
+  {
+    value: "brutalist",
+    label: "Brutalist",
+    blurb: "Heavy borders · 0px · mono",
+    previewBg: "#efece4",
+    previewInk: "#0a0a0a",
+    previewAccent: "#ff3d00",
+    font: "'JetBrains Mono Variable', monospace",
+    radius: 0,
+  },
+  {
+    value: "terminal",
+    label: "Terminal",
+    blurb: "Phosphor green · CRT vibe",
+    previewBg: "#000000",
+    previewInk: "#39ff14",
+    previewAccent: "#39ff14",
+    font: "'JetBrains Mono Variable', monospace",
+    radius: 0,
+  },
+  {
+    value: "editorial",
+    label: "Editorial",
+    blurb: "Serif headings · warm cream",
+    previewBg: "#faf6ef",
+    previewInk: "#1a1714",
+    previewAccent: "#8a3324",
+    font: "'Fraunces Variable', serif",
+    radius: 10,
+  },
+  {
+    value: "soft",
+    label: "Soft",
+    blurb: "Lavender · rounded 16px · airy",
+    previewBg: "#f5f3ff",
+    previewInk: "#2a2438",
+    previewAccent: "#7c3aed",
+    font: "'Plus Jakarta Sans Variable', sans-serif",
+    radius: 16,
+  },
+]
+
+function ThemeVariantPicker({
+  value,
+  onChange,
+}: {
+  value: ThemeVariant
+  onChange: (next: ThemeVariant) => void
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {THEME_VARIANTS.map((t) => {
+        const isActive = t.value === value
+        return (
+          <button
+            key={t.value}
+            type="button"
+            onClick={() => onChange(t.value)}
+            className={[
+              "group relative flex flex-col gap-2 border p-3 text-left transition-colors",
+              isActive
+                ? "border-primary ring-primary ring-2"
+                : "border-border hover:border-foreground/40",
+            ].join(" ")}
+            aria-pressed={isActive}
+            aria-label={`Switch to ${t.label} theme`}
+            style={{ borderRadius: "var(--radius)" }}
+          >
+            {/* Mini preview pane — paints with the theme's literal colors
+                so each tile reads the same regardless of the currently-
+                active theme. */}
+            <div
+              className="flex h-20 flex-col justify-between overflow-hidden p-2"
+              style={{
+                background: t.previewBg,
+                color: t.previewInk,
+                borderRadius: t.radius,
+                border: `1px solid ${t.previewInk}22`,
+                fontFamily: t.font,
+              }}
+            >
+              <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.08em] opacity-70">
+                <span>{t.label}</span>
+                <span
+                  className="block size-2"
+                  style={{
+                    background: t.previewAccent,
+                    borderRadius: t.radius > 0 ? "50%" : 0,
+                  }}
+                  aria-hidden
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <span
+                  className="block h-1"
+                  style={{
+                    background: t.previewAccent,
+                    width: "60%",
+                    borderRadius: t.radius,
+                  }}
+                  aria-hidden
+                />
+                <span
+                  className="block h-1 opacity-30"
+                  style={{
+                    background: t.previewInk,
+                    width: "85%",
+                    borderRadius: t.radius,
+                  }}
+                  aria-hidden
+                />
+                <span
+                  className="block h-1 opacity-20"
+                  style={{
+                    background: t.previewInk,
+                    width: "45%",
+                    borderRadius: t.radius,
+                  }}
+                  aria-hidden
+                />
+              </div>
+            </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-foreground font-mono text-xs">
+                {t.label}
+              </span>
+              {isActive && (
+                <IconCheck size={12} className="text-primary" strokeWidth={3} />
+              )}
+            </div>
+            <span className="text-muted-foreground font-mono text-[10px] leading-tight">
+              {t.blurb}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function AppearanceSection() {
-  const { theme, setTheme, accent, setAccent, rxColor, setRxColor, txColor, setTxColor } =
-    useTheme()
+  const qc = useQueryClient()
+  const {
+    theme,
+    setTheme,
+    accent,
+    setAccent,
+    variant,
+    setVariant,
+    rxColor,
+    setRxColor,
+    txColor,
+    setTxColor,
+  } = useTheme()
+  // Mutation persists the variant to /me/preferences so the choice
+  // follows the user across devices. Local `setVariant` already updates
+  // <html data-theme> + localStorage instantly; this just adds the
+  // server-sync side. On success we patch the cached prefs row so the
+  // PreferencesSection (and the Toaster's variant applier in sonner.tsx)
+  // see the new value without a refetch.
+  const variantM = useMutation({
+    mutationFn: (next: ThemeVariant) =>
+      setMyPreferences({ theme: next }),
+    onSuccess: (data) => {
+      qc.setQueryData(["me", "preferences"], data)
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+  const pickVariant = (next: ThemeVariant) => {
+    if (next === variant) return
+    setVariant(next)
+    variantM.mutate(next)
+  }
   return (
     <div className="flex flex-col gap-6">
+      <Panel
+        title="Theme variant"
+        sub="Visual language · colors, fonts, radius, spacing"
+      >
+        <ThemeVariantPicker value={variant} onChange={pickVariant} />
+        <p className="text-muted-foreground mt-3 font-mono text-[11px]">
+          Saves to your account so the choice follows you across devices.
+          Light/dark mode below stays orthogonal — each variant ships
+          both.
+        </p>
+      </Panel>
+
       <Panel title="Theme" sub="Light, dark, or follow the OS">
         <Seg
           value={theme}
