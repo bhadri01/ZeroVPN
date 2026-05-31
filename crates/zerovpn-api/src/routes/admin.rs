@@ -3259,6 +3259,19 @@ pub async fn fleet_bandwidth(
 /// Begin impersonating a user. Swaps the session's `user_id` to the target
 /// while saving the admin's real identity under `real_user_id` so it can be
 /// restored when impersonation ends. Requires admin role.
+#[utoipa::path(
+    post,
+    path = "/admin/users/{id}/impersonate",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Target user UUID")),
+    responses(
+        (status = 200, description = "Admin session now impersonates the target user", body = StatusAck),
+        (status = 400, description = "Cannot impersonate yourself"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "User not found"),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn impersonate_user(
     State(state): State<AppState>,
     RequireAdmin(actor): RequireAdmin,
@@ -3341,6 +3354,15 @@ pub async fn impersonate_user(
 /// Stop impersonating. Restores the admin's real session identity.
 /// Does not require `RequireAdmin` because the active session now belongs
 /// to the impersonated (possibly non-admin) user.
+#[utoipa::path(
+    post,
+    path = "/admin/impersonate/stop",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "Impersonation ended; the admin's own session is restored", body = StatusAck),
+    ),
+    security(("session_cookie" = [])),
+)]
 pub async fn stop_impersonation(
     State(state): State<AppState>,
     session: Session,

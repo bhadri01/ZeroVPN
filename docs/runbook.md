@@ -98,7 +98,7 @@ The default `make up` runs the management plane only — **no actual WireGuard i
 
 4. **Open UDP 51820** on your firewall.
 
-5. **AmneziaWG obfuscation** (optional but recommended for restrictive networks): swap the `wg` service image from `linuxserver/wireguard:latest` to an AmneziaWG-compatible build (e.g. `ghcr.io/amnezia-vpn/amneziawg-go:latest`) and add the `Jc/Jmin/Jmax/H1–H4/S1–S2` lines to peer configs (already emitted by the `.conf` template).
+5. **AmneziaWG obfuscation** (optional, for restrictive networks): swap the `wg` service image from `linuxserver/wireguard:latest` to an AmneziaWG-compatible build (e.g. `ghcr.io/amnezia-vpn/amneziawg-go:latest`). Note: obfuscation is **disabled by default** — the api currently emits vanilla configs, so the `Jc/Jmin/Jmax/H1–H4/S1–S2` lines are *not* written yet (the `zerovpn-obfs` crate computes them but `routes::devices` passes `amnezia: None`). See *Switching the WG image to AmneziaWG* below.
 
 ## Bringing up observability
 
@@ -150,13 +150,14 @@ ZeroVPN runs in "every-tick kept forever" mode by default (migration 5). At each
 | 200 peers, 1 Hz | 17.3M | 860 MB | 26 GB | 314 GB |
 | 50 peers, 5 Hz cadence | 17M | 860 MB | 26 GB | 314 GB |
 
-If that's too much, dial back via one of these knobs (set in `.env`):
+By default raw `bandwidth_samples` and `server_samples` are purged after 30 days, so the footprint plateaus at ~30 days of ticks instead of growing without bound (aggregates are kept forever but are tiny). The table above is the *unbounded* case — what you'd see if you disable the windows. Tune via these knobs (set in `.env`):
 
 - **Slower cadence**: `ZEROVPN_STATS_INTERVAL_SECS=5` → 5× less disk
-- **Raw-sample window**: `ZEROVPN_SAMPLE_RETENTION_DAYS=30` → drop per-device samples after 30 days (aggregates still kept forever, so long-term charts unaffected)
-- **Server-sample window**: `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS=90` → independent knob for `server_samples`
+- **Raw-sample window**: `ZEROVPN_SAMPLE_RETENTION_DAYS=N` → keep per-device samples N days (default 30; `0` = keep indefinitely, restoring the unbounded growth above)
+- **Server-sample window**: `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS=N` → independent knob for `server_samples` (default 30; `0` = indefinitely)
+- **Other operational tables** have matching knobs, all defaulting to 30 days with `0` = forever: `ZEROVPN_DEST_RETENTION_DAYS`, `ZEROVPN_AUDIT_RETENTION_DAYS`, `ZEROVPN_FAILED_LOGIN_RETENTION_DAYS`
 
-Privacy note: prior to migration 5 the system was explicitly "no-logs" (raw samples dropped at 7 days). The current default keeps per-tick history indefinitely, which is a non-trivial change in posture. The retention env vars above let you restore the original behavior in one line. The previously-documented privacy guarantees (no DNS query logs, no traffic content, no destination IPs) still hold — what changed is how long the byte-count time-series is kept.
+Privacy note: prior to migration 5 raw samples were dropped at 7 days under the original "no-logs" posture; that has since been superseded by the full-logging policy (see CHANGELOG). Per-tick byte counters now default to a 30-day window, tunable via the knobs above (set a window to `0` to keep history indefinitely). The content guarantees still hold — no DNS query contents, no traffic payloads; what's stored is byte counts and peer/server identifiers.
 
 **API endpoints for the historical data**:
 
@@ -200,12 +201,12 @@ For zero-downtime upgrades, drain peers off this server first by toggling **main
 
 ## Switching the WG image to AmneziaWG
 
-The default `linuxserver/wireguard` image is fine for vanilla WireGuard. For AmneziaWG (obfuscated WireGuard variant the `.conf` template already emits params for):
+The default `linuxserver/wireguard` image is fine for vanilla WireGuard. AmneziaWG (an obfuscated WireGuard variant) is **not** wired up by default — the `zerovpn-obfs` crate computes the params but `routes::devices` emits vanilla configs (`amnezia: None`). Fully enabling it requires both an image swap and a code change to write the shared interface-global params into client *and* server configs:
 
 1. Replace the image in `docker-compose.yml` under the `wg` service: `image: ghcr.io/amnezia-vpn/amneziawg-go:latest` (or the kernel-module variant if your host has the kernel patches).
 2. Rebuild: `docker compose --profile wg up -d --force-recreate wg`
-3. The Sc/Sr/H1–H4/Jc/Jmin/Jmax/S1/S2 fields the api emits in `[Interface]` are AmneziaWG-only; standard WG clients ignore them.
-4. Clients need an AmneziaWG-aware app (the standard WireGuard apps won't connect).
+3. In `routes::devices`, populate `PeerConfig.amnezia` from `zerovpn-obfs` so the Sc/Sr/H1–H4/Jc/Jmin/Jmax/S1/S2 fields are written into `[Interface]`. These are AmneziaWG-only; standard WG clients ignore them.
+4. Clients then need an AmneziaWG-aware app (the standard WireGuard apps won't connect once the params are present).
 
 ## Security review checklist (before exposing to the internet)
 

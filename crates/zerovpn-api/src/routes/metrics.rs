@@ -37,10 +37,13 @@ pub fn install_global_recorder() -> Result<(), Box<dyn std::error::Error + Send 
         .set(handle)
         .map_err(|_| "prometheus recorder already installed")?;
 
-    // Pre-register a few baseline metrics so `/metrics` isn't empty.
+    // Pre-register the baseline metrics so `/metrics` isn't empty before the
+    // first request lands. These are incremented at their call sites: the
+    // request counter in the `access_log` middleware, the WS counter in the
+    // `ws` handler, and the device counters in `routes::devices`.
     metrics::describe_counter!(
         "zerovpn_api_requests_total",
-        "Total HTTP requests handled (placeholder; granular labels via tracing → metrics middleware later)"
+        "Total HTTP requests handled, labelled by method and status code"
     );
     metrics::describe_counter!(
         "zerovpn_ws_clients_connected",

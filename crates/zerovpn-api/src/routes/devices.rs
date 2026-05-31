@@ -573,6 +573,7 @@ pub async fn create(
     }
 
     info!(user_id = %user.id, device_id = %device_id, ip = %ip, "device created");
+    metrics::counter!("zerovpn_devices_created").increment(1);
     notify_device(&state, user.id, Some(device_id), ChangeAction::Created);
 
     Ok((
@@ -835,6 +836,7 @@ pub async fn delete(
     }
 
     info!(user_id = %user.id, device_id = %id, "device revoked");
+    metrics::counter!("zerovpn_devices_revoked").increment(1);
     notify_device(&state, user.id, Some(id), ChangeAction::Deleted);
     Ok(Json(json!({ "status": "ok" })))
 }

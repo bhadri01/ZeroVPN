@@ -134,8 +134,7 @@ async fn collect_flows(state: &AppState) -> Vec<Flow> {
     // source ends up serving.
     let devices_all = devices::list_all_active(&state.pool).await.unwrap_or_default();
     let ip_to_peer = build_ip_index(&devices_all);
-    let usernames = fetch_usernames(state, &devices_all).await;
-    let to_endpoint = |ip: &str| endpoint_for(ip, &ip_to_peer, &usernames);
+    let to_endpoint = |ip: &str| endpoint_for(ip, &ip_to_peer);
 
     if let Some(rows) = read_conntrack_binary().await {
         let flows = parse_conntrack(&rows, &to_endpoint);
@@ -181,21 +180,9 @@ fn build_ip_index(devices_all: &[Device]) -> HashMap<String, PeerInfo> {
     m
 }
 
-async fn fetch_usernames(
-    _state: &AppState,
-    _devices_all: &[Device],
-) -> HashMap<Uuid, String> {
-    // Username enrichment isn't strictly needed by the topology frontend
-    // (it identifies users by user_id), and pulling it would add a query
-    // per request. Stub returns empty; if a need surfaces, plug a single
-    // `users::find_many(ids)` here.
-    HashMap::new()
-}
-
 fn endpoint_for(
     ip: &str,
     ip_to_peer: &HashMap<String, PeerInfo>,
-    _usernames: &HashMap<Uuid, String>,
 ) -> Endpoint {
     if let Some(peer) = ip_to_peer.get(ip) {
         Endpoint {

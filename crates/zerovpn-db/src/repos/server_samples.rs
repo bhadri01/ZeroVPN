@@ -1,6 +1,6 @@
 //! Per-server time-series samples. Written every poll tick (default 1s)
-//! by the worker. Unbounded retention by default — see
-//! `ZEROVPN_SAMPLE_RETENTION_DAYS` to dial back.
+//! by the worker. Purged after 30 days by default; set
+//! `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS` (days; `0` = keep indefinitely).
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;

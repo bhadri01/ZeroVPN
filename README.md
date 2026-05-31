@@ -37,7 +37,7 @@ Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, re
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace with multiple crates (api, worker, wg, dns, events, etc.), PostgreSQL 18, Redis 8, AmneziaWG-go for the tunnel, dnsmasq for per-peer DNS, Caddy as reverse proxy. Internal pub/sub via ZeroMQ; browser receives over WebSocket. Wire format: MessagePack via a shared Rust crate compiled to WASM for the frontend.
+See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace with multiple crates (api, worker, wg, dns, events, etc.), PostgreSQL 18, Redis 8, WireGuard for the tunnel (`linuxserver/wireguard`; optional AmneziaWG obfuscation, off by default), dnsmasq for per-peer DNS, Caddy as reverse proxy. Internal pub/sub via ZeroMQ; browser receives over WebSocket. Wire format: MessagePack via a shared Rust crate compiled to WASM for the frontend.
 
 ## Project layout
 
@@ -47,7 +47,7 @@ See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace wit
 │   ├── zerovpn-core/              # domain types
 │   ├── zerovpn-db/                # sqlx queries
 │   ├── zerovpn-wg/                # WireGuard control
-│   ├── zerovpn-obfs/              # AmneziaWG params
+│   ├── zerovpn-obfs/              # AmneziaWG obfuscation params (optional; not applied by default)
 │   ├── zerovpn-auth/              # password, sessions, TOTP, API tokens
 │   ├── zerovpn-stats/             # poller + aggregator + retention
 │   ├── zerovpn-events/            # ZeroMQ pub/sub
@@ -73,4 +73,4 @@ See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace wit
 
 ## License
 
-TBD (recommendation: AGPL-3.0 to keep self-hosted forks open).
+Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) — see [LICENSE](LICENSE).

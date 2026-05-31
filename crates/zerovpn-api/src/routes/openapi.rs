@@ -55,6 +55,9 @@ use super::{
         me::set_preferences,
         me::change_password,
         me::delete_account,
+        me::usage,
+        me::activity,
+        me::revoke_other_sessions,
 
         // Devices
         devices::list,
@@ -81,6 +84,8 @@ use super::{
         bandwidth::server_candles,
         bandwidth::user_candles,
         bandwidth::for_user,
+        bandwidth::admin_device_candles,
+        bandwidth::admin_user_candles,
 
         // Admin
         admin::list_users,
@@ -108,6 +113,21 @@ use super::{
         admin::rotate_server_keys,
         admin::stats,
         admin::fleet_bandwidth,
+        admin::create_user,
+        admin::user_detail,
+        admin::delete_user,
+        admin::set_user_role,
+        admin::admin_send_reset,
+        admin::admin_disable_2fa,
+        admin::admin_revoke_sessions,
+        admin::admin_set_email_route,
+        admin::user_bandwidth,
+        admin::list_users_csv,
+        admin::server_detail,
+        admin::server_bandwidth,
+        admin::set_device_quota,
+        admin::impersonate_user,
+        admin::stop_impersonation,
 
         // Realtime
         ws::ws,
@@ -222,6 +242,16 @@ mod tests {
             "/admin/users",
             "/admin/maintenance",
             "/admin/servers/{id}/rotate-keys",
+            // Newly surfaced in the spec (2026-05-31): account self-service
+            // + admin endpoints that were annotated but unlisted.
+            "/me/usage",
+            "/me/activity",
+            "/admin/users/{id}",
+            "/admin/users/{id}/impersonate",
+            "/admin/impersonate/stop",
+            "/admin/servers/{id}/bandwidth",
+            "/admin/devices/{id}/candles",
+            "/admin/users/{id}/candles",
         ] {
             assert!(
                 paths.iter().any(|p| p == needed),

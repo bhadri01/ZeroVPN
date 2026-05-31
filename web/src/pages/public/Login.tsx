@@ -16,7 +16,14 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import { Label } from "@/components/ui/label"
-import { ApiError, googleStartUrl, login, resendVerify } from "@/lib/api"
+import {
+  ApiError,
+  getMyPreferences,
+  googleStartUrl,
+  landingPath,
+  login,
+  resendVerify,
+} from "@/lib/api"
 import { useAuth } from "@/stores/auth"
 
 const schema = z.object({
@@ -57,7 +64,10 @@ export function LoginPage() {
       }
       setUser(res.user)
       toast.success(`Welcome, ${res.user.email}`)
-      navigate("/app")
+      // Honor the user's saved "default landing" preference. Best-effort:
+      // if the prefs fetch fails we just fall back to the dashboard.
+      const prefs = await getMyPreferences().catch(() => null)
+      navigate(prefs ? landingPath(prefs.default_landing) : "/app")
     } catch (e) {
       if (e instanceof ApiError) {
         if (e.status === 429)

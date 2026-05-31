@@ -132,8 +132,12 @@ shell-db: ## Open a psql shell
 	$(COMPOSE_DEV) exec db psql -U zerovpn -d zerovpn
 
 .PHONY: test
-test: ## Run all tests
+test: ## Run all unit/workspace tests
 	cargo test --workspace
+
+.PHONY: test-it
+test-it: ## Run DB integration tests (separate crate; needs Docker)
+	cd tests && cargo test
 
 .PHONY: smoke
 smoke: ## Run end-to-end smoke test against the running stack

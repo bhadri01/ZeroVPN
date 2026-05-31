@@ -146,6 +146,17 @@ pub async fn access_log(
     let latency_ms = start.elapsed().as_millis().min(i32::MAX as u128) as i32;
     let status = response.status().as_u16() as i16;
 
+    // Per-request Prometheus counter (served at /metrics). Labelled by
+    // method + status code only — the path is deliberately omitted because
+    // it's high-cardinality (embedded UUIDs) and is already persisted with
+    // full detail to `access_logs` below.
+    metrics::counter!(
+        "zerovpn_api_requests_total",
+        "method" => method.clone(),
+        "status" => status.to_string(),
+    )
+    .increment(1);
+
     // Fire-and-forget insert. The response is already on its way back
     // to the client; we don't want a DB hiccup to delay it.
     let pool = state.pool.clone();

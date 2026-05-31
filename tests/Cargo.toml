@@ -11,6 +11,10 @@ publish = false
 name = "users_repo"
 path = "users_repo.rs"
 
+[[test]]
+name = "devices_repo"
+path = "devices_repo.rs"
+
 [dev-dependencies]
 zerovpn-core = { path = "../crates/zerovpn-core" }
 zerovpn-db = { path = "../crates/zerovpn-db" }
@@ -20,4 +24,6 @@ tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
 testcontainers = "0.25"
 testcontainers-modules = { version = "0.13", features = ["postgres"] }
 uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
+ipnetwork = { version = "0.20", features = ["serde"] }
+time = { version = "0.3", features = ["serde", "parsing"] }
 anyhow = "1.0"

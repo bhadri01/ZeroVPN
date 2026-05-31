@@ -299,6 +299,20 @@ export const setMyPreferences = (patch: Partial<UserPreferences>) =>
     body: JSON.stringify(patch),
   })
 
+/** Map a saved `default_landing` preference to its in-app route. The
+ *  sign-in flows (password + Google) call this so a user lands on the
+ *  screen they chose in Settings instead of always the dashboard. */
+export function landingPath(pref: DefaultLandingPref): string {
+  switch (pref) {
+    case "devices":
+      return "/app/devices"
+    case "topology":
+      return "/app/topology"
+    default:
+      return "/app"
+  }
+}
+
 // ── Topology positions ─────────────────────────────────────────────────
 // Per-user saved arrangement for the live-topology drag UI. Round-trip
 // shape matches what we keep in localStorage: a flat {node_id: {x, y}}.

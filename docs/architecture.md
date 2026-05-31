@@ -54,17 +54,21 @@ Full design rationale lives in [`/Users/black/.claude/plans/can-u-list-out-memoi
 ## Persistence
 
 - PostgreSQL 18, single primary. Connection pooling via sqlx (16 max in api, 4 in worker).
-- Time-series `bandwidth_samples` partitioned monthly with `RANGE` partitions. **Raw rows kept indefinitely by default** (migration 5); set `ZEROVPN_SAMPLE_RETENTION_DAYS=N` to bring back a hard window. Aggregates (`bandwidth_aggregates`) are unbounded regardless. See [runbook.md → Stats pipeline & disk growth](runbook.md#stats-pipeline--disk-growth) for the storage math.
-- Per-server time-series `server_samples` (migration 5) tracks total RX/TX, peer counts, and handshake-rate per poll tick. Same partitioning + retention story as `bandwidth_samples`, gated on `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS`.
+- Time-series `bandwidth_samples` partitioned monthly with `RANGE` partitions. **Raw rows are purged after 30 days by default**; override with `ZEROVPN_SAMPLE_RETENTION_DAYS=N` (set `N=0` to keep them indefinitely). Aggregates (`bandwidth_aggregates`) are unbounded regardless. See [runbook.md → Stats pipeline & disk growth](runbook.md#stats-pipeline--disk-growth) for the storage math.
+- Per-server time-series `server_samples` (migration 5) tracks total RX/TX, peer counts, and handshake-rate per poll tick. Same partitioning + retention story as `bandwidth_samples`, with its own knob `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS` (default 30 days; `0` = keep indefinitely).
 
-## Privacy & no-logs
+## Logging & privacy
 
-- IPs are stored as INET prefixes (`/24` for IPv4, `/48` for IPv6). User agents as sha256 hashes only.
-- No DNS query logs, no traffic content, no destination IP logs anywhere in the stack.
-- The retention purger anonymizes audit metadata after policy windows (30 days for IPs) and hard-purges soft-deleted users at +30 days.
-- **Per-tick byte counters (`bandwidth_samples`, `server_samples`) are kept indefinitely by default** as of migration 5. This is a relaxation of the original "raw rows dropped at 7 days" posture. The traffic-content guarantees above still hold — what's logged is byte counts and peer/server identifiers, not destinations, not payloads. If the relaxation isn't what you want, set `ZEROVPN_SAMPLE_RETENTION_DAYS` + `ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS` to restore the bounded-window behavior.
+The "no-logs" posture was deliberately reversed — ZeroVPN now retains full
+operational logs for admin visibility. See CHANGELOG → "Policy reversal —
+full logging system" for the decision record. Concretely:
+
+- Full client IPs and User-Agent strings are captured on auth flows (no longer prefix-truncated or hashed), alongside account events, per-device handshake metadata, and WG peer endpoints — all surfaced to admins.
+- Flow metadata (`destination_ips`, sourced from conntrack) backs the Topology → Flows view.
+- Still **not** captured anywhere in the stack: traffic content / payloads and DNS query contents.
+- Each operational table is purged on its own window — 30 days by default for `bandwidth_samples`, `server_samples`, `destination_ips`, `audit_logs`, and `failed_logins` — overridable per table via the `ZEROVPN_*_RETENTION_DAYS` env vars (set a var to `0` to keep that table forever; e.g. `ZEROVPN_AUDIT_RETENTION_DAYS=0` for an unbounded audit trail). Soft-deleted users are hard-purged at +30 days.
 
 ## Obfuscation
 
-- Per-peer randomized AmneziaWG params (`Sc/Sr/H1–H4/Jc/Jmin/Jmax/S1/S2`) are generated on device creation and embedded in the `.conf` download. Vanilla WG clients won't connect — users get an AmneziaWG-aware client (linked from setup guides).
+- Obfuscation is **disabled by default**: device `.conf` downloads are vanilla WireGuard, which the official WireGuard clients accept and which matches the default `linuxserver/wireguard` server runtime. The `zerovpn-obfs` crate computes per-peer AmneziaWG params (`Sc/Sr/H1–H4/Jc/Jmin/Jmax/S1/S2`), but they are not written into configs until an AmneziaWG server runtime is wired up — see [runbook.md → Switching the WG image to AmneziaWG](runbook.md#switching-the-wg-image-to-amneziawg).
 - wstunnel (escape-hatch transport for UDP-blocked networks) is deferred to v1.1.

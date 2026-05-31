@@ -1,7 +1,7 @@
 //! End-to-end repo tests against a real Postgres in a testcontainers-managed
 //! container. Verifies the basic CRUD lifecycle plus quota counter math.
 
-use sqlx::Executor;
+use testcontainers::ImageExt;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 use zerovpn_auth::password;
@@ -13,19 +13,12 @@ async fn boot_pg() -> anyhow::Result<(testcontainers::ContainerAsync<Postgres>, 
         .with_db_name("zerovpn")
         .with_user("zerovpn")
         .with_password("zerovpn")
+        .with_tag("18-alpine")
         .start()
         .await?;
     let port = pg.get_host_port_ipv4(5432).await?;
     let url = format!("postgres://zerovpn:zerovpn@127.0.0.1:{port}/zerovpn?sslmode=disable");
     Ok((pg, url))
-}
-
-async fn install_schema(pool: &sqlx::PgPool) -> anyhow::Result<()> {
-    let sql = std::fs::read_to_string("migrations/00000000000001_initial.sql")?;
-    pool.execute(&*sql).await?;
-    let sql2 = std::fs::read_to_string("migrations/00000000000002_revoked_devices_release_ip.sql")?;
-    pool.execute(&*sql2).await?;
-    Ok(())
 }
 
 #[tokio::test]
@@ -35,7 +28,10 @@ async fn user_lifecycle_with_quota_counter() -> anyhow::Result<()> {
         .max_connections(4)
         .connect(&url)
         .await?;
-    install_schema(&pool).await?;
+    // Apply the full migration set (embedded via `sqlx::migrate!`) rather than
+    // hand-reading a couple of .sql files — robust to CWD and keeps the schema
+    // current as migrations are added.
+    zerovpn_db::run_migrations(&pool).await?;
 
     // Create user
     let pw_hash = password::hash("correcthorsebatterystaple")?;

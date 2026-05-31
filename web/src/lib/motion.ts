@@ -8,8 +8,48 @@
  *   • translate distances are 4–8 px, never 20+
  *   • prefers-reduced-motion is honored everywhere via `useReducedMotion`
  */
+import { useSyncExternalStore } from "react"
 import type { Transition, Variants } from "motion/react"
-export { useReducedMotion } from "motion/react"
+import { useReducedMotion as useOsReducedMotion } from "motion/react"
+
+// User's saved "reduced motion" preference, applied app-wide via a
+// module-level setter — mirrors `setUnitsPref` / `setDateTimePrefs`. The
+// Toaster preferences applier (components/ui/sonner.tsx) calls
+// `setReducedMotionPref` once `/me/preferences` resolves. When true, motion
+// is suppressed even if the OS isn't asking for it; when false we still
+// honor the OS `prefers-reduced-motion` media query, so the gate is the
+// OR of the two sources.
+let prefReducedMotion = false
+const reducedMotionListeners = new Set<() => void>()
+
+export function setReducedMotionPref(v: boolean) {
+  if (v === prefReducedMotion) return
+  prefReducedMotion = v
+  for (const fn of reducedMotionListeners) fn()
+}
+
+function subscribeReducedMotion(cb: () => void) {
+  reducedMotionListeners.add(cb)
+  return () => reducedMotionListeners.delete(cb)
+}
+
+function reducedMotionSnapshot() {
+  return prefReducedMotion
+}
+
+/** Reduced-motion gate used everywhere we animate. True when *either* the
+ *  OS `prefers-reduced-motion` query is set *or* the user enabled
+ *  Settings → Reduced motion. Replaces the bare `motion/react` re-export
+ *  (which only saw the OS query and ignored the saved preference). */
+export function useReducedMotion(): boolean {
+  const os = useOsReducedMotion()
+  const pref = useSyncExternalStore(
+    subscribeReducedMotion,
+    reducedMotionSnapshot,
+    reducedMotionSnapshot,
+  )
+  return Boolean(os) || pref
+}
 
 export const TIMING = {
   enter: 0.28,

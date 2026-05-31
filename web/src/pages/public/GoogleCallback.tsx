@@ -9,7 +9,9 @@ import {
 } from "@/components/layout/AuthShell"
 import {
   ApiError,
+  getMyPreferences,
   googleCallback,
+  landingPath,
   me,
   type LoginResponse,
   type PublicUser,
@@ -61,11 +63,21 @@ export function GoogleCallbackPage() {
     }
 
     let cancelled = false
-    const goNext = (user: PublicUser, mustChange = false) => {
+    const goNext = async (user: PublicUser, mustChange = false) => {
       if (cancelled) return
       setUser(user)
       toast.success(`Welcome, ${user.email}`)
-      navigate(mustChange ? "/app/change-password" : "/app", { replace: true })
+      if (mustChange) {
+        navigate("/app/change-password", { replace: true })
+        return
+      }
+      // Honor the saved "default landing" preference; fall back to the
+      // dashboard if the prefs fetch fails.
+      const prefs = await getMyPreferences().catch(() => null)
+      if (cancelled) return
+      navigate(prefs ? landingPath(prefs.default_landing) : "/app", {
+        replace: true,
+      })
     }
     const fail = (msg: string) => {
       if (cancelled) return
@@ -81,7 +93,7 @@ export function GoogleCallbackPage() {
       if (sessionStorage.getItem(DONE_KEY_PREFIX + state)) {
         try {
           const u = await me()
-          goNext(u)
+          await goNext(u)
         } catch {
           fail("Sign-in session expired — please try again.")
         }
@@ -100,7 +112,7 @@ export function GoogleCallbackPage() {
       try {
         const res = await promise
         sessionStorage.setItem(DONE_KEY_PREFIX + state, "1")
-        goNext(res.user, res.must_change_password)
+        await goNext(res.user, res.must_change_password)
       } catch (e) {
         // Drop the failed promise so a manual retry isn't stuck replaying
         // the same error.

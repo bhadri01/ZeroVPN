@@ -23,11 +23,18 @@
 //! the long-term history the dashboards read and is tiny next to the raw
 //! samples it's derived from.
 //!
-//! Windows are hardcoded constants below. `bandwidth_samples` and
-//! `server_samples` are RANGE-partitioned on `sampled_at`; a plain DELETE
-//! is correct but leaves empty partitions behind — dropping whole expired
-//! partitions would be cheaper and is a natural follow-up (along with
-//! making the windows operator-tunable via env, the deferred Stage-D work).
+//! Operational-data windows default to the constants below but are
+//! operator-tunable per table via `ZEROVPN_*_RETENTION_DAYS` env vars (read
+//! once at startup — see `RetentionWindows::from_env`). Setting a var to `0`
+//! disables that table's purge entirely (keep forever) — the opt-in
+//! "unbounded" posture. Account-lifecycle TTLs (verification tokens,
+//! soft-deleted users, abandoned signups) are policy, not storage tuning, so
+//! they stay fixed.
+//!
+//! `bandwidth_samples` and `server_samples` are RANGE-partitioned on
+//! `sampled_at`; a plain DELETE is correct but leaves empty partitions
+//! behind — dropping whole expired partitions would be cheaper and is a
+//! natural follow-up.
 
 use std::time::Duration;
 
@@ -56,23 +63,92 @@ const FAILED_LOGIN_RETENTION_DAYS: i64 = 30;
 const CANDLE_MINUTE_RETENTION_DAYS: i64 = 30;
 const CANDLE_DAILY_RETENTION_DAYS: i64 = 730;
 
+/// Operational-data retention windows, in days. `None` means "keep forever"
+/// (the operator set the env var to `0`). Read once at startup; the constants
+/// above are the fallback defaults when a var is unset or unparseable.
+struct RetentionWindows {
+    samples: Option<i64>,
+    server_samples: Option<i64>,
+    destinations: Option<i64>,
+    audit: Option<i64>,
+    failed_logins: Option<i64>,
+    candle_minute: Option<i64>,
+    candle_daily: Option<i64>,
+}
+
+impl RetentionWindows {
+    fn from_env() -> Self {
+        let w = Self {
+            samples: window_days("ZEROVPN_SAMPLE_RETENTION_DAYS", SAMPLE_RETENTION_DAYS),
+            server_samples: window_days(
+                "ZEROVPN_SERVER_SAMPLE_RETENTION_DAYS",
+                SERVER_SAMPLE_RETENTION_DAYS,
+            ),
+            destinations: window_days("ZEROVPN_DEST_RETENTION_DAYS", DEST_RETENTION_DAYS),
+            audit: window_days("ZEROVPN_AUDIT_RETENTION_DAYS", AUDIT_RETENTION_DAYS),
+            failed_logins: window_days(
+                "ZEROVPN_FAILED_LOGIN_RETENTION_DAYS",
+                FAILED_LOGIN_RETENTION_DAYS,
+            ),
+            candle_minute: window_days(
+                "ZEROVPN_CANDLE_MINUTE_RETENTION_DAYS",
+                CANDLE_MINUTE_RETENTION_DAYS,
+            ),
+            candle_daily: window_days(
+                "ZEROVPN_CANDLE_DAILY_RETENTION_DAYS",
+                CANDLE_DAILY_RETENTION_DAYS,
+            ),
+        };
+        let fmt = |o: Option<i64>| o.map(|d| format!("{d}d")).unwrap_or_else(|| "∞".into());
+        info!(
+            samples = %fmt(w.samples),
+            server_samples = %fmt(w.server_samples),
+            destinations = %fmt(w.destinations),
+            audit = %fmt(w.audit),
+            failed_logins = %fmt(w.failed_logins),
+            candle_minute = %fmt(w.candle_minute),
+            candle_daily = %fmt(w.candle_daily),
+            "retention windows resolved",
+        );
+        w
+    }
+}
+
+/// Parse a retention window (in days) from `key`. Unset or unparseable →
+/// `default`. An explicit `0` returns `None` = disable the purge for that
+/// table (keep forever).
+fn window_days(key: &str, default: i64) -> Option<i64> {
+    match std::env::var(key) {
+        Ok(v) => match v.trim().parse::<i64>() {
+            Ok(0) => None,
+            Ok(n) if n > 0 => Some(n),
+            _ => {
+                warn!(key, value = %v, "invalid retention value; using default");
+                Some(default)
+            }
+        },
+        Err(_) => Some(default),
+    }
+}
+
 pub async fn run(pool: PgPool) {
     info!("retention purger started");
+    let windows = RetentionWindows::from_env();
     // Run once on startup for fast feedback in dev.
-    if let Err(e) = run_once(&pool).await {
+    if let Err(e) = run_once(&pool, &windows).await {
         warn!(?e, "retention pass failed");
     }
     let mut ticker = tokio::time::interval(TICK);
     ticker.tick().await; // skip immediate
     loop {
         ticker.tick().await;
-        if let Err(e) = run_once(&pool).await {
+        if let Err(e) = run_once(&pool, &windows).await {
             warn!(?e, "retention pass failed");
         }
     }
 }
 
-async fn run_once(pool: &PgPool) -> sqlx::Result<()> {
+async fn run_once(pool: &PgPool, windows: &RetentionWindows) -> sqlx::Result<()> {
     let now = OffsetDateTime::now_utc();
 
     // --- Account-lifecycle cleanup -------------------------------------
@@ -118,59 +194,73 @@ async fn run_once(pool: &PgPool) -> sqlx::Result<()> {
     // Raw bandwidth ticks. Safe to drop past the window because the hourly/
     // daily rollups in `bandwidth_aggregates` already preserve the history
     // the dashboards read.
-    purge(
-        pool,
-        "purged expired bandwidth samples",
-        "DELETE FROM bandwidth_samples WHERE sampled_at < $1",
-        now - time::Duration::days(SAMPLE_RETENTION_DAYS),
-    )
-    .await?;
+    if let Some(days) = windows.samples {
+        purge(
+            pool,
+            "purged expired bandwidth samples",
+            "DELETE FROM bandwidth_samples WHERE sampled_at < $1",
+            now - time::Duration::days(days),
+        )
+        .await?;
+    }
 
     // Host CPU/mem/net/disk samples.
-    purge(
-        pool,
-        "purged expired server samples",
-        "DELETE FROM server_samples WHERE sampled_at < $1",
-        now - time::Duration::days(SERVER_SAMPLE_RETENTION_DAYS),
-    )
-    .await?;
+    if let Some(days) = windows.server_samples {
+        purge(
+            pool,
+            "purged expired server samples",
+            "DELETE FROM server_samples WHERE sampled_at < $1",
+            now - time::Duration::days(days),
+        )
+        .await?;
+    }
 
     // Flow-log destination records (keyed on flow start time).
-    purge(
-        pool,
-        "purged expired destination IPs",
-        "DELETE FROM destination_ips WHERE started_at < $1",
-        now - time::Duration::days(DEST_RETENTION_DAYS),
-    )
-    .await?;
+    if let Some(days) = windows.destinations {
+        purge(
+            pool,
+            "purged expired destination IPs",
+            "DELETE FROM destination_ips WHERE started_at < $1",
+            now - time::Duration::days(days),
+        )
+        .await?;
+    }
 
     // Audit trail.
-    purge(
-        pool,
-        "purged expired audit logs",
-        "DELETE FROM audit_logs WHERE created_at < $1",
-        now - time::Duration::days(AUDIT_RETENTION_DAYS),
-    )
-    .await?;
+    if let Some(days) = windows.audit {
+        purge(
+            pool,
+            "purged expired audit logs",
+            "DELETE FROM audit_logs WHERE created_at < $1",
+            now - time::Duration::days(days),
+        )
+        .await?;
+    }
 
     // Failed-login records.
-    purge(
-        pool,
-        "purged expired failed logins",
-        "DELETE FROM failed_logins WHERE attempted_at < $1",
-        now - time::Duration::days(FAILED_LOGIN_RETENTION_DAYS),
-    )
-    .await?;
+    if let Some(days) = windows.failed_logins {
+        purge(
+            pool,
+            "purged expired failed logins",
+            "DELETE FROM failed_logins WHERE attempted_at < $1",
+            now - time::Duration::days(days),
+        )
+        .await?;
+    }
 
-    // OHLC candles — 1-minute base rows past 30 d, daily rollups past 2 y.
-    // The daily table preserves the long-timeframe history once the minute
-    // rows it was derived from are gone.
-    let removed = candles::prune(
-        pool,
-        now - time::Duration::days(CANDLE_MINUTE_RETENTION_DAYS),
-        now - time::Duration::days(CANDLE_DAILY_RETENTION_DAYS),
-    )
-    .await?;
+    // OHLC candles — 1-minute base rows and daily rollups, each on its own
+    // window. The daily table preserves the long-timeframe history once the
+    // minute rows it was derived from are gone. A `None` window (env var set
+    // to 0) maps to the Unix epoch so nothing is ever older than the cutoff.
+    let minute_cut = windows
+        .candle_minute
+        .map(|d| now - time::Duration::days(d))
+        .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+    let daily_cut = windows
+        .candle_daily
+        .map(|d| now - time::Duration::days(d))
+        .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+    let removed = candles::prune(pool, minute_cut, daily_cut).await?;
     if removed > 0 {
         info!(rows = removed, "purged expired bandwidth candles");
     }

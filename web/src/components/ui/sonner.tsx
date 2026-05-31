@@ -12,6 +12,7 @@ import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { useTheme } from "@/components/theme-provider"
 import { getMyPreferences } from "@/lib/api"
 import { setDateTimePrefs } from "@/lib/datetime"
+import { setReducedMotionPref } from "@/lib/motion"
 import { setNotifyConfig } from "@/lib/notify"
 import { setUnitsPref } from "@/lib/units"
 
@@ -45,6 +46,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
     // query, so it doubles as the global preferences applier.
     setUnitsPref(prefsQ.data.units)
     setDateTimePrefs(prefsQ.data.date_format, prefsQ.data.time_format)
+    // Honor the saved Reduced-motion toggle. `useReducedMotion` ORs this
+    // with the OS `prefers-reduced-motion` query, so flipping it suppresses
+    // animation everywhere even when the OS isn't asking.
+    setReducedMotionPref(prefsQ.data.reduced_motion)
     // Reflect the server's saved theme variant. localStorage holds the
     // first-paint choice for an instant render; this writes the
     // authoritative server value when /me/preferences resolves, so a

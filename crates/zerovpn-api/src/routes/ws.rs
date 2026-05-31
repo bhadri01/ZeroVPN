@@ -47,6 +47,7 @@ pub async fn ws(
 
 async fn run(mut socket: WebSocket, mut rx: broadcast::Receiver<Event>, user_id: Uuid, role: UserRole) {
     info!(%user_id, ?role, "ws client connected");
+    metrics::counter!("zerovpn_ws_clients_connected").increment(1);
     loop {
         tokio::select! {
             // Inbound from client (we ignore data; just keep reading so the
