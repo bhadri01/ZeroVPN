@@ -1,0 +1,19 @@
+# Dev-only mail catcher (MailHog). Kept OUT of docker-compose.yml so the prod
+# compose has zero dev services — this overlay is layered in only by the dev
+# targets (`make up`, `make up-dev`, `make dev`), never by `make up-prod`.
+# Prod sends real mail: point ZEROVPN_SMTP__* at a relay (e.g. Gmail/SMTP) in
+# `.env`. See .env.example → "SMTP".
+#
+# Always used together with docker-compose.yml (it provides the `backend`
+# network + `.env` SMTP host = mailhog:1025).
+services:
+  mailhog:
+    image: mailhog/mailhog:latest
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "8025:8025" # web UI  → http://localhost:8025
+      - "1025:1025" # smtp    → ZEROVPN_SMTP__HOST=mailhog / PORT=1025
+    networks:
+      - backend
+    mem_limit: 64m

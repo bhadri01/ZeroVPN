@@ -10,7 +10,7 @@ See [CHANGELOG.md](CHANGELOG.md) for current state.
 
 ```bash
 make setup     # one-time: copies .env.example → .env, generates dev secrets, builds images
-make up        # start the dev stack (core + MailHog via the `dev` profile)
+make up        # start the dev stack locally (core + MailHog)
 make logs      # tail logs
 make migrate   # run pending DB migrations
 make bootstrap-admin EMAIL=admin@example.com   # create the first admin (will prompt for password)
@@ -38,7 +38,7 @@ make migrate
 make bootstrap-admin EMAIL=admin@your-domain
 ```
 
-Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, real `ZEROVPN_DOMAIN`, real SMTP relay, `ZEROVPN_CERT_RESOLVER=le` (Traefik + Let's Encrypt), `ZEROVPN_WG__BACKEND=kernel`, plus `ZEROVPN_REGISTRY`/`ZEROVPN_IMAGE_TAG`. `make up-prod` skips the `dev` profile so MailHog never comes up. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
+Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, real `ZEROVPN_DOMAIN`, real SMTP relay, `ZEROVPN_CERT_RESOLVER=le` (Traefik + Let's Encrypt), `ZEROVPN_WG__BACKEND=kernel`, plus `ZEROVPN_REGISTRY`/`ZEROVPN_IMAGE_TAG`. `make up-prod` uses the base compose alone (no `docker-compose.mail.yml`), so MailHog never comes up. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
 
 ## Architecture
 

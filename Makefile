@@ -5,7 +5,9 @@ SHELL := /bin/bash
 # SMTP host, WG backend, logging) live in `.env`; optional service groups
 # are gated by compose profiles.
 COMPOSE     := docker compose
-COMPOSE_DEV := $(COMPOSE) --profile dev
+# MailHog lives in docker-compose.mail.yml (dev-only), layered into the dev
+# targets below but never into `make up-prod` — so the base compose is pure prod.
+COMPOSE_DEV := $(COMPOSE) -f docker-compose.yml -f docker-compose.mail.yml --profile dev
 # App images (api/worker/frontend) are pre-built + pushed to a
 # registry; the base compose references them by tag (image:). This overlay
 # re-adds `build:` so they can be built/pushed locally or in CI. A *deploy* host
@@ -15,7 +17,7 @@ COMPOSE_BUILD := $(COMPOSE) -f docker-compose.yml -f docker-compose.build.yml
 # Dev *containers*: run api/worker/web in Linux with hot-reload + a real
 # (userspace) WireGuard tunnel. The overlay gates the prod api/worker/frontend/
 # traefik behind the `prod` profile so only the *-dev services run.
-COMPOSE_DEVCTR := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml --profile dev
+COMPOSE_DEVCTR := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.mail.yml --profile dev
 
 .PHONY: help
 help: ## Show this help
@@ -41,7 +43,7 @@ setup: ## One-time: copy .env template + generate secrets (build/pull happens in
 
 .PHONY: up
 up: ## Start the dev stack locally (core + MailHog); builds images if missing
-	$(COMPOSE_BUILD) --profile dev up -d
+	$(COMPOSE_BUILD) -f docker-compose.mail.yml up -d
 
 .PHONY: up-prod
 up-prod: ## Deploy the prod stack from PRE-BUILT images (pull, never build)

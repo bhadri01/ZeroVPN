@@ -232,21 +232,6 @@ services:
       - -conf
       - /etc/coredns/Corefile
 
-  # Dev-only mail catcher (web UI at http://localhost:8025). Gated to the `dev`
-  # profile so `make up-prod` never starts it — prod points ZEROVPN_SMTP__* at a
-  # real relay (e.g. Gmail/SMTP) via `.env`. See .env.example → "SMTP".
-  mailhog:
-    image: mailhog/mailhog:latest
-    platform: linux/amd64
-    profiles: [dev]
-    restart: unless-stopped
-    ports:
-      - "8025:8025"  # web UI
-      - "1025:1025"  # smtp
-    networks:
-      - backend
-    mem_limit: 64m
-
   # (The separate `wg` container was removed: the api is the WG host now — it
   # brings up wg0 itself and programs peers. See the `api` service above.)
 

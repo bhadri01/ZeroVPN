@@ -2,15 +2,15 @@
 
 ## Dev vs. prod isolation
 
-ZeroVPN ships a single `docker-compose.yml` + single `.env`. Dev vs. prod is driven by `.env` values; the only optional service group is the `dev`-profile MailHog:
+ZeroVPN ships a prod `docker-compose.yml` + single `.env`. Dev vs. prod is driven by `.env` values; the only dev-only extra is MailHog, layered in from `docker-compose.mail.yml` by the dev `make` targets (never by `make up-prod`):
 
 | | dev | prod |
 |---|---|---|
 | Compose invocation | `docker compose --profile dev up -d` (via `make up`) | `docker compose up -d` (via `make up-prod`) |
 | Env file | `.env` (from `.env.example`) — `ZEROVPN_ENVIRONMENT=dev` | `.env` (same file, edited) — `ZEROVPN_ENVIRONMENT=production` |
 | TLS | self-signed (`ZEROVPN_CERT_RESOLVER` empty → Traefik default cert) | Let's Encrypt (`ZEROVPN_CERT_RESOLVER=le` in `.env`) |
-| Exposed host ports | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 + 8025 (MailHog via `dev` profile) | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 (no MailHog) |
-| Mailer | MailHog (via `dev` profile) | real SMTP relay (set `ZEROVPN_SMTP__HOST` in `.env`) |
+| Exposed host ports | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 + 8025 (MailHog, dev only) | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 (no MailHog) |
+| Mailer | MailHog (`docker-compose.mail.yml`, dev only) | real SMTP relay (set `ZEROVPN_SMTP__*` in `.env`) |
 | WG backend | `noop` (userspace boringtun in api-dev) | `kernel` (set in `.env`; the api is the WG host — no `wg` container) |
 | Session cookie | not Secure (plaintext localhost) | Secure flag set (api enforces when `ZEROVPN_ENVIRONMENT=production`) |
 
@@ -78,7 +78,7 @@ The `.env.example` header lists the eight values that must flip for prod (`ZEROV
 
 `ZEROVPN_DOMAIN` must resolve to this host before `make up-prod`, or Traefik's first Let's Encrypt issuance attempt will fail. The api will also refuse to boot if `ZEROVPN_DOMAIN` is `localhost` or a `REPLACE_*` placeholder — see [validate_production_config in crates/zerovpn-api/src/main.rs](../crates/zerovpn-api/src/main.rs).
 
-**Mail (prod):** MailHog is dev-only (`dev` profile) and never starts under `make up-prod`. Point `ZEROVPN_SMTP__*` at a real relay — e.g. Gmail: `smtp.gmail.com:587` with a Google **App Password** (STARTTLS is auto-selected for 587). See the SMTP block in `.env.example`.
+**Mail (prod):** MailHog is dev-only (`docker-compose.mail.yml`) and never starts under `make up-prod`. Point `ZEROVPN_SMTP__*` at a real relay — e.g. Gmail: `smtp.gmail.com:587` with a Google **App Password** (STARTTLS is auto-selected for 587). See the SMTP block in `.env.example`.
 
 
 ## Bringing up the real WireGuard runtime (Linux production)
@@ -216,7 +216,7 @@ For zero-downtime upgrades, drain peers off this server first by toggling **main
 
 ## Security review checklist (before exposing to the internet)
 
-- [ ] Brought up via `make up-prod` (not `make up`) — `make up-prod` omits the `dev` profile so MailHog never comes up
+- [ ] Brought up via `make up-prod` (not `make up`) — `make up-prod` uses the base compose alone (no `docker-compose.mail.yml`) so MailHog never comes up
 - [ ] `ZEROVPN_ENVIRONMENT=production` in `.env`; the api refuses to boot otherwise
 - [ ] `ZEROVPN_KEK` is a fresh 32-byte base64 random, distinct from any value previously used in dev (the prod boot check rejects `CHANGEME` and short values; rotate via the "Rotating secrets" section before exposing publicly)
 - [ ] `ZEROVPN_DOMAIN` set to a real domain that already resolves to this host (LE issuance otherwise fails on first boot)
