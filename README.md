@@ -24,15 +24,21 @@ After `make up`:
 
 ## Quickstart (production)
 
+The app images are **built + pushed to a registry** (CI does this on push to `main`/tags — see `.github/workflows/images.yml`), and the deploy host **pulls** them (never builds):
+
 ```bash
-make setup                                       # copies .env.example → .env, generates secrets
-$EDITOR .env                                     # see "going to production" block at the top of .env
-make up-prod                                     # starts the stack without the `dev` profile (no MailHog)
+# Build + push images (CI, or locally after `docker login`):
+make images && make push           # -> $ZEROVPN_REGISTRY/zerovpn-*:$ZEROVPN_IMAGE_TAG
+
+# On the deploy host:
+make setup                         # copies .env.example → .env, generates secrets
+$EDITOR .env                       # prod values + ZEROVPN_REGISTRY / ZEROVPN_IMAGE_TAG
+make up-prod                       # pulls the pre-built images, starts the stack (no `dev` profile)
 make migrate
 make bootstrap-admin EMAIL=admin@your-domain
 ```
 
-Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, real `ZEROVPN_DOMAIN`, real SMTP relay, `ZEROVPN_CERT_RESOLVER=le` (Traefik + Let's Encrypt), `ZEROVPN_WG__BACKEND=kernel`. `make up-prod` skips the `dev` profile so MailHog never comes up. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
+Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, real `ZEROVPN_DOMAIN`, real SMTP relay, `ZEROVPN_CERT_RESOLVER=le` (Traefik + Let's Encrypt), `ZEROVPN_WG__BACKEND=kernel`, plus `ZEROVPN_REGISTRY`/`ZEROVPN_IMAGE_TAG`. `make up-prod` skips the `dev` profile so MailHog never comes up. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
 
 ## Architecture
 

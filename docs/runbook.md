@@ -31,7 +31,7 @@ The bootstrap admin lands as `must_change_password=TRUE` and is forced through t
 
 ## Fast dev loop (native cargo + Vite HMR)
 
-`make up` runs everything in docker — fine for verifying the prod-shape build, but slow when iterating on code (every change = `docker compose build`). For fast iteration, run only the *infrastructure* (db, redis, mailhog, dnsmasq) in docker and run `api` / `worker` / `frontend` natively. Frontend gets Vite HMR (<100 ms); backend uses cargo's incremental compile (~3–10 s after a small change).
+`make up` runs everything in docker — fine for verifying the prod-shape build, but slow when iterating on code (every change = `docker compose build`). For fast iteration, run only the *infrastructure* (db, dnsmasq, mailhog) in docker and run `api` / `worker` / `frontend` natively. Frontend gets Vite HMR (<100 ms); backend uses cargo's incremental compile (~3–10 s after a small change).
 
 ```
 make dev                                    # one-time: stops dockerized api/worker/frontend, starts db/redis/mailhog/dnsmasq
@@ -69,7 +69,7 @@ git clone <this repo>
 cd zerovpn
 make setup                                   # copies .env.example → .env, generates secrets
 $EDITOR .env                                 # see "going to production" block at the top of .env
-make up-prod                                 # docker compose up -d (no `dev` profile, so no MailHog)
+make up-prod                                 # docker compose pull && up -d (pulls pre-built images; no MailHog)
 make migrate
 make bootstrap-admin EMAIL=admin@yourdomain
 ```
@@ -187,17 +187,29 @@ make up                                # or make up-prod
 5. `make up` — db comes up with the restored data; the api reconstructs `wg0.conf`
    from the DB and re-adds all peers.
 
-## Upgrading
+## Building & publishing images
+
+App images (`api`, `worker`, `frontend`, `nflog-exporter`) are pre-built and pushed to a registry; the base `docker-compose.yml` references them by tag (`image:`), so a deploy host **pulls** them and never builds. CI does this automatically (`.github/workflows/images.yml` → GHCR on push to `main`/tags). To do it by hand:
 
 ```
-git pull
-make check         # cargo check + clippy + tsc + eslint
-docker compose build
+docker login ghcr.io                 # or your registry
+export ZEROVPN_REGISTRY=ghcr.io/<owner>  ZEROVPN_IMAGE_TAG=v1.2.3   # (also in .env)
+make images                          # docker compose -f …build.yml build  (tags as $REGISTRY/zerovpn-*:$TAG)
+make push                            # pushes them
+```
+
+The `build:` blocks live in `docker-compose.build.yml` (the base file is image-only). `make up` (local dev) still builds via that overlay; `make up-prod` only pulls.
+
+## Upgrading (pull pre-built images)
+
+```
+# CI already built + pushed the new images. On the deploy host:
+$EDITOR .env       # bump ZEROVPN_IMAGE_TAG to the new version (or keep :latest)
+make up-prod       # docker compose pull && up -d  — pulls the new images
 make migrate       # applies any new migrations
-make up
 ```
 
-For zero-downtime upgrades, drain peers off this server first by toggling **maintenance mode** in the admin UI, then `docker compose up -d --no-deps api worker frontend`.
+For zero-downtime upgrades, drain peers off this server first by toggling **maintenance mode** in the admin UI, then `docker compose pull api worker frontend && docker compose up -d --no-deps api worker frontend`.
 
 ## Security review checklist (before exposing to the internet)
 

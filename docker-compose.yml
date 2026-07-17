@@ -71,9 +71,7 @@ services:
       - no-new-privileges:true
 
   frontend:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.web
+    image: ${ZEROVPN_REGISTRY:-ghcr.io/bhadri01}/zerovpn-frontend:${ZEROVPN_IMAGE_TAG:-latest}
     <<: [*default-restart, *default-logging]
     networks:
       - web
@@ -101,9 +99,7 @@ services:
   # ⚠ Verified on macOS/dev (userspace boringtun). The prod path below (Linux
   # kernel WG module) has NOT been validated on a real host — test before relying.
   api:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.api
+    image: ${ZEROVPN_REGISTRY:-ghcr.io/bhadri01}/zerovpn-api:${ZEROVPN_IMAGE_TAG:-latest}
     <<: [*default-restart, *default-logging]
     env_file: .env
     environment:
@@ -161,9 +157,7 @@ services:
   # and the api subscribes to the worker's ZMQ on 127.0.0.1:5555. Mirrors the
   # dev topology; requires the api to start first (depends_on below).
   worker:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.worker
+    image: ${ZEROVPN_REGISTRY:-ghcr.io/bhadri01}/zerovpn-worker:${ZEROVPN_IMAGE_TAG:-latest}
     <<: [*default-restart, *default-logging]
     env_file: .env
     environment:
@@ -258,9 +252,7 @@ services:
   # brings up wg0 itself and programs peers. See the `api` service above.)
 
   nflog-exporter:
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile.nflog-exporter
+    image: ${ZEROVPN_REGISTRY:-ghcr.io/bhadri01}/zerovpn-nflog-exporter:${ZEROVPN_IMAGE_TAG:-latest}
     profiles: [ingest]
     <<: [*default-restart, *default-logging]
     networks:

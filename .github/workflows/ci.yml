@@ -60,4 +60,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: docker compose build
-        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml build api worker frontend
+        # App images live behind the build overlay now (the base compose is
+        # image-only for deploy). This just proves they build.
+        run: docker compose -f docker-compose.yml -f docker-compose.build.yml build api worker frontend

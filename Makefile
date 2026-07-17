@@ -6,6 +6,12 @@ SHELL := /bin/bash
 # are gated by compose profiles.
 COMPOSE     := docker compose
 COMPOSE_DEV := $(COMPOSE) --profile dev
+# App images (api/worker/frontend/nflog-exporter) are pre-built + pushed to a
+# registry; the base compose references them by tag (image:). This overlay
+# re-adds `build:` so they can be built/pushed locally or in CI. A *deploy* host
+# uses the base file only → it pulls, never builds. Set ZEROVPN_REGISTRY and
+# ZEROVPN_IMAGE_TAG in `.env` to control the tag.
+COMPOSE_BUILD := $(COMPOSE) -f docker-compose.yml -f docker-compose.build.yml
 # Dev *containers*: run api/worker/web in Linux with hot-reload + a real
 # (userspace) WireGuard tunnel. The overlay gates the prod api/worker/frontend/
 # traefik behind the `prod` profile so only the *-dev services run.
@@ -16,7 +22,7 @@ help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage: make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: setup
-setup: ## One-time: copy .env template, generate secrets, build images
+setup: ## One-time: copy .env template + generate secrets (build/pull happens in up/up-prod)
 	@if [ ! -f .env ]; then \
 		cp .env.example .env; \
 		echo "Created .env from .env.example."; \
@@ -30,15 +36,25 @@ setup: ## One-time: copy .env template, generate secrets, build images
 		echo ""; \
 	fi
 	@./scripts/init-secrets.sh
-	$(COMPOSE_DEV) build
+	@echo "Secrets ready. Local dev: 'make up' (builds images). Prod: set"
+	@echo "ZEROVPN_REGISTRY/ZEROVPN_IMAGE_TAG in .env, then 'make up-prod' (pulls)."
 
 .PHONY: up
-up: ## Start the dev stack (core + MailHog)
-	$(COMPOSE_DEV) up -d
+up: ## Start the dev stack locally (core + MailHog); builds images if missing
+	$(COMPOSE_BUILD) --profile dev up -d
 
 .PHONY: up-prod
-up-prod: ## Start the prod stack (core only — no MailHog; uses real SMTP from .env)
+up-prod: ## Deploy the prod stack from PRE-BUILT images (pull, never build)
+	$(COMPOSE) pull
 	$(COMPOSE) up -d
+
+.PHONY: images
+images: ## Build the app images and tag them as $ZEROVPN_REGISTRY/...:$ZEROVPN_IMAGE_TAG
+	$(COMPOSE_BUILD) build
+
+.PHONY: push
+push: ## Push the built app images to the registry (docker login first)
+	$(COMPOSE_BUILD) push
 
 .PHONY: down
 down: ## Stop the stack
