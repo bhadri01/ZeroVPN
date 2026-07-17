@@ -30,19 +30,22 @@ COPY crates ./crates
 COPY migrations ./migrations
 RUN cargo build --release --bin zerovpn-api --bin zerovpn-cli
 
+# Userspace WireGuard implementation, so the container needs NO host kernel
+# module. `wg-quick` shells out to this when WG_QUICK_USERSPACE_IMPLEMENTATION=
+# boringtun-cli (set in compose).
+RUN cargo install boringtun-cli --root /usr/local
+
 # ---------------------------------------------------------------------------
 # Runtime: debian-slim + WireGuard tooling.
 #
 # The api is now the WG host itself — on boot it brings up wg0 via wg-quick
-# (bootstrap::ensure_wg_interface_up) and manages peers — so it needs
-# wireguard-tools / iproute2 / iptables and runs privileged (NET_ADMIN). This
-# is NO LONGER the distroless/non-root image: that hardening was traded away to
-# drop the separate `wg` container and make the api hold zero volumes. See
-# docs/architecture.md → "WireGuard runtime".
-#
-# NOTE: uses the in-kernel WireGuard module (ZEROVPN_WG__BACKEND=kernel). On a
-# host without the module, install a userspace impl (e.g. `cargo install
-# boringtun-cli`) and set WG_QUICK_USERSPACE_IMPLEMENTATION=boringtun-cli.
+# (bootstrap::ensure_wg_interface_up) and manages peers. It uses USERSPACE
+# WireGuard (boringtun), so it needs wireguard-tools / iproute2 / iptables +
+# the boringtun-cli binary and runs privileged (NET_ADMIN + /dev/net/tun) — but
+# needs NOTHING from the host kernel (no module, no /lib/modules, no SYS_MODULE).
+# It's the same path the dev stack runs. This is NO LONGER the distroless/
+# non-root image: that hardening was traded away to drop the separate `wg`
+# container and make the api hold zero volumes. See docs/architecture.md.
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -50,5 +53,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/zerovpn-api /usr/local/bin/zerovpn-api
 COPY --from=builder /app/target/release/zerovpn-cli /usr/local/bin/zerovpn-cli
+COPY --from=builder /usr/local/bin/boringtun-cli /usr/local/bin/boringtun-cli
 EXPOSE 8080 51820/udp
 ENTRYPOINT ["/usr/local/bin/zerovpn-api"]

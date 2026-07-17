@@ -38,11 +38,11 @@ make migrate
 make bootstrap-admin EMAIL=admin@your-domain
 ```
 
-Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, real `ZEROVPN_DOMAIN`, real SMTP relay, `ZEROVPN_CERT_RESOLVER=le` (Traefik + Let's Encrypt), `ZEROVPN_WG__BACKEND=kernel`, plus `ZEROVPN_REGISTRY`/`ZEROVPN_IMAGE_TAG`. `make up-prod` uses the base compose alone (no `docker-compose.mail.yml`), so MailHog never comes up. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
+Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, real `ZEROVPN_DOMAIN`, real SMTP relay, `ZEROVPN_CERT_RESOLVER=le` (Traefik + Let's Encrypt), plus `ZEROVPN_REGISTRY`/`ZEROVPN_IMAGE_TAG`. (WireGuard runs userspace — no host setup.) `make up-prod` uses the base compose alone (no `docker-compose.mail.yml`), so MailHog never comes up. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace with multiple crates (api, worker, wg, dns, events, etc.), PostgreSQL 18, Redis 8, WireGuard for the tunnel (`linuxserver/wireguard`), dnsmasq for per-peer DNS, Traefik as reverse proxy. Internal pub/sub via ZeroMQ; browser receives over WebSocket. Wire format: MessagePack over a shared Rust wire schema mirrored in TypeScript on the frontend.
+See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace with multiple crates (api, worker, wg, dns, events, etc.), PostgreSQL 18, WireGuard for the tunnel (userspace boringtun, hosted by the api itself), dnsmasq for per-peer DNS, Traefik as reverse proxy. Internal pub/sub via ZeroMQ; browser receives over WebSocket. Wire format: MessagePack over a shared Rust wire schema mirrored in TypeScript on the frontend.
 
 ## Project layout
 

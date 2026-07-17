@@ -78,14 +78,15 @@ full logging system" for the decision record. Concretely:
 The **api is the WireGuard host itself** — there is no separate `wg` container.
 On boot the api:
 1. materializes `wg0.conf` from the DB-stored server key (`servers.private_key_encrypted`, KEK-encrypted) onto ephemeral tmpfs — nothing WG-related persists on disk;
-2. brings `wg0` up in its own container netns (`wg-quick`; kernel module in prod, userspace boringtun in dev) and applies forwarding/NAT/DNS-DNAT best-effort;
+2. brings `wg0` up in its own container netns (`wg-quick` + **userspace boringtun**, in both dev and prod — no host kernel module) and applies forwarding/NAT/DNS-DNAT best-effort;
 3. re-adds every active peer (`reconcile_peers`) and thereafter programs peers on device create/revoke.
 
 The **worker shares the api's netns** (`network_mode: service:api`) so its poller can `wg show wg0` for stats. Consequences:
 
 - **Stateless api, DB-only recovery**: the api mounts no `wg_config` volume; a `pg_data` restore (+ the KEK) brings the whole tunnel back.
-- **Trade-off**: the internet-facing api now runs privileged (`cap_add: NET_ADMIN`, `/dev/net/tun`, `SYS_MODULE`) instead of the old `cap_drop: [ALL]` / `read_only` sidecar isolation. This was a deliberate choice to eliminate the api's volumes; the security-conservative alternative is a separate privileged WG sidecar.
-- ⚠ **Verified on macOS/dev only** (userspace boringtun). The prod kernel path (privileged image, host module) has **not** been validated on a real Linux host — test before relying on it.
+- **Trade-off**: the internet-facing api now runs privileged (`cap_add: NET_ADMIN` + `/dev/net/tun`) instead of the old `cap_drop: [ALL]` / `read_only` sidecar isolation. This was a deliberate choice to eliminate the api's volumes; the security-conservative alternative is a separate privileged WG sidecar.
+- **No host dependency**: uses userspace boringtun (baked into the api image), so prod needs no kernel module / `modprobe` / `/lib/modules`.
+- ⚠ **Verified on macOS/dev** (the same boringtun path). Validate the privileged prod image on a real Linux host before relying on it.
 
 ## Obfuscation
 

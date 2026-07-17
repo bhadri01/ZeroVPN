@@ -11,7 +11,7 @@ ZeroVPN ships a prod `docker-compose.yml` + single `.env`. Dev vs. prod is drive
 | TLS | self-signed (`ZEROVPN_CERT_RESOLVER` empty → Traefik default cert) | Let's Encrypt (`ZEROVPN_CERT_RESOLVER=le` in `.env`) |
 | Exposed host ports | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 + 8025 (MailHog, dev only) | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 (no MailHog) |
 | Mailer | MailHog (`docker-compose.mail.yml`, dev only) | real SMTP relay (set `ZEROVPN_SMTP__*` in `.env`) |
-| WG backend | `noop` (userspace boringtun in api-dev) | `kernel` (set in `.env`; the api is the WG host — no `wg` container) |
+| WG backend | userspace boringtun (in api-dev) | userspace boringtun (`shell` backend, set in the prod compose; api is the WG host — no `wg` container, no host module) |
 | Session cookie | not Secure (plaintext localhost) | Secure flag set (api enforces when `ZEROVPN_ENVIRONMENT=production`) |
 
 `make up` adds MailHog via `--profile dev`; `make up-prod` omits it.
@@ -81,25 +81,19 @@ The `.env.example` header lists the eight values that must flip for prod (`ZEROV
 **Mail (prod):** MailHog is dev-only (`docker-compose.mail.yml`) and never starts under `make up-prod`. Point `ZEROVPN_SMTP__*` at a real relay — e.g. Gmail: `smtp.gmail.com:587` with a Google **App Password** (STARTTLS is auto-selected for 587). See the SMTP block in `.env.example`.
 
 
-## Bringing up the real WireGuard runtime (Linux production)
+## The WireGuard runtime (production)
 
-The default `make up` runs the management plane only — **no actual WireGuard interface comes up**. To bring up real WG:
+The **api is the WireGuard host itself**, using **userspace WireGuard (boringtun)** — the exact same path the dev stack runs. So it needs **nothing from the host kernel**: no `modprobe`, no kernel module, no `/lib/modules`. On boot the api brings `wg0` up (`wg-quick` + boringtun, from the DB-stored server key) in its own container netns and programs peers via `wg set` (the `shell` backend); the worker shares the api's netns + the `wg_run` socket volume to read `wg show` stats. There is **no separate `wg` container** and **no `wg_config` volume**.
 
-1. **Linux host with the WG kernel module loaded.** Verify with `lsmod | grep wireguard`. On Debian/Ubuntu:
-   ```
-   sudo apt install -y wireguard wireguard-tools
-   sudo modprobe wireguard
-   ```
+So there is nothing to install or load on the host. To route real traffic:
 
-2. **Set `ZEROVPN_WG__BACKEND=kernel` in `.env`.** The **api is the WireGuard host itself**: on boot it brings `wg0` up (`wg-quick`, from the DB-stored server key) in its own container netns and programs peers via the kernel netlink UAPI (`defguard_wireguard_rs`). The worker shares the api's netns to read `wg show` stats. Both hold `CAP_NET_ADMIN`; the api also gets `SYS_MODULE` + a read-only `/lib/modules` mount to load the kernel module (skip if the host preloads it with `modprobe wireguard`). There is **no separate `wg` container** and no `wg_config` volume.
+1. Nothing on the host. `ZEROVPN_WG__BACKEND=shell` is already the default in the prod compose, and the `boringtun-cli` userspace impl is baked into the api image.
+2. `make up-prod` — the api creates `wg0`, publishes `udp/51820`, and rewrites `wg0.conf` from the DB on every boot (nothing persists on disk).
+3. **Open UDP 51820** on your firewall.
 
-3. **Bring up the stack:**
-   ```
-   make up-prod
-   ```
-   The api creates `wg0`, publishes `udp/51820`, and rewrites `wg0.conf` from the DB on every boot (nothing persists on disk). ⚠ **This prod topology has only been verified on macOS/dev (userspace boringtun); validate the kernel path on your Linux host before relying on it.**
+The api holds `CAP_NET_ADMIN` + `/dev/net/tun` to do this (the security trade-off of merging WG into the internet-facing api).
 
-4. **Open UDP 51820** on your firewall.
+⚠ Verified on macOS/dev (same boringtun path). Validate on your host once: `docker compose logs api` should show `"wg interface up"`, and `docker compose exec api wg show wg0` should list the interface.
 
 ## Healthchecks
 
@@ -116,7 +110,7 @@ The default `make up` runs the management plane only — **no actual WireGuard i
 | api crashloops with `GLIBC_2.38 not found` | builder image has a newer glibc than the runtime | Dockerfile.api uses `cargo-chef:…-bookworm` to match the distroless `cc-debian12` runtime. Verify with `docker run --rm <api-image> ldd --version`. |
 | `database connection refused` | DB not yet ready | `docker compose logs db`; `pg_isready` should be passing. Self-resolves once Postgres is up. |
 | Frontend "API unreachable" | api container down or Traefik upstream unhealthy | `docker compose ps`, then `docker compose logs api`. |
-| `wg show` empty even with profile=wg | NET_ADMIN missing or kernel module not loaded | `lsmod | grep wireguard`; `cap_add: [NET_ADMIN, SYS_MODULE]` is set on the wg service. |
+| `wg show` empty / no tunnel | wg0 didn't come up | `docker compose logs api` — look for "wg interface up" vs a `wg-quick up failed` warning. The api needs `NET_ADMIN` + `/dev/net/tun` (both set in compose). |
 | `zmq publisher bind` fails | port 5555 already used | another compose project running; `docker compose down` first. |
 | Maintenance mode locks out admins | The middleware's auth-path bypass exempts `/auth/*`, `/health`, `/ready`. Admin auth still works | Sign in normally; admin role bypasses the 503. |
 | `dnsmasq: failed to load /etc/dnsmasq.d/zerovpn-peers.conf` | Volume empty before first device | Harmless; the worker writes the file when the first peer's DNS name is set. |
@@ -227,7 +221,7 @@ For zero-downtime upgrades, drain peers off this server first by toggling **main
 - [ ] `secrets/*.txt` mode 0600, `.env` mode 0600 and not in git (`git check-ignore .env` should print the file)
 - [ ] Admin email/password rotated from the bootstrap default
 - [ ] Off-box backups of `pg_data` + `secrets/` + `.env` configured (the KEK decrypts the server **and** peer keys stored in `pg_data`; `wg_config` is a derived cache and need not be backed up) + verify a restore drill before relying on it
-- [ ] `ZEROVPN_WG__BACKEND=kernel` and the host WG kernel module loaded — the api brings up `wg0` itself (no separate `wg` container). Note the api runs privileged (`NET_ADMIN`) as a result
+- [ ] WireGuard works: the api brings up `wg0` itself (userspace boringtun — no host module). Note the internet-facing api runs privileged (`NET_ADMIN` + `/dev/net/tun`) as a result — accept that trade-off or run WG in a separate sidecar
 
 ## Container hardening notes (1C)
 
@@ -235,4 +229,4 @@ For zero-downtime upgrades, drain peers off this server first by toggling **main
 - traefik: `cap_drop: [ALL]`, `cap_add: [NET_BIND_SERVICE]`, `no-new-privileges`.
 - frontend (nginx): `cap_drop: [ALL]`, `cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]`, tmpfs for `/var/cache/nginx` + `/var/run`.
 - db / redis: untouched (need full FS access for their data dirs).
-- wg: needs `NET_ADMIN, SYS_MODULE` for the kernel module + `host` networking; no further hardening.
+- api (WireGuard host): `cap_add: [NET_ADMIN]` + `/dev/net/tun` for the userspace tunnel — so it is NOT `cap_drop:[ALL]`/`read_only` like a pure app service. The worker shares its netns for stats.

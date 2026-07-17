@@ -95,17 +95,22 @@ services:
   # the internet-facing api now runs privileged (NET_ADMIN) instead of
   # cap_drop-ALL/read-only. See docs/architecture.md → "WireGuard runtime".
   #
-  # ⚠ Verified on macOS/dev (userspace boringtun). The prod path below (Linux
-  # kernel WG module) has NOT been validated on a real host — test before relying.
+  # Uses USERSPACE WireGuard (boringtun) — the exact path the dev stack runs and
+  # that is verified here — so it needs NOTHING from the host kernel (no
+  # `modprobe`, no /lib/modules, no SYS_MODULE). Still validate the tunnel on
+  # your host once (`docker compose logs api` → "wg interface up"; `wg show wg0`).
   api:
     image: ${ZEROVPN_REGISTRY:-ghcr.io/bhadri01}/zerovpn-api:${ZEROVPN_IMAGE_TAG:-latest}
     <<: [*default-restart, *default-logging]
     env_file: .env
     environment:
       ZEROVPN_BIND_ADDRESS: 0.0.0.0:8080
-      ZEROVPN_WG__BACKEND: kernel
+      # boringtun brings up a userspace tun device; the `shell` backend programs
+      # peers via `wg set` against its UAPI socket. No kernel module involved.
+      ZEROVPN_WG__BACKEND: shell
       ZEROVPN_WG__INTERFACE: wg0
       ZEROVPN_WG__SERVER_CONFIG_PATH: /wg/wg0.conf
+      WG_QUICK_USERSPACE_IMPLEMENTATION: boringtun-cli
       # The worker shares THIS container's netns (see worker.network_mode) so it
       # can see wg0 for stats; its ZMQ publisher is therefore on loopback here.
       ZEROVPN_EVENTS__SUBSCRIBER_CONNECT: tcp://127.0.0.1:5555
@@ -130,17 +135,15 @@ services:
       # hosts file here (routes/dns.rs::sync_dnsmasq) and CoreDNS serves it.
       # Derived from the DB, regenerated on boot — not durable state.
       - dnsmasq_conf:/etc/dnsmasq.d
-      # Host kernel modules (read-only) so wg-quick can load the wireguard
-      # module. Unneeded if the host preloads it (`modprobe wireguard`).
-      - /lib/modules:/lib/modules:ro
-    # wg0.conf + wg-quick runtime state live on tmpfs — ephemeral, rebuilt from
-    # the DB each boot.
+      # boringtun's WireGuard UAPI socket, shared with the `worker` so its poller
+      # can `wg show wg0`. Ephemeral runtime dir, not durable state.
+      - wg_run:/run/wireguard
+    # wg0.conf lives on tmpfs — ephemeral, rebuilt from the DB each boot.
     tmpfs:
       - /tmp:size=64m
       - /wg:size=1m
-      - /run:size=1m
     cap_drop: [ALL]
-    cap_add: [NET_ADMIN, SYS_MODULE]
+    cap_add: [NET_ADMIN]
     devices:
       - /dev/net/tun:/dev/net/tun
     sysctls:
@@ -159,7 +162,7 @@ services:
     env_file: .env
     environment:
       ZEROVPN_EVENTS__PUBLISHER_BIND: tcp://0.0.0.0:5555
-      ZEROVPN_WG__BACKEND: kernel
+      ZEROVPN_WG__BACKEND: shell
       ZEROVPN_WG__INTERFACE: wg0
     network_mode: "service:api"
     depends_on:
@@ -170,6 +173,10 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m
+    volumes:
+      # Read boringtun's WireGuard UAPI socket (shared with the api) so
+      # `wg show wg0` works for the stats poller.
+      - wg_run:/run/wireguard
     cap_drop: [ALL]
     cap_add: [NET_ADMIN]
     mem_limit: 192m
@@ -239,6 +246,8 @@ volumes:
   traefik_letsencrypt:
   pg_data:
   dnsmasq_conf:
+  # Ephemeral: boringtun's WireGuard UAPI socket, shared api <-> worker.
+  wg_run:
 
 networks:
   web:
