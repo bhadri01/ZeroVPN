@@ -13,7 +13,7 @@ use metrics_exporter_prometheus::PrometheusHandle;
 use crate::state::AppState;
 
 /// `GET /metrics` — Prometheus text format. Unauthenticated by design;
-/// scrape protection (firewall / Caddy basic-auth) lives at the proxy
+/// scrape protection (firewall / proxy middleware) lives at the proxy
 /// layer in production.
 pub async fn metrics(State(_state): State<AppState>) -> impl IntoResponse {
     match PROM_HANDLE.get() {

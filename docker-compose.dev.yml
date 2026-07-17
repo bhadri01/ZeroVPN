@@ -10,7 +10,7 @@
 #     docker compose -f docker-compose.yml -f docker-compose.dev.yml \
 #                    --profile dev up -d --build
 #
-# The prod api/worker/frontend/caddy are pushed to the `prod` profile here so
+# The prod api/worker/frontend/traefik are pushed to the `prod` profile here so
 # they don't start in dev; the *-dev services below replace them. Infra
 # (db/redis/dnsmasq/mailhog) still comes from docker-compose.yml.
 
@@ -22,7 +22,7 @@ services:
     profiles: [prod]
   frontend:
     profiles: [prod]
-  caddy:
+  traefik:
     profiles: [prod]
 
   # ── API + WireGuard server (hot-reload) ────────────────────────────────────

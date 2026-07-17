@@ -11,7 +11,7 @@ This file is the reference that lives with the code.
         │ TCP 80/443           │ UDP 51820           │
         ▼                      ▼                     │
    ┌─────────┐           ┌─────────┐    ┌─────────┐  │
-   │  caddy  │           │   wg    │───▶│ dnsmasq │  │
+   │ traefik │           │   wg    │───▶│ dnsmasq │  │
    │ (proxy) │           │(host-net│    │ (peer   │  │
    └────┬────┘           │ NET_ADM)│    │  DNS)   │  │
         │                └────┬────┘    └─────────┘  │

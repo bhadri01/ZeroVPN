@@ -23,9 +23,9 @@ contains() {
 
 echo "Smoke test against $BASE"
 
-echo "Caddy proxy"
-check "caddy /healthz returns 200" curl -fsS "$BASE/healthz"
-check "caddy /healthz body == ok" bash -c "[[ \"\$(curl -fsS $BASE/healthz)\" == 'ok' ]]"
+echo "Reverse proxy (Traefik)"
+check "proxy /healthz returns 200" curl -fsS "$BASE/healthz"
+check "proxy /healthz body == ok" bash -c "[[ \"\$(curl -fsS $BASE/healthz)\" == 'ok' ]]"
 
 echo "API"
 check "api /api/v1/ping pong=true" bash -c "curl -fsS $BASE/api/v1/ping | grep -q '\"pong\":true'"

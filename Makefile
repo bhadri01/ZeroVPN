@@ -1,14 +1,14 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-# Single-file compose layout. Per-environment values (domain, Caddyfile,
+# Single-file compose layout. Per-environment values (domain, TLS,
 # SMTP host, WG backend, logging) live in `.env`; optional service groups
 # are gated by compose profiles.
 COMPOSE     := docker compose
 COMPOSE_DEV := $(COMPOSE) --profile dev
 # Dev *containers*: run api/worker/web in Linux with hot-reload + a real
 # (userspace) WireGuard tunnel. The overlay gates the prod api/worker/frontend/
-# caddy behind the `prod` profile so only the *-dev services run.
+# traefik behind the `prod` profile so only the *-dev services run.
 COMPOSE_DEVCTR := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml --profile dev
 
 .PHONY: help
@@ -24,7 +24,7 @@ setup: ## One-time: copy .env template, generate secrets, build images
 		echo "*** For production, edit .env now:"; \
 		echo "***   - ZEROVPN_ENVIRONMENT=production"; \
 		echo "***   - ZEROVPN_DOMAIN, ZEROVPN_PUBLIC_URL, ZEROVPN_ACME_EMAIL"; \
-		echo "***   - ZEROVPN_CADDYFILE=./deploy/Caddyfile.prod"; \
+		echo "***   - ZEROVPN_CERT_RESOLVER=le"; \
 		echo "***   - ZEROVPN_SMTP__HOST (real relay, not mailhog)"; \
 		echo "***   - ZEROVPN_WG__BACKEND=kernel"; \
 		echo ""; \
@@ -74,7 +74,7 @@ DEV_INFRA := db redis dnsmasq mailhog
 .PHONY: dev
 dev: ## Native dev: start infra in docker, leave api/worker/frontend for cargo + pnpm
 	$(COMPOSE_DEV) up -d $(DEV_INFRA)
-	$(COMPOSE_DEV) stop api worker frontend caddy 2>/dev/null || true
+	$(COMPOSE_DEV) stop api worker frontend traefik 2>/dev/null || true
 	@echo ""
 	@echo "Infra up. In separate terminals run:"
 	@echo "  make dev-api      # native zerovpn-api on http://localhost:8080"

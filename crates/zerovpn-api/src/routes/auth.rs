@@ -16,8 +16,8 @@ use zerovpn_core::models::{User, UserRole, UserStatus};
 use zerovpn_db::repos::{audit, failed_logins, session_events, users};
 use zerovpn_wire::{Event, NotifyLevel};
 
-/// Best-effort full client IP from the `X-Forwarded-For` header (Caddy
-/// populates this) or the `X-Real-IP` header. Returns `None` if neither
+/// Best-effort full client IP from the `X-Forwarded-For` header (the reverse
+/// proxy populates this) or the `X-Real-IP` header. Returns `None` if neither
 /// is present. Wrapped in `IpNetwork` as a `/32` (v4) or `/128` (v6)
 /// host prefix so it lands directly into the `INET`-typed columns
 /// (`audit_logs.ip`, `failed_logins.ip`, etc).

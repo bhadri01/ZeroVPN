@@ -1,0 +1,49 @@
+# Traefik dynamic configuration (file provider).
+#
+# Routing is env-independent and path-based, so the same file works for dev
+# (self-signed) and prod (Let's Encrypt) — the TLS difference is driven on the
+# `websecure` entrypoint via ${ZEROVPN_CERT_RESOLVER} / ${ZEROVPN_DOMAIN} in
+# docker-compose.yml's traefik `command`. Routing:
+#   /api,/ws,/metrics,/health,/ready,/openapi.json  -> api:8080
+#   everything else                                 -> frontend:80
+http:
+  routers:
+    api:
+      rule: "PathPrefix(`/api`) || PathPrefix(`/ws`) || Path(`/metrics`) || Path(`/health`) || Path(`/ready`) || Path(`/openapi.json`)"
+      entryPoints: [websecure]
+      service: api
+      middlewares: [sec-headers, compress]
+      priority: 100
+      tls: {}
+    frontend:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [websecure]
+      service: frontend
+      middlewares: [sec-headers, compress]
+      priority: 1
+      tls: {}
+
+  services:
+    api:
+      loadBalancer:
+        servers:
+          - url: "http://api:8080"
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:80"
+
+  middlewares:
+    # Security headers applied to every response.
+    sec-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: "no-referrer"
+        permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+    # gzip/br response compression.
+    compress:
+      compress: {}

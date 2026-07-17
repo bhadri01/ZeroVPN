@@ -2,19 +2,19 @@
 
 ## Dev vs. prod isolation
 
-ZeroVPN ships a single `docker-compose.yml` + single `.env`. Dev vs. prod is driven by `.env` values; optional service groups (MailHog, observability stack, WG, ingest) come up via compose **profiles**:
+ZeroVPN ships a single `docker-compose.yml` + single `.env`. Dev vs. prod is driven by `.env` values; optional service groups (MailHog, WG, ingest) come up via compose **profiles**:
 
 | | dev | prod |
 |---|---|---|
 | Compose invocation | `docker compose --profile dev up -d` (via `make up`) | `docker compose up -d` (via `make up-prod`) |
 | Env file | `.env` (from `.env.example`) — `ZEROVPN_ENVIRONMENT=dev` | `.env` (same file, edited) — `ZEROVPN_ENVIRONMENT=production` |
-| Caddyfile | `deploy/Caddyfile.dev` (`ZEROVPN_CADDYFILE` defaults here) | `deploy/Caddyfile.prod` (set in `.env`) |
+| TLS | self-signed (`ZEROVPN_CERT_RESOLVER` empty → Traefik default cert) | Let's Encrypt (`ZEROVPN_CERT_RESOLVER=le` in `.env`) |
 | Exposed host ports | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 + 8025 (MailHog via `dev` profile) | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 (no MailHog) |
 | Mailer | MailHog (via `dev` profile) | real SMTP relay (set `ZEROVPN_SMTP__HOST` in `.env`) |
 | WG backend | `noop` | `kernel` (set in `.env`; requires `--profile wg`) |
 | Session cookie | not Secure (plaintext localhost) | Secure flag set (api enforces when `ZEROVPN_ENVIRONMENT=production`) |
 
-Compose profiles compose: `--profile dev --profile observability` enables both.
+Compose profiles compose: `--profile dev --profile wg` enables both.
 
 ## First-time setup (dev)
 
@@ -74,9 +74,9 @@ make migrate
 make bootstrap-admin EMAIL=admin@yourdomain
 ```
 
-The `.env.example` header lists the eight values that must flip for prod (`ZEROVPN_ENVIRONMENT`, `ZEROVPN_DOMAIN`, `ZEROVPN_PUBLIC_URL`, `ZEROVPN_ACME_EMAIL`, `ZEROVPN_CADDYFILE`, `ZEROVPN_SMTP__HOST`, `ZEROVPN_WG__BACKEND`, log levels).
+The `.env.example` header lists the eight values that must flip for prod (`ZEROVPN_ENVIRONMENT`, `ZEROVPN_DOMAIN`, `ZEROVPN_PUBLIC_URL`, `ZEROVPN_ACME_EMAIL`, `ZEROVPN_CERT_RESOLVER`, `ZEROVPN_SMTP__HOST`, `ZEROVPN_WG__BACKEND`, log levels).
 
-`ZEROVPN_DOMAIN` must resolve to this host before `make up-prod`, or Caddy's first Let's Encrypt issuance attempt will fail. The api will also refuse to boot if `ZEROVPN_DOMAIN` is `localhost` or a `REPLACE_*` placeholder — see [validate_production_config in crates/zerovpn-api/src/main.rs](../crates/zerovpn-api/src/main.rs).
+`ZEROVPN_DOMAIN` must resolve to this host before `make up-prod`, or Traefik's first Let's Encrypt issuance attempt will fail. The api will also refuse to boot if `ZEROVPN_DOMAIN` is `localhost` or a `REPLACE_*` placeholder — see [validate_production_config in crates/zerovpn-api/src/main.rs](../crates/zerovpn-api/src/main.rs).
 
 ## Bringing up the real WireGuard runtime (Linux production)
 
@@ -98,24 +98,13 @@ The default `make up` runs the management plane only — **no actual WireGuard i
 
 4. **Open UDP 51820** on your firewall.
 
-## Bringing up observability
-
-```
-docker compose --profile observability up -d
-# or alongside dev: docker compose --profile dev --profile observability up -d
-```
-
-Adds Prometheus (scraping `api:8080/metrics` every 15 s), Grafana with the Prometheus + Loki datasources pre-provisioned (admin/admin at <http://localhost/grafana/>), Loki + Promtail for centralized container logs, and a nightly backup container.
-
-For age-encrypted backups, set `ZEROVPN_BACKUP_AGE_RECIPIENT` to your age public key in `.env` before bringing up the profile.
-
 ## Healthchecks
 
 - `GET /health` — liveness (api always-on)
 - `GET /ready` — db reachability
-- `GET /metrics` — Prometheus exposition
+- `GET /metrics` — Prometheus-format metrics (scrape it with your own monitoring)
 - `GET /openapi.json` — API schema for codegen / Swagger UI
-- Caddy `/healthz` — proxy responsive
+- Traefik container healthcheck — `traefik healthcheck --ping`
 
 ## Common issues
 
@@ -123,7 +112,7 @@ For age-encrypted backups, set `ZEROVPN_BACKUP_AGE_RECIPIENT` to your age public
 |---|---|---|
 | api crashloops with `GLIBC_2.38 not found` | builder image has a newer glibc than the runtime | Dockerfile.api uses `cargo-chef:…-bookworm` to match the distroless `cc-debian12` runtime. Verify with `docker run --rm <api-image> ldd --version`. |
 | `database connection refused` | DB not yet ready | `docker compose logs db`; `pg_isready` should be passing. Self-resolves once Postgres is up. |
-| Frontend "API unreachable" | api container down or Caddy upstream unhealthy | `docker compose ps`, then `docker compose logs api`. |
+| Frontend "API unreachable" | api container down or Traefik upstream unhealthy | `docker compose ps`, then `docker compose logs api`. |
 | `wg show` empty even with profile=wg | NET_ADMIN missing or kernel module not loaded | `lsmod | grep wireguard`; `cap_add: [NET_ADMIN, SYS_MODULE]` is set on the wg service. |
 | `zmq publisher bind` fails | port 5555 already used | another compose project running; `docker compose down` first. |
 | Maintenance mode locks out admins | The middleware's auth-path bypass exempts `/auth/*`, `/health`, `/ready`. Admin auth still works | Sign in normally; admin role bypasses the 503. |
@@ -170,7 +159,7 @@ make down
 rm secrets/*.txt
 rm .env                                # so init-secrets.sh re-reads the example template
 cp .env.example .env
-$EDITOR .env                           # re-apply any prod values (domain, SMTP, Caddyfile, etc.)
+$EDITOR .env                           # re-apply any prod values (domain, SMTP, cert resolver, etc.)
 ./scripts/init-secrets.sh              # regenerates with new values
 make up                                # or make up-prod
 ```
@@ -178,6 +167,11 @@ make up                                # or make up-prod
 > **Caution:** rotating the session secret invalidates all live sessions; users must log in again. Rotating the KEK (`ZEROVPN_KEK`) breaks any AES-GCM-encrypted column unless you decrypt + re-encrypt with the old → new key pair first. TOTP secrets are KEK-encrypted; rotating the KEK without migration disables 2FA for everyone (they'll need to re-enroll).
 
 ## Restoration drill
+
+> The bundled nightly-backup container was removed with the observability
+> stack. Produce your own off-box backups of the `pg_data` volume + `secrets/`
+> (e.g. a periodic `pg_dump` or a `docker run --rm -v zerovpn_pg_data:/src …`
+> tar into cold storage). The drill below restores from such a tarball.
 
 1. Stop the stack: `make down`
 2. Wipe the pg_data volume: `docker volume rm zerovpn_pg_data`
@@ -204,18 +198,18 @@ For zero-downtime upgrades, drain peers off this server first by toggling **main
 - [ ] `ZEROVPN_KEK` is a fresh 32-byte base64 random, distinct from any value previously used in dev (the prod boot check rejects `CHANGEME` and short values; rotate via the "Rotating secrets" section before exposing publicly)
 - [ ] `ZEROVPN_DOMAIN` set to a real domain that already resolves to this host (LE issuance otherwise fails on first boot)
 - [ ] `ZEROVPN_ACME_EMAIL` set so Let's Encrypt can contact you on rate-limit / expiry
-- [ ] `ZEROVPN_CADDYFILE=./deploy/Caddyfile.prod` so Caddy provisions LE certs against the real domain
+- [ ] `ZEROVPN_CERT_RESOLVER=le` so Traefik provisions LE certs against the real domain
 - [ ] `ZEROVPN_SMTP__HOST` is a real relay (not `mailhog`); api refuses to boot with placeholders
-- [ ] Firewall: 22/tcp (SSH), 80/tcp (Caddy redirect), 443/tcp+udp (Caddy + HTTP/3), 51820/udp (WireGuard) — nothing else
+- [ ] Firewall: 22/tcp (SSH), 80/tcp (Traefik redirect), 443/tcp (Traefik HTTPS), 51820/udp (WireGuard) — nothing else
 - [ ] `secrets/*.txt` mode 0600, `.env` mode 0600 and not in git (`git check-ignore .env` should print the file)
 - [ ] Admin email/password rotated from the bootstrap default
-- [ ] Backup `AGE_RECIPIENT` configured + verify a restore drill before relying on it
+- [ ] Off-box backups of `pg_data` + `secrets/` configured + verify a restore drill before relying on it
 - [ ] `ZEROVPN_WG__BACKEND=kernel` (or `shell` for legacy `wg`-binary deployments) and `docker compose --profile wg up -d` to actually route packets
 
 ## Container hardening notes (1C)
 
 - api / worker: `read_only: true`, `tmpfs: /tmp`, `cap_drop: [ALL]`, `no-new-privileges`. Distroless non-root.
-- caddy: `cap_drop: [ALL]`, `cap_add: [NET_BIND_SERVICE]`.
+- traefik: `cap_drop: [ALL]`, `cap_add: [NET_BIND_SERVICE]`, `no-new-privileges`.
 - frontend (nginx): `cap_drop: [ALL]`, `cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]`, tmpfs for `/var/cache/nginx` + `/var/run`.
 - db / redis: untouched (need full FS access for their data dirs).
 - wg: needs `NET_ADMIN, SYS_MODULE` for the kernel module + `host` networking; no further hardening.

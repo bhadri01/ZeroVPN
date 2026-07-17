@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
     // Tower-sessions session store + its own migration.
     let session_store = PostgresStore::new(pool.clone());
     session_store.migrate().await.context("session store migrate")?;
-    // `secure: true` requires the cookie to ride only over HTTPS. Caddy
+    // `secure: true` requires the cookie to ride only over HTTPS. Traefik
     // terminates TLS for us in production; in dev we serve over plaintext
     // localhost so the flag is off.
     // Session idle window: 30 minutes in prod (snappy auth turnover), 30
@@ -516,7 +516,7 @@ fn validate_production_config(is_production: bool) -> Result<()> {
     {
         anyhow::bail!(
             "production: ZEROVPN_DOMAIN must be a real public domain (got '{}'); \
-             Caddy needs it for Let's Encrypt issuance",
+             Traefik needs it for Let's Encrypt issuance",
             domain
         );
     }

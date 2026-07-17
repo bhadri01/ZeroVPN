@@ -677,10 +677,10 @@ function FeaturesBento() {
           className="lg:col-span-2"
           n="04.6"
           h="Self-hosted, period"
-          b="One docker compose stack. Postgres + Redis + Caddy + WireGuard. Optional observability profile (Prometheus / Grafana / Loki)."
+          b="One docker compose stack. Postgres + Redis + Traefik + WireGuard."
         >
           <div className="mt-4 flex flex-wrap gap-1.5 font-mono text-[10px]">
-            {["api", "worker", "db", "redis", "caddy", "wg", "grafana", "loki"].map((t) => (
+            {["api", "worker", "db", "redis", "traefik", "wg"].map((t) => (
               <span
                 key={t}
                 className="border-border text-muted-foreground border px-2 py-0.5"
@@ -1210,7 +1210,7 @@ function MockTopology() {
 
 function Architecture() {
   const layers = [
-    { tag: "edge", title: "Caddy", body: "TLS termination · HTTP/3 · automatic certs" },
+    { tag: "edge", title: "Traefik", body: "TLS termination · Let's Encrypt · auto HTTPS" },
     { tag: "control", title: "API · axum", body: "Auth, devices, admin, OpenAPI — Rust" },
     { tag: "worker", title: "Worker", body: "WG state · ZMQ publisher · tick-level samples" },
     { tag: "data", title: "Data plane", body: "Postgres 18 · Redis · age-encrypted backups" },
@@ -1479,11 +1479,10 @@ services:
   worker:  { build: ./crates/zerovpn-worker, network_mode: host }
   db:      { image: postgres:18-alpine                          }
   redis:   { image: redis:8-alpine                              }
-  caddy:   { image: caddy:2.11-alpine                           }
+  traefik: { image: traefik:v3.3                                }
   wg:      { image: linuxserver/wireguard, profiles: ["wg"]     }
 
-# optional profile: prometheus + grafana + loki + promtail
-# optional profile: backup container w/ age encryption`}</CodeBlock>
+# optional profile: nflog-exporter (ingest)`}</CodeBlock>
       </motion.div>
     </section>
   )

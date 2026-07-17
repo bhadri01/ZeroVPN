@@ -5,12 +5,11 @@ name: zerovpn
 #
 #   docker compose --profile dev up -d                          # core + MailHog (default for `make up`)
 #   docker compose up -d                                        # core only — prod-shape (no MailHog)
-#   docker compose --profile observability up -d                # add Prometheus + Grafana + Loki + nightly backup
 #   docker compose --profile wg up -d                           # add the WireGuard kernel container
 #   docker compose --profile ingest up -d                       # add the nflog-exporter
 #
-# Profiles compose; `--profile dev --profile observability` brings up both.
-# Dev vs. prod knobs (Caddyfile path, RUST_LOG, ZEROVPN_DOMAIN, SMTP relay,
+# Profiles compose; `--profile dev --profile wg` brings up both.
+# Dev vs. prod knobs (TLS cert resolver, RUST_LOG, ZEROVPN_DOMAIN, SMTP relay,
 # secrets) live in `.env`. See `.env.example` for the full set.
 
 x-restart: &default-restart
@@ -24,23 +23,47 @@ x-logging: &default-logging
       max-file: "3"
 
 services:
-  caddy:
-    image: caddy:2.11-alpine
+  traefik:
+    image: traefik:v3.3
     <<: [*default-restart, *default-logging]
     env_file: .env
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"
+    command:
+      - --api.dashboard=false
+      - --ping=true
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      # Routing (routers/services/middlewares) is env-independent and lives in
+      # the file provider; TLS is env-driven on the entrypoint below.
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${ZEROVPN_ACME_EMAIL:-admin@localhost}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      # Dev: ZEROVPN_CERT_RESOLVER empty -> Traefik's self-signed default cert
+      # (no ACME, avoids LE rate limits on localhost). Prod: set
+      # ZEROVPN_CERT_RESOLVER=le in .env for a Let's Encrypt cert on ${ZEROVPN_DOMAIN}.
+      - --entrypoints.websecure.http.tls.certResolver=${ZEROVPN_CERT_RESOLVER:-}
+      - --entrypoints.websecure.http.tls.domains[0].main=${ZEROVPN_DOMAIN:-localhost}
     volumes:
-      - ${ZEROVPN_CADDYFILE:-./deploy/Caddyfile.dev}:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - ./deploy/traefik-dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - traefik_letsencrypt:/letsencrypt
     networks:
       - web
     depends_on:
       - api
       - frontend
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
     security_opt:
@@ -288,95 +311,11 @@ services:
     tty: false
     mem_limit: 32m
 
-  # ── Observability + backups (profile: observability) ───────────────────
-  prometheus:
-    image: prom/prometheus:latest
-    profiles: [observability]
-    restart: unless-stopped
-    volumes:
-      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prom_data:/prometheus
-    networks:
-      - backend
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.retention.time=14d
-    mem_limit: 256m
-
-  grafana:
-    image: grafana/grafana-oss:latest
-    profiles: [observability]
-    restart: unless-stopped
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_USERS_DEFAULT_THEME: dark
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_SERVER_ROOT_URL: "http://localhost/grafana/"
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
-    networks:
-      - backend
-    mem_limit: 128m
-
-  loki:
-    image: grafana/loki:latest
-    profiles: [observability]
-    restart: unless-stopped
-    volumes:
-      - ./deploy/loki-config.yml:/etc/loki/local-config.yaml:ro
-      - loki_data:/loki
-    command: -config.file=/etc/loki/local-config.yaml
-    networks:
-      - backend
-    mem_limit: 256m
-
-  promtail:
-    image: grafana/promtail:latest
-    profiles: [observability]
-    restart: unless-stopped
-    volumes:
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./deploy/promtail-config.yml:/etc/promtail/config.yml:ro
-    command: -config.file=/etc/promtail/config.yml
-    networks:
-      - backend
-    mem_limit: 96m
-
-  # Nightly encrypted backup of the Postgres volume + secrets dir.
-  # Set ZEROVPN_BACKUP_AGE_RECIPIENT in .env to age-encrypt the tarball;
-  # without it, archives land in `backup_data` unencrypted.
-  backup:
-    image: offen/docker-volume-backup:v2
-    profiles: [observability]
-    restart: unless-stopped
-    environment:
-      BACKUP_CRON_EXPRESSION: "0 3 * * *"
-      BACKUP_FILENAME: "zerovpn-{{ .Year }}{{ printf \"%02d\" (int .Month) }}{{ printf \"%02d\" .Day }}.tar.gz"
-      BACKUP_RETENTION_DAYS: "14"
-      AGE_PUBLIC_KEYS: "${ZEROVPN_BACKUP_AGE_RECIPIENT:-}"
-      BACKUP_PRUNING_LEEWAY: "30m"
-    volumes:
-      - pg_data:/backup/db:ro
-      - backup_data:/archive
-      - ./secrets:/backup/secrets:ro
-    networks:
-      - backend
-    mem_limit: 96m
-
 volumes:
-  caddy_data:
-  caddy_config:
+  traefik_letsencrypt:
   pg_data:
   dnsmasq_conf:
   wg_config:
-  prom_data:
-  grafana_data:
-  loki_data:
-  backup_data:
 
 networks:
   web:

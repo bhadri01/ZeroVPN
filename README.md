@@ -19,9 +19,8 @@ make clean     # nuke volumes (destructive)
 ```
 
 After `make up`:
-- Web UI: <https://localhost> (self-signed cert from Caddy's local CA)
+- Web UI: <https://localhost> (Traefik's self-signed cert in dev)
 - MailHog: <http://localhost:8025>
-- Grafana (with `--profile observability`): <https://localhost/grafana>
 
 ## Quickstart (production)
 
@@ -33,11 +32,11 @@ make migrate
 make bootstrap-admin EMAIL=admin@your-domain
 ```
 
-Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, real `ZEROVPN_DOMAIN`, real SMTP relay, `ZEROVPN_CADDYFILE=./deploy/Caddyfile.prod`, `ZEROVPN_WG__BACKEND=kernel`. `make up-prod` skips the `dev` profile so MailHog never comes up. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
+Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, real `ZEROVPN_DOMAIN`, real SMTP relay, `ZEROVPN_CERT_RESOLVER=le` (Traefik + Let's Encrypt), `ZEROVPN_WG__BACKEND=kernel`. `make up-prod` skips the `dev` profile so MailHog never comes up. The api refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See [docs/runbook.md](docs/runbook.md#dev-vs-prod-isolation) for the full table.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace with multiple crates (api, worker, wg, dns, events, etc.), PostgreSQL 18, Redis 8, WireGuard for the tunnel (`linuxserver/wireguard`), dnsmasq for per-peer DNS, Caddy as reverse proxy. Internal pub/sub via ZeroMQ; browser receives over WebSocket. Wire format: MessagePack over a shared Rust wire schema mirrored in TypeScript on the frontend.
+See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace with multiple crates (api, worker, wg, dns, events, etc.), PostgreSQL 18, Redis 8, WireGuard for the tunnel (`linuxserver/wireguard`), dnsmasq for per-peer DNS, Traefik as reverse proxy. Internal pub/sub via ZeroMQ; browser receives over WebSocket. Wire format: MessagePack over a shared Rust wire schema mirrored in TypeScript on the frontend.
 
 ## Project layout
 
@@ -57,7 +56,7 @@ See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace wit
 │   └── zerovpn-cli/               # admin CLI
 ├── migrations/                    # sqlx migrations
 ├── web/                           # React + Vite frontend
-├── deploy/                        # Dockerfiles, compose, Caddyfile
+├── deploy/                        # Dockerfiles, compose, Traefik config
 ├── docs/                          # architecture, runbook, api
 ├── scripts/                       # dev helpers
 ├── Cargo.toml                     # workspace
