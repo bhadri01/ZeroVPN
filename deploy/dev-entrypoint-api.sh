@@ -2,11 +2,12 @@
 # api-dev entrypoint: bring up a real (userspace) WireGuard interface in this
 # container, then hot-reload the api against it.
 #
-# Why the key dance: the server's WG private key only ever lives on the
-# interface (it is never stored in the DB). So in dev we generate/persist a
-# keypair in the wg_config volume and push its *public* key into the `servers`
-# row, so client configs the api hands out match this interface. The endpoint
-# (LAN IP) is synced separately by the api's own dev bootstrap.
+# The server's WG private key now lives in the DB (KEK-encrypted): the api
+# stores it and rewrites wg0.conf from it on every boot, so wg_config is just a
+# derived cache. On the very first boot the DB has no key yet, so we generate a
+# keypair here to bring the interface up; the api then *adopts* that key into
+# the DB. On later boots the api is authoritative. The endpoint (LAN IP) is
+# synced separately by the api's own dev bootstrap.
 set -uo pipefail
 
 IFACE="${ZEROVPN_WG__INTERFACE:-wg0}"

@@ -110,6 +110,9 @@ services:
       worker:
         condition: service_started
     volumes:
+      # Derived cache, not durable state: the server WG key lives in the DB
+      # (KEK-encrypted), and the api rewrites wg0.conf here from it on every
+      # boot for the `wg` container to read. Safe to wipe — rebuilt from the DB.
       - wg_config:/wg
       # Shared with the `dnsmasq` (CoreDNS) service: the API writes the
       # per-peer hosts file here (routes/dns.rs::sync_dnsmasq →

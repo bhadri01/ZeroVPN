@@ -80,7 +80,14 @@ async fn main() -> Result<()> {
         .with_name("zerovpn_session")
         .with_expiry(Expiry::OnInactivity(idle_expiry));
 
-    bootstrap::ensure_default_server(&pool)
+    let kek_b64 = env::var("ZEROVPN_KEK").context("ZEROVPN_KEK is required")?;
+    let kek = zerovpn_auth::kek::Kek::from_b64(&kek_b64)
+        .map_err(|e| anyhow::anyhow!("invalid KEK: {e}"))?;
+
+    // The WG server keypair lives in the DB (KEK-encrypted); this creates or
+    // loads it and restores wg0.conf from it, so the wg_config volume is only a
+    // derived cache (the api holds no unique state).
+    bootstrap::ensure_default_server(&pool, &kek)
         .await
         .context("bootstrap server")?;
     let allocators = bootstrap::build_ip_allocators(&pool)
@@ -95,10 +102,6 @@ async fn main() -> Result<()> {
     if let Err(e) = routes::dns::sync_dnsmasq(&pool).await {
         warn!(?e, "startup DNS hosts-file sync failed (non-fatal)");
     }
-
-    let kek_b64 = env::var("ZEROVPN_KEK").context("ZEROVPN_KEK is required")?;
-    let kek = zerovpn_auth::kek::Kek::from_b64(&kek_b64)
-        .map_err(|e| anyhow::anyhow!("invalid KEK: {e}"))?;
 
     let public_url =
         env::var("ZEROVPN_PUBLIC_URL").unwrap_or_else(|_| "http://localhost".into());

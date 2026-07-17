@@ -117,7 +117,7 @@ The default `make up` runs the management plane only — **no actual WireGuard i
 | `zmq publisher bind` fails | port 5555 already used | another compose project running; `docker compose down` first. |
 | Maintenance mode locks out admins | The middleware's auth-path bypass exempts `/auth/*`, `/health`, `/ready`. Admin auth still works | Sign in normally; admin role bypasses the 503. |
 | `dnsmasq: failed to load /etc/dnsmasq.d/zerovpn-peers.conf` | Volume empty before first device | Harmless; the worker writes the file when the first peer's DNS name is set. |
-| `wg0.conf` missing in wg container | Bootstrap couldn't write to shared volume | Verify `wg_config` volume mount on api service; check api logs for "wg0.conf write failed". |
+| `wg0.conf` missing in wg container | api hasn't (re)written it from the DB yet, or the shared volume isn't writable | Restart the api — `ensure_default_server` rebuilds `wg0.conf` from `servers.private_key_encrypted` on boot. If it persists, verify the `wg_config` mount on the api service and check logs for "wg0.conf write failed". |
 
 ## Stats pipeline & disk growth
 
@@ -168,16 +168,24 @@ make up                                # or make up-prod
 
 ## Restoration drill
 
-> The bundled nightly-backup container was removed with the observability
-> stack. Produce your own off-box backups of the `pg_data` volume + `secrets/`
-> (e.g. a periodic `pg_dump` or a `docker run --rm -v zerovpn_pg_data:/src …`
-> tar into cold storage). The drill below restores from such a tarball.
+> **Postgres (`pg_data`) is the single source of truth.** It holds every peer
+> **and** the WG *server* private key (KEK-encrypted in `servers.private_key_encrypted`),
+> so a `pg_data` restore brings the whole tunnel back — the api rewrites `wg0.conf`
+> from the DB on boot and `reconcile_peers` re-adds every active peer. The
+> `wg_config` volume is a **derived cache** (safe to lose; regenerated on next
+> boot). So back up **`pg_data` + `secrets/` + `.env`** (`secrets/kek.txt` /
+> `ZEROVPN_KEK` is required to *decrypt* the stored keys — guard it). The bundled
+> nightly-backup container was removed with the observability stack, so run your
+> own (a `pg_dump` cron, or a `docker run --rm -v zerovpn_pg_data:/src …` tar).
 
 1. Stop the stack: `make down`
-2. Wipe the pg_data volume: `docker volume rm zerovpn_pg_data`
+2. Wipe the pg_data volume: `docker volume rm zerovpn_pg_data` (the `wg_config`
+   volume can be wiped too — the api rebuilds `wg0.conf` from the DB)
 3. Restore the latest backup: `tar -xzf zerovpn-YYYYMMDD.tar.gz -C /tmp/restore && docker run --rm -v zerovpn_pg_data:/dst -v /tmp/restore/db:/src alpine cp -av /src/. /dst/`
-4. Restore secrets: `cp -av /tmp/restore/secrets/* ./secrets/`
-5. `make up` — db should come up healthy with the restored data.
+4. Restore secrets: `cp -av /tmp/restore/secrets/* ./secrets/` (the KEK must match
+   what encrypted the data, or the server/peer keys won't decrypt)
+5. `make up` — db comes up with the restored data; the api reconstructs `wg0.conf`
+   from the DB and re-adds all peers.
 
 ## Upgrading
 
@@ -203,7 +211,7 @@ For zero-downtime upgrades, drain peers off this server first by toggling **main
 - [ ] Firewall: 22/tcp (SSH), 80/tcp (Traefik redirect), 443/tcp (Traefik HTTPS), 51820/udp (WireGuard) — nothing else
 - [ ] `secrets/*.txt` mode 0600, `.env` mode 0600 and not in git (`git check-ignore .env` should print the file)
 - [ ] Admin email/password rotated from the bootstrap default
-- [ ] Off-box backups of `pg_data` + `secrets/` configured + verify a restore drill before relying on it
+- [ ] Off-box backups of `pg_data` + `secrets/` + `.env` configured (the KEK decrypts the server **and** peer keys stored in `pg_data`; `wg_config` is a derived cache and need not be backed up) + verify a restore drill before relying on it
 - [ ] `ZEROVPN_WG__BACKEND=kernel` (or `shell` for legacy `wg`-binary deployments) and `docker compose --profile wg up -d` to actually route packets
 
 ## Container hardening notes (1C)
