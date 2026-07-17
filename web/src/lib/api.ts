@@ -545,12 +545,6 @@ export interface BandwidthResponse {
   buckets: BandwidthBucket[]
 }
 
-export const userBandwidth = (range: BandwidthRange = "24h") =>
-  apiFetch<BandwidthResponse>(`/bandwidth?range=${range}`)
-
-export const deviceBandwidth = (id: string, range: BandwidthRange = "24h") =>
-  apiFetch<BandwidthResponse>(`/devices/${id}/bandwidth?range=${range}`)
-
 // --- raw tick-level history (server-side bandwidth_samples / server_samples) ---
 // Used to hydrate the live charts on page load. The chart then continues
 // from `Event::StatsDelta` / `Event::ServerSample` arriving over the WS.
@@ -775,12 +769,6 @@ export const adminListUsers = (
     `/admin/users?${adminUserListQs(filters, limit, offset)}`,
   )
 
-/** Browser-friendly URL for the CSV export — paste into an `<a href>`
- *  with `download` so the response triggers a save dialog. The query is
- *  the same shape as `adminListUsers` so the export honours active filters. */
-export const adminUsersCsvUrl = (filters: AdminUserListFilters = {}) =>
-  `/api/v1/admin/users.csv?${adminUserListQs(filters)}`
-
 // ── User detail (admin) ──────────────────────────────────────────────
 // Bundles core user fields, quota state, the device list, and recent
 // audit entries that target this user. One request hydrates the whole
@@ -910,13 +898,6 @@ export interface AdminDeviceDetailResponse {
 export const adminGetDeviceDetail = (id: string) =>
   apiFetch<AdminDeviceDetailResponse>(`/admin/devices/${id}`)
 
-export const adminDeviceBandwidth = (id: string, range: BandwidthRange) =>
-  apiFetch<{
-    bucket: "hour" | "day"
-    range: string
-    buckets: BandwidthBucket[]
-  }>(`/admin/devices/${id}/bandwidth?range=${range}`)
-
 export interface AdminUserActivity {
   id: number
   action: string
@@ -1039,11 +1020,6 @@ export interface AdminUserBandwidthResponse {
   range: BandwidthRange
   buckets: AdminUserBandwidthBucket[]
 }
-
-export const adminUserBandwidth = (id: string, range: BandwidthRange = "24h") =>
-  apiFetch<AdminUserBandwidthResponse>(
-    `/admin/users/${id}/bandwidth?range=${range}`,
-  )
 
 export interface AdminStats {
   total: number

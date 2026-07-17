@@ -4,7 +4,6 @@ members = [
     "crates/zerovpn-core",
     "crates/zerovpn-db",
     "crates/zerovpn-wg",
-    "crates/zerovpn-obfs",
     "crates/zerovpn-auth",
     "crates/zerovpn-events",
     "crates/zerovpn-wire",
@@ -13,7 +12,6 @@ members = [
     "crates/zerovpn-api",
     "crates/zerovpn-worker",
     "crates/zerovpn-cli",
-    "crates/zerovpn-topology",
 ]
 exclude = ["tests"]
 
@@ -31,13 +29,11 @@ readme = "README.md"
 zerovpn-core = { path = "crates/zerovpn-core" }
 zerovpn-db = { path = "crates/zerovpn-db" }
 zerovpn-wg = { path = "crates/zerovpn-wg" }
-zerovpn-obfs = { path = "crates/zerovpn-obfs" }
 zerovpn-auth = { path = "crates/zerovpn-auth" }
 zerovpn-events = { path = "crates/zerovpn-events" }
 zerovpn-wire = { path = "crates/zerovpn-wire" }
 zerovpn-dns = { path = "crates/zerovpn-dns" }
 zerovpn-mail = { path = "crates/zerovpn-mail" }
-zerovpn-topology = { path = "crates/zerovpn-topology" }
 
 # Web framework
 axum = { version = "0.8", features = ["ws", "macros"] }

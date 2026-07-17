@@ -118,8 +118,7 @@ impl WgController for ShellController {
             allowed,
         ];
         // PSK is passed via stdin per `wg set` semantics — for v1 we omit
-        // and instead use the AmneziaWG params. Keeping the parameter
-        // shape so the trait signature is stable.
+        // it. Keeping the parameter shape so the trait signature is stable.
         let _ = preshared_key;
         let out = tokio::process::Command::new("wg")
             .args(args.iter().map(String::as_str))

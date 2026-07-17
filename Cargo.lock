@@ -3570,17 +3570,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-wasm-bindgen"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
-dependencies = [
- "js-sys",
- "serde",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5972,7 +5961,6 @@ dependencies = [
  "zerovpn-dns",
  "zerovpn-events",
  "zerovpn-mail",
- "zerovpn-obfs",
  "zerovpn-wg",
  "zerovpn-wire",
 ]
@@ -6007,7 +5995,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
- "tracing",
  "tracing-subscriber",
  "uuid",
  "zerovpn-auth",
@@ -6021,13 +6008,11 @@ name = "zerovpn-core"
 version = "0.1.0"
 dependencies = [
  "compact_str",
- "figment",
  "ipnetwork",
  "maxminddb",
  "serde",
  "serde_json",
  "sqlx",
- "thiserror 2.0.18",
  "time",
  "url",
  "utoipa",
@@ -6093,23 +6078,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zerovpn-obfs"
-version = "0.1.0"
-dependencies = [
- "rand 0.8.6",
- "serde",
-]
-
-[[package]]
-name = "zerovpn-topology"
-version = "0.1.0"
-dependencies = [
- "js-sys",
- "serde",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "zerovpn-wg"
 version = "0.1.0"
 dependencies = [
@@ -6128,20 +6096,16 @@ dependencies = [
  "tracing",
  "x25519-dalek",
  "zerovpn-core",
- "zerovpn-obfs",
 ]
 
 [[package]]
 name = "zerovpn-wire"
 version = "0.1.0"
 dependencies = [
- "js-sys",
  "rmp-serde",
  "serde",
- "serde-wasm-bindgen",
  "time",
  "uuid",
- "wasm-bindgen",
 ]
 
 [[package]]

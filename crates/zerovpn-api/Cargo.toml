@@ -47,7 +47,6 @@ garde = { workspace = true }
 parking_lot = "0.12"
 ipnetwork = { workspace = true }
 askama = { workspace = true }
-zerovpn-obfs = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }

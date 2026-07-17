@@ -7,7 +7,7 @@
 //! - Verification tokens older than 24 h (consumed or expired) — the email
 //!   link is dead, the row is just bytes.
 //! - Soft-deleted users older than 30 d — cascade-removes their devices,
-//!   sessions, api_tokens, etc., reclaiming storage.
+//!   sessions, etc., reclaiming storage.
 //! - Pending-verification accounts older than 7 d — the verify-email link
 //!   expired at 24 h and the row only blocks the email from re-registering.
 //!
@@ -166,7 +166,7 @@ async fn run_once(pool: &PgPool, windows: &RetentionWindows) -> sqlx::Result<()>
     .await?;
 
     // Hard-purge users soft-deleted >30 days ago. Cascades remove devices,
-    // sessions, api_tokens, etc.
+    // sessions, etc.
     purge(
         pool,
         "hard-purged soft-deleted users",

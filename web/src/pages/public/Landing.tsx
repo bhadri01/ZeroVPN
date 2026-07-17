@@ -656,7 +656,7 @@ function FeaturesBento() {
         <BentoCard
           n="04.2"
           h="WireGuard, properly"
-          b="Keypair lifecycle, IP allocation, recycle on revoke. AmneziaWG params first-class."
+          b="Keypair lifecycle, IP allocation, recycle on revoke."
         />
         <BentoCard
           n="04.3"
@@ -1214,7 +1214,7 @@ function Architecture() {
     { tag: "control", title: "API · axum", body: "Auth, devices, admin, OpenAPI — Rust" },
     { tag: "worker", title: "Worker", body: "WG state · ZMQ publisher · tick-level samples" },
     { tag: "data", title: "Data plane", body: "Postgres 18 · Redis · age-encrypted backups" },
-    { tag: "wire", title: "WireGuard / AmneziaWG", body: "Kernel module · zero-config peer rotation" },
+    { tag: "wire", title: "WireGuard", body: "Kernel module · zero-config peer rotation" },
   ]
   return (
     <section
@@ -1670,7 +1670,7 @@ function Compare() {
 
 function Roadmap() {
   const shipped = [
-    "WireGuard + AmneziaWG provisioning",
+    "WireGuard provisioning",
     "Tick-level telemetry · full audit trail (no TTL)",
     "TOTP + recovery codes",
     "Live topology · drag-to-rearrange · per-user persist",

@@ -98,8 +98,6 @@ The default `make up` runs the management plane only — **no actual WireGuard i
 
 4. **Open UDP 51820** on your firewall.
 
-5. **AmneziaWG obfuscation** (optional, for restrictive networks): swap the `wg` service image from `linuxserver/wireguard:latest` to an AmneziaWG-compatible build (e.g. `ghcr.io/amnezia-vpn/amneziawg-go:latest`). Note: obfuscation is **disabled by default** — the api currently emits vanilla configs, so the `Jc/Jmin/Jmax/H1–H4/S1–S2` lines are *not* written yet (the `zerovpn-obfs` crate computes them but `routes::devices` passes `amnezia: None`). See *Switching the WG image to AmneziaWG* below.
-
 ## Bringing up observability
 
 ```
@@ -198,15 +196,6 @@ make up
 ```
 
 For zero-downtime upgrades, drain peers off this server first by toggling **maintenance mode** in the admin UI, then `docker compose up -d --no-deps api worker frontend`.
-
-## Switching the WG image to AmneziaWG
-
-The default `linuxserver/wireguard` image is fine for vanilla WireGuard. AmneziaWG (an obfuscated WireGuard variant) is **not** wired up by default — the `zerovpn-obfs` crate computes the params but `routes::devices` emits vanilla configs (`amnezia: None`). Fully enabling it requires both an image swap and a code change to write the shared interface-global params into client *and* server configs:
-
-1. Replace the image in `docker-compose.yml` under the `wg` service: `image: ghcr.io/amnezia-vpn/amneziawg-go:latest` (or the kernel-module variant if your host has the kernel patches).
-2. Rebuild: `docker compose --profile wg up -d --force-recreate wg`
-3. In `routes::devices`, populate `PeerConfig.amnezia` from `zerovpn-obfs` so the Sc/Sr/H1–H4/Jc/Jmin/Jmax/S1/S2 fields are written into `[Interface]`. These are AmneziaWG-only; standard WG clients ignore them.
-4. Clients then need an AmneziaWG-aware app (the standard WireGuard apps won't connect once the params are present).
 
 ## Security review checklist (before exposing to the internet)
 

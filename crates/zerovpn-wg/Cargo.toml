@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 zerovpn-core = { workspace = true }
-zerovpn-obfs = { workspace = true }
 defguard_wireguard_rs = { workspace = true }
 ipnetwork = { workspace = true }
 serde = { workspace = true }

@@ -11,7 +11,6 @@ import {
   IconDeviceTv,
   IconDeviceUnknown,
   IconDeviceWatch,
-  IconDevices,
   IconRouter,
   IconServer,
   type Icon,
@@ -72,15 +71,6 @@ export const DEVICE_TYPE_OPTIONS: DeviceTypeOption[] = [
  * component in render scope (`deviceTypeIcon(x)`) would instead be flagged as
  * "creating a component during render".
  */
-export const OS_ICONS: Record<DeviceOs, Icon> = {
-  ios: IconBrandApple,
-  android: IconBrandAndroid,
-  macos: IconBrandApple,
-  windows: IconBrandWindows,
-  linux: IconBrandUbuntu,
-  other: IconDevices,
-}
-
 export const DEVICE_TYPE_ICONS: Record<DeviceType, Icon> = {
   phone: IconDeviceMobile,
   tablet: IconDeviceTablet,

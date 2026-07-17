@@ -27,13 +27,6 @@ pub fn derive_public_key(private_key_b64: &str) -> Result<String, KeyError> {
     Ok(STANDARD.encode(public.to_bytes()))
 }
 
-/// 32-byte preshared key, base64-encoded.
-pub fn generate_preshared_key() -> String {
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    STANDARD.encode(bytes)
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum KeyError {
     #[error("invalid base64 in key")]

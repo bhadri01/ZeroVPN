@@ -1,6 +1,6 @@
 # Architecture (condensed)
 
-Full design rationale lives in [`/Users/black/.claude/plans/can-u-list-out-memoized-matsumoto.md`](../.. /). This file is the reference that lives with the code.
+This file is the reference that lives with the code.
 
 ## High-level
 
@@ -70,5 +70,5 @@ full logging system" for the decision record. Concretely:
 
 ## Obfuscation
 
-- Obfuscation is **disabled by default**: device `.conf` downloads are vanilla WireGuard, which the official WireGuard clients accept and which matches the default `linuxserver/wireguard` server runtime. The `zerovpn-obfs` crate computes per-peer AmneziaWG params (`Sc/Sr/H1–H4/Jc/Jmin/Jmax/S1/S2`), but they are not written into configs until an AmneziaWG server runtime is wired up — see [runbook.md → Switching the WG image to AmneziaWG](runbook.md#switching-the-wg-image-to-amneziawg).
+- Device `.conf` downloads are vanilla WireGuard, which the official WireGuard clients accept and which matches the default `linuxserver/wireguard` server runtime.
 - wstunnel (escape-hatch transport for UDP-blocked networks) is deferred to v1.1.

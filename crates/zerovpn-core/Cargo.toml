@@ -8,11 +8,9 @@ repository.workspace = true
 
 [dependencies]
 serde = { workspace = true }
-thiserror = { workspace = true }
 time = { workspace = true }
 uuid = { workspace = true }
 ipnetwork = { workspace = true }
-figment = { workspace = true }
 url = { workspace = true }
 compact_str = { workspace = true }
 # sqlx is added so we can derive Type on the domain enums and avoid a

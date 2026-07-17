@@ -37,7 +37,7 @@ Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, re
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace with multiple crates (api, worker, wg, dns, events, etc.), PostgreSQL 18, Redis 8, WireGuard for the tunnel (`linuxserver/wireguard`; optional AmneziaWG obfuscation, off by default), dnsmasq for per-peer DNS, Caddy as reverse proxy. Internal pub/sub via ZeroMQ; browser receives over WebSocket. Wire format: MessagePack via a shared Rust crate compiled to WASM for the frontend.
+See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace with multiple crates (api, worker, wg, dns, events, etc.), PostgreSQL 18, Redis 8, WireGuard for the tunnel (`linuxserver/wireguard`), dnsmasq for per-peer DNS, Caddy as reverse proxy. Internal pub/sub via ZeroMQ; browser receives over WebSocket. Wire format: MessagePack over a shared Rust wire schema mirrored in TypeScript on the frontend.
 
 ## Project layout
 
@@ -47,17 +47,14 @@ See [docs/architecture.md](docs/architecture.md). High-level: Rust workspace wit
 │   ├── zerovpn-core/              # domain types
 │   ├── zerovpn-db/                # sqlx queries
 │   ├── zerovpn-wg/                # WireGuard control
-│   ├── zerovpn-obfs/              # AmneziaWG obfuscation params (optional; not applied by default)
-│   ├── zerovpn-auth/              # password, sessions, TOTP, API tokens
-│   ├── zerovpn-stats/             # poller + aggregator + retention
+│   ├── zerovpn-auth/              # password, sessions, TOTP
 │   ├── zerovpn-events/            # ZeroMQ pub/sub
-│   ├── zerovpn-wire/              # shared wire schema (also compiles to WASM)
+│   ├── zerovpn-wire/              # shared wire schema
 │   ├── zerovpn-dns/               # dnsmasq hosts file writer
 │   ├── zerovpn-mail/              # SMTP via lettre
 │   ├── zerovpn-api/               # Axum HTTP+WS binary
-│   ├── zerovpn-worker/            # apalis worker binary
-│   ├── zerovpn-cli/               # admin CLI
-│   └── zerovpn-topology/          # WASM force-layout for admin scale view
+│   ├── zerovpn-worker/            # poller + aggregator + retention + apalis jobs
+│   └── zerovpn-cli/               # admin CLI
 ├── migrations/                    # sqlx migrations
 ├── web/                           # React + Vite frontend
 ├── deploy/                        # Dockerfiles, compose, Caddyfile

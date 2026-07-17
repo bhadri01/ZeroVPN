@@ -66,3 +66,7 @@ tmp/
 # hosts file here so the host-mounted volumes the dockerized stack uses
 # aren't touched).
 .dev-native/
+
+# Python bytecode
+__pycache__/
+*.pyc

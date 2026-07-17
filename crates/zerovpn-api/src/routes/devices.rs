@@ -541,12 +541,6 @@ pub async fn create(
         address: &address_str,
         dns: &dns_str,
         mtu: Some(server.mtu as u16),
-        // Obfuscation disabled: emit a vanilla WireGuard config so the
-        // official WireGuard clients accept it and it matches the vanilla
-        // server runtime. Re-enable via AmneziaWG (shared, interface-global
-        // params written to both client and server) when the AmneziaWG
-        // server runtime is wired up.
-        amnezia: None,
         server_public_key: &server.public_key,
         preshared_key: None,
         allowed_ips: &allowed_ips,
@@ -746,12 +740,6 @@ pub async fn rotate_keys(
         address: &address_str,
         dns: &dns_str,
         mtu: Some(server.mtu as u16),
-        // Obfuscation disabled: emit a vanilla WireGuard config so the
-        // official WireGuard clients accept it and it matches the vanilla
-        // server runtime. Re-enable via AmneziaWG (shared, interface-global
-        // params written to both client and server) when the AmneziaWG
-        // server runtime is wired up.
-        amnezia: None,
         server_public_key: &server.public_key,
         preshared_key: None,
         allowed_ips: &allowed_ips,
@@ -922,12 +910,6 @@ pub async fn redownload_conf(
         address: &address_str,
         dns: &dns_str,
         mtu: Some(server.mtu as u16),
-        // Obfuscation disabled: emit a vanilla WireGuard config so the
-        // official WireGuard clients accept it and it matches the vanilla
-        // server runtime. Re-enable via AmneziaWG (shared, interface-global
-        // params written to both client and server) when the AmneziaWG
-        // server runtime is wired up.
-        amnezia: None,
         server_public_key: &server.public_key,
         preshared_key: None,
         allowed_ips: &allowed_ips,
@@ -1072,7 +1054,6 @@ fn render_profile(
         address,
         dns: &dns_joined,
         mtu: Some(mtu),
-        amnezia: None,
         server_public_key,
         preshared_key: None,
         allowed_ips: &allowed_joined,

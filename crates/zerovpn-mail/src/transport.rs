@@ -1,9 +1,6 @@
 use lettre::{
     AsyncSmtpTransport, Tokio1Executor,
-    message::{
-        Mailbox, Message, MultiPart, SinglePart,
-        header::{ContentTransferEncoding, ContentType},
-    },
+    message::{Mailbox, Message, MultiPart},
     transport::smtp::{authentication::Credentials, client::Tls},
 };
 use thiserror::Error;
@@ -96,31 +93,6 @@ impl Mailer {
             .map_err(|e| MailError::Build(e.to_string()))?;
         let _ = lettre::AsyncTransport::send(&self.transport, msg).await?;
         info!(?to, %subject, "mail sent (multipart)");
-        Ok(())
-    }
-
-    /// Plain-text-only path retained for callers that haven't migrated
-    /// to the typed [`Email`] surface yet. Prefer [`Self::send_email`]
-    /// for anything new.
-    pub async fn send(&self, to: Mailbox, subject: &str, body: String) -> Result<(), MailError> {
-        // Force base64 transfer encoding. lettre's default `.body()` falls
-        // back to quoted-printable when the body has any non-ASCII byte
-        // (e.g. an em-dash in our templates). QP encodes `=` as `=3D` and
-        // soft-wraps lines at 76 cols mid-string — both of which corrupt
-        // the verify/reset URLs we embed. Base64 is universally decoded
-        // by every modern MUA and never fragments URLs.
-        let part = SinglePart::builder()
-            .header(ContentType::TEXT_PLAIN)
-            .header(ContentTransferEncoding::Base64)
-            .body(body);
-        let msg = Message::builder()
-            .from(self.from.clone())
-            .to(to.clone())
-            .subject(subject)
-            .singlepart(part)
-            .map_err(|e| MailError::Build(e.to_string()))?;
-        let _ = lettre::AsyncTransport::send(&self.transport, msg).await?;
-        info!(?to, %subject, "mail sent");
         Ok(())
     }
 }

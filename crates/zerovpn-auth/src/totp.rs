@@ -17,8 +17,6 @@ const RECOVERY_CODE_BYTES: usize = 5; // → 8 base32 chars
 pub enum TotpError {
     #[error("invalid secret")]
     InvalidSecret,
-    #[error("invalid code")]
-    InvalidCode,
     #[error("totp: {0}")]
     Lib(String),
     #[error("hash: {0}")]

@@ -158,11 +158,6 @@ fmt: ## Format code
 sqlx-prepare: ## Regenerate .sqlx offline query data
 	cd crates/zerovpn-db && cargo sqlx prepare -- --tests
 
-.PHONY: wasm-build
-wasm-build: ## Build WASM artifacts for the frontend
-	wasm-pack build crates/zerovpn-wire --target web --release --out-dir ../../web/src/wasm/wire
-	wasm-pack build crates/zerovpn-topology --target web --release --out-dir ../../web/src/wasm/topology
-
 .PHONY: clean
 clean: ## DESTRUCTIVE: stop and remove all containers, volumes, build artifacts
 	@echo "This will destroy all data in the stack. Press Ctrl+C to abort, Enter to continue."
@@ -170,4 +165,3 @@ clean: ## DESTRUCTIVE: stop and remove all containers, volumes, build artifacts
 	$(COMPOSE_DEV) down -v
 	cargo clean
 	rm -rf web/node_modules web/dist
-	rm -rf web/src/wasm/{wire,topology}/*.{wasm,js,d.ts}

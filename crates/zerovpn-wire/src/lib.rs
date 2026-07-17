@@ -216,17 +216,6 @@ pub fn decode(bytes: &[u8]) -> Result<Event, rmp_serde::decode::Error> {
     Event::deserialize(&mut de)
 }
 
-// ---------------------------------------------------------------------------
-// WASM bindings (only built when --features wasm)
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "wasm")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn decode_frame(bytes: &[u8]) -> Result<wasm_bindgen::JsValue, wasm_bindgen::JsValue> {
-    let event = decode(bytes).map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
-    serde_wasm_bindgen::to_value(&event).map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

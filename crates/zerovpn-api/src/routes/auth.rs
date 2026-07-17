@@ -620,8 +620,3 @@ pub async fn me(
         user_policy,
     }))
 }
-
-#[allow(dead_code)]
-fn _unused_offsetdatetime() -> OffsetDateTime {
-    OffsetDateTime::now_utc()
-}
