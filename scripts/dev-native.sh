@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run a command with the dev environment rewritten for native (non-docker)
 # execution. Reads `.env` as the source of truth, then rewrites container
-# hostnames (db, redis, worker, mailhog) to their localhost port mappings
+# hostnames (db, worker, mailhog) to their localhost port mappings
 # from docker-compose.yml.
 #
 # Usage:
@@ -9,7 +9,7 @@
 #   ./scripts/dev-native.sh cargo run -p zerovpn-worker
 #   ./scripts/dev-native.sh env | grep ZEROVPN_       # inspect resolved values
 #
-# Requires `make dev` to be running (db, redis, mailhog, dnsmasq up; api +
+# Requires `make dev` to be running (db, mailhog, dnsmasq up; api +
 # worker stopped).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -36,7 +36,6 @@ done < .env
 
 # Container hostnames → host localhost ports (matches docker-compose.yml).
 export ZEROVPN_DATABASE_URL="${ZEROVPN_DATABASE_URL/@db:5432/@localhost:55432}"
-export ZEROVPN_REDIS_URL="${ZEROVPN_REDIS_URL/@redis:6379/@localhost:56379}"
 export ZEROVPN_SMTP__HOST=localhost
 export ZEROVPN_SMTP__PORT=1025
 

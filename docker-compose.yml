@@ -107,8 +107,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_started
       worker:
         condition: service_started
     volumes:
@@ -170,12 +168,11 @@ services:
     #   cap_add: [NET_ADMIN]
     #   # security_opt no-new-privileges must be dropped for the cap to apply
     #
-    # Trade-off: in that netns the worker no longer resolves db/redis/api by
-    # service name. db and redis already publish to host loopback
-    # (127.0.0.1:55432, 127.0.0.1:56379), so point ZEROVPN_DATABASE_URL /
-    # the redis URL at those, and have the api subscribe to the worker's ZMQ
-    # over the host instead of `worker:5555`. Verify api↔worker connectivity
-    # after the switch — that link is the main thing this move breaks.
+    # Trade-off: in that netns the worker no longer resolves db/api by
+    # service name. db already publishes to host loopback (127.0.0.1:55432),
+    # so point ZEROVPN_DATABASE_URL at that, and have the api subscribe to the
+    # worker's ZMQ over the host instead of `worker:5555`. Verify api↔worker
+    # connectivity after the switch — that link is the main thing this breaks.
 
   db:
     image: postgres:18-alpine
@@ -214,25 +211,6 @@ services:
       - -c
       - random_page_cost=1.1
     mem_limit: 320m
-
-  redis:
-    image: redis:8-alpine
-    <<: [*default-restart, *default-logging]
-    command:
-      - redis-server
-      - --maxmemory
-      - 64mb
-      - --maxmemory-policy
-      - allkeys-lru
-      - --save
-      - ""
-      - --appendonly
-      - "no"
-    ports:
-      - "127.0.0.1:56379:6379"
-    networks:
-      - backend
-    mem_limit: 96m
 
   dnsmasq:
     image: coredns/coredns:latest

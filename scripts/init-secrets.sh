@@ -37,20 +37,16 @@ gen_pw() {
 session_secret="$(gen_b64)"
 kek="$(gen_b64)"
 db_password="$(gen_pw)"
-redis_password="$(gen_pw)"
 
 # Replace any CHANGEME occurrences with the appropriate value.
 # Order matters: replace specific patterns first so we don't accidentally
 # substitute the same value into multiple places.
 tmp="${env_file}.tmp.$$"
-awk -v ss="$session_secret" -v kek="$kek" -v dbpw="$db_password" -v rpw="$redis_password" '
+awk -v ss="$session_secret" -v kek="$kek" -v dbpw="$db_password" '
     /^ZEROVPN_SESSION_SECRET=CHANGEME/ { print "ZEROVPN_SESSION_SECRET=" ss; next }
     /^ZEROVPN_KEK=CHANGEME/             { print "ZEROVPN_KEK=" kek; next }
     /^ZEROVPN_DATABASE_URL=.*CHANGEME/  {
         line=$0; gsub("CHANGEME", dbpw, line); print line; next
-    }
-    /^ZEROVPN_REDIS_URL=.*CHANGEME/     {
-        line=$0; gsub("CHANGEME", rpw, line); print line; next
     }
     { print }
 ' "$env_file" > "$tmp"
@@ -69,7 +65,6 @@ write_if_missing() {
 }
 
 write_if_missing "$secrets_dir/db_password.txt"      "$db_password"
-write_if_missing "$secrets_dir/redis_password.txt"   "$redis_password"
 write_if_missing "$secrets_dir/session_secret.txt"   "$session_secret"
 write_if_missing "$secrets_dir/kek.txt"              "$kek"
 

@@ -65,11 +65,11 @@ logs-dev: ## Tail dev-container logs
 	$(COMPOSE_DEVCTR) logs -f --tail=120
 
 # ── Native dev loop ─────────────────────────────────────────────────────────
-# Run db/redis/dnsmasq/mailhog in docker, but run api/worker/frontend
+# Run db/dnsmasq/mailhog in docker, but run api/worker/frontend
 # natively for fast iteration (cargo incremental, Vite HMR). The api +
 # worker container slots are kept stopped so they don't fight for ports.
 
-DEV_INFRA := db redis dnsmasq mailhog
+DEV_INFRA := db dnsmasq mailhog
 
 .PHONY: dev
 dev: ## Native dev: start infra in docker, leave api/worker/frontend for cargo + pnpm

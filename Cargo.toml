@@ -44,7 +44,6 @@ tower-http = { version = "0.6", features = ["trace", "cors", "compression-br", "
 # catches up.
 tower-sessions = "0.14"
 tower-sessions-sqlx-store = { version = "0.15", features = ["postgres"] }
-tower_governor = "0.8"
 
 # Async runtime
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "signal", "fs", "time", "sync", "io-util", "process", "net"] }
@@ -53,10 +52,6 @@ futures = "0.3"
 
 # Database
 sqlx = { version = "0.8.6", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls-aws-lc-rs", "macros", "migrate", "uuid", "time", "ipnetwork", "json"] }
-
-# Background jobs
-apalis = "0.7"
-apalis-sql = { version = "0.7", features = ["postgres"] }
 
 # Auth / crypto
 argon2 = "0.5.3"
@@ -86,10 +81,6 @@ sysinfo = { version = "0.32", default-features = false, features = ["system", "n
 
 # OpenAPI
 utoipa = { version = "5.5", features = ["axum_extras", "uuid", "time"] }
-
-# Rate limiting / caching
-governor = "0.10"
-moka = { version = "0.12", features = ["future"] }
 
 # IDs / time / encoding
 uuid = { version = "1.23", features = ["v4", "v7", "serde"] }

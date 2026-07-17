@@ -677,10 +677,10 @@ function FeaturesBento() {
           className="lg:col-span-2"
           n="04.6"
           h="Self-hosted, period"
-          b="One docker compose stack. Postgres + Redis + Traefik + WireGuard."
+          b="One docker compose stack. Postgres + Traefik + WireGuard."
         >
           <div className="mt-4 flex flex-wrap gap-1.5 font-mono text-[10px]">
-            {["api", "worker", "db", "redis", "traefik", "wg"].map((t) => (
+            {["api", "worker", "db", "traefik", "wg"].map((t) => (
               <span
                 key={t}
                 className="border-border text-muted-foreground border px-2 py-0.5"
@@ -1213,7 +1213,7 @@ function Architecture() {
     { tag: "edge", title: "Traefik", body: "TLS termination · Let's Encrypt · auto HTTPS" },
     { tag: "control", title: "API · axum", body: "Auth, devices, admin, OpenAPI — Rust" },
     { tag: "worker", title: "Worker", body: "WG state · ZMQ publisher · tick-level samples" },
-    { tag: "data", title: "Data plane", body: "Postgres 18 · Redis · age-encrypted backups" },
+    { tag: "data", title: "Data plane", body: "Postgres 18 · sessions, jobs, and all app data" },
     { tag: "wire", title: "WireGuard", body: "Kernel module · zero-config peer rotation" },
   ]
   return (
@@ -1478,7 +1478,6 @@ services:
   api:     { build: ./crates/zerovpn-api,    ports: ["443"] }
   worker:  { build: ./crates/zerovpn-worker, network_mode: host }
   db:      { image: postgres:18-alpine                          }
-  redis:   { image: redis:8-alpine                              }
   traefik: { image: traefik:v3.3                                }
   wg:      { image: linuxserver/wireguard, profiles: ["wg"]     }
 

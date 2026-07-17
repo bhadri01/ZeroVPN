@@ -12,7 +12,7 @@
 #
 # The prod api/worker/frontend/traefik are pushed to the `prod` profile here so
 # they don't start in dev; the *-dev services below replace them. Infra
-# (db/redis/dnsmasq/mailhog) still comes from docker-compose.yml.
+# (db/dnsmasq/mailhog) still comes from docker-compose.yml.
 
 services:
   # ── Disable the prod-shaped services in dev ────────────────────────────────
