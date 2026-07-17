@@ -6,4 +6,4 @@ pub mod templates;
 pub mod transport;
 
 pub use lettre::message::Mailbox;
-pub use transport::Mailer;
+pub use transport::{Mailer, SmtpEncryption};

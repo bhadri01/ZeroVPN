@@ -27,6 +27,16 @@ mod state;
 
 use state::AppState;
 
+/// Parse a boolean-ish env var. Returns `None` when unset/empty/unrecognized so
+/// callers can distinguish "not configured" from an explicit true/false.
+fn env_bool(key: &str) -> Option<bool> {
+    match env::var(key).ok()?.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
@@ -123,18 +133,37 @@ async fn main() -> Result<()> {
             let from: zerovpn_mail::Mailbox = from_str
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid SMTP_FROM: {e}"))?;
-            // dev MailHog has no TLS; flip require_tls=true in prod.
-            let require_tls = port != 1025;
+            // TLS mode is explicit from .env (ZEROVPN_SMTP__SSL_TLS / __STARTTLS).
+            // SSL_TLS (implicit TLS) wins if both are true; if neither var is set
+            // at all we fall back to the port convention (465=SSL, 1025=none,
+            // else STARTTLS) so a HOST+PORT-only config still works.
+            let ssl_tls = env_bool("ZEROVPN_SMTP__SSL_TLS");
+            let starttls = env_bool("ZEROVPN_SMTP__STARTTLS");
+            let encryption = if ssl_tls == Some(true) {
+                zerovpn_mail::SmtpEncryption::Ssl
+            } else if starttls == Some(true) {
+                zerovpn_mail::SmtpEncryption::StartTls
+            } else if ssl_tls.is_some() || starttls.is_some() {
+                zerovpn_mail::SmtpEncryption::None
+            } else {
+                match port {
+                    465 => zerovpn_mail::SmtpEncryption::Ssl,
+                    1025 => zerovpn_mail::SmtpEncryption::None,
+                    _ => zerovpn_mail::SmtpEncryption::StartTls,
+                }
+            };
+            let validate_certs = env_bool("ZEROVPN_SMTP__VALIDATE_CERTS").unwrap_or(true);
             match zerovpn_mail::Mailer::new(
                 &host,
                 port,
                 user.as_deref(),
                 pass.as_deref(),
                 from,
-                require_tls,
+                encryption,
+                validate_certs,
             ) {
                 Ok(m) => {
-                    info!(host, port, "smtp configured");
+                    info!(host, port, ?encryption, validate_certs, "smtp configured");
                     Some(m)
                 }
                 Err(e) => {

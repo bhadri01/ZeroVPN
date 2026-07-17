@@ -1,12 +1,27 @@
 use lettre::{
     AsyncSmtpTransport, Tokio1Executor,
     message::{Mailbox, Message, MultiPart},
-    transport::smtp::{authentication::Credentials, client::Tls},
+    transport::smtp::{
+        authentication::Credentials,
+        client::{Tls, TlsParameters},
+    },
 };
 use thiserror::Error;
 use tracing::info;
 
 use crate::templates::Email;
+
+/// How the SMTP connection is secured, chosen explicitly from `.env`
+/// (`ZEROVPN_SMTP__SSL_TLS` / `ZEROVPN_SMTP__STARTTLS`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmtpEncryption {
+    /// Plaintext, no TLS. Dev/MailHog only.
+    None,
+    /// Begin plaintext, upgrade with the STARTTLS verb (usually port 587).
+    StartTls,
+    /// Implicit TLS — the socket is wrapped from byte 1, SMTPS (usually 465).
+    Ssl,
+}
 
 #[derive(Debug, Error)]
 pub enum MailError {
@@ -24,31 +39,41 @@ pub struct Mailer {
     from: Mailbox,
 }
 
+/// TLS parameters for the given host. When `validate_certs` is false the peer
+/// certificate and hostname are NOT checked — an explicit, dangerous opt-out
+/// for internal relays with self-signed certs; never use it against a public
+/// relay.
+fn tls_params(host: &str, validate_certs: bool) -> Result<TlsParameters, MailError> {
+    Ok(TlsParameters::builder(host.to_string())
+        .dangerous_accept_invalid_certs(!validate_certs)
+        .dangerous_accept_invalid_hostnames(!validate_certs)
+        .build()?)
+}
+
 impl Mailer {
+    /// Build the transport from explicit settings. `encryption` picks the TLS
+    /// mode; `validate_certs` verifies the server certificate (keep `true`; pass
+    /// `false` only for an internal relay with a self-signed cert). Auth is
+    /// enabled whenever both `username` and `password` are supplied.
     pub fn new(
         host: &str,
         port: u16,
         username: Option<&str>,
         password: Option<&str>,
         from: Mailbox,
-        require_tls: bool,
+        encryption: SmtpEncryption,
+        validate_certs: bool,
     ) -> Result<Self, MailError> {
-        // SMTP convention: 465 = implicit TLS (wrap the socket from byte 1,
-        // lettre's `relay`), everything else with TLS required = STARTTLS
-        // (begin plaintext, upgrade with the STARTTLS verb — lettre's
-        // `starttls_relay`). Gmail / Outlook / most providers expose STARTTLS
-        // on 587 and IMPLICIT on 465; picking the right one from the port
-        // keeps the env config (just HOST/PORT) provider-agnostic.
-        let mut builder = if require_tls {
-            if port == 465 {
-                AsyncSmtpTransport::<Tokio1Executor>::relay(host)?.port(port)
-            } else {
-                AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)?.port(port)
+        // `builder_dangerous` = plaintext socket to start; the `.tls(...)` below
+        // decides how (if at all) it's secured. `Tls::Wrapper` = implicit TLS
+        // (SMTPS), `Tls::Required` = STARTTLS-or-fail, `Tls::None` = plaintext.
+        let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host).port(port);
+        builder = match encryption {
+            SmtpEncryption::None => builder.tls(Tls::None),
+            SmtpEncryption::Ssl => builder.tls(Tls::Wrapper(tls_params(host, validate_certs)?)),
+            SmtpEncryption::StartTls => {
+                builder.tls(Tls::Required(tls_params(host, validate_certs)?))
             }
-        } else {
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
-                .port(port)
-                .tls(Tls::None)
         };
 
         if let (Some(u), Some(p)) = (username, password) {

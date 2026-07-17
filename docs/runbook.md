@@ -74,11 +74,11 @@ make migrate
 make bootstrap-admin EMAIL=admin@yourdomain
 ```
 
-The `.env.example` header lists the eight values that must flip for prod (`ZEROVPN_ENVIRONMENT`, `ZEROVPN_DOMAIN`, `ZEROVPN_PUBLIC_URL`, `ZEROVPN_ACME_EMAIL`, `ZEROVPN_CERT_RESOLVER`, `ZEROVPN_SMTP__HOST`, `ZEROVPN_WG__BACKEND`, log levels).
+The `.env.example` header lists the values that must flip for prod (`ZEROVPN_ENVIRONMENT`, `ZEROVPN_DOMAIN`/`ZEROVPN_PUBLIC_URL`, `ZEROVPN_CERT_RESOLVER=le`, `ZEROVPN_ACME_EMAIL`, the `ZEROVPN_SMTP__*` block, `ZEROVPN_WG__SERVER_ENDPOINT`, `ZEROVPN_REGISTRY`/`ZEROVPN_IMAGE_TAG`, and `RUST_LOG`).
 
 `ZEROVPN_DOMAIN` must resolve to this host before `make up-prod`, or Traefik's first Let's Encrypt issuance attempt will fail. The api will also refuse to boot if `ZEROVPN_DOMAIN` is `localhost` or a `REPLACE_*` placeholder — see [validate_production_config in crates/zerovpn-api/src/main.rs](../crates/zerovpn-api/src/main.rs).
 
-**Mail (prod):** MailHog is dev-only (`docker-compose.mail.yml`) and never starts under `make up-prod`. Point `ZEROVPN_SMTP__*` at a real relay — e.g. Gmail: `smtp.gmail.com:587` with a Google **App Password** (STARTTLS is auto-selected for 587). See the SMTP block in `.env.example`.
+**Mail (prod):** MailHog is dev-only (`docker-compose.mail.yml`) and never starts under `make up-prod`. Point `ZEROVPN_SMTP__*` at a real relay and set the TLS mode explicitly — e.g. Gmail: `HOST=smtp.gmail.com`, `PORT=587`, `STARTTLS=true`, `SSL_TLS=false`, `VALIDATE_CERTS=true`, plus `USERNAME`/`PASSWORD` (a Google **App Password**). Use `SSL_TLS=true` (port 465) for implicit-TLS relays; `VALIDATE_CERTS=false` only for an internal self-signed relay. See the SMTP block in `.env.example`.
 
 
 ## The WireGuard runtime (production)
