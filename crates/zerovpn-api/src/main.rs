@@ -90,6 +90,11 @@ async fn main() -> Result<()> {
     bootstrap::ensure_default_server(&pool, &kek)
         .await
         .context("bootstrap server")?;
+    // Bring wg0 up from the just-written config (the api is the WG host now —
+    // no separate `wg` container). No-op on the noop backend; idempotent across
+    // hot-reload restarts. Runs before reconcile_peers so peers land on a live
+    // interface.
+    bootstrap::ensure_wg_interface_up().await;
     let allocators = bootstrap::build_ip_allocators(&pool)
         .await
         .context("build ip allocators")?;

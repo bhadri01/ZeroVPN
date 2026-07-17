@@ -52,7 +52,9 @@ services:
       - .:/app
       - cargo_registry:/usr/local/cargo/registry
       - target_api:/app/target
-      - wg_config:/wg
+      # No wg_config volume: wg0.conf is written to the container's own /wg
+      # (ephemeral) from the DB-stored server key on every boot — no durable
+      # state on the api.
       # Shared with worker-dev so the worker can read the userspace WireGuard
       # UAPI socket (boringtun fallback). Harmless with the kernel backend.
       - wg_run:/run/wireguard

@@ -5,10 +5,11 @@ name: zerovpn
 #
 #   docker compose --profile dev up -d                          # core + MailHog (default for `make up`)
 #   docker compose up -d                                        # core only — prod-shape (no MailHog)
-#   docker compose --profile wg up -d                           # add the WireGuard kernel container
 #   docker compose --profile ingest up -d                       # add the nflog-exporter
 #
-# Profiles compose; `--profile dev --profile wg` brings up both.
+# The api is the WireGuard host itself (brings up wg0 + programs peers), so
+# there is no separate `wg` container or profile. Profiles compose; e.g.
+# `--profile dev --profile ingest` brings up both.
 # Dev vs. prod knobs (TLS cert resolver, RUST_LOG, ZEROVPN_DOMAIN, SMTP relay,
 # secrets) live in `.env`. See `.env.example` for the full set.
 
@@ -90,6 +91,15 @@ services:
       - /var/cache/nginx:size=32m
       - /var/run:size=8m
 
+  # The api is the WireGuard host: on boot it brings wg0 up from the DB-stored
+  # server key (bootstrap::ensure_wg_interface_up) and programs peers directly,
+  # so there is no separate `wg` container and the api mounts no wg_config
+  # volume — it holds zero durable state (everything is in Postgres). The cost:
+  # the internet-facing api now runs privileged (NET_ADMIN) instead of
+  # cap_drop-ALL/read-only. See docs/architecture.md → "WireGuard runtime".
+  #
+  # ⚠ Verified on macOS/dev (userspace boringtun). The prod path below (Linux
+  # kernel WG module) has NOT been validated on a real host — test before relying.
   api:
     build:
       context: .
@@ -98,37 +108,58 @@ services:
     env_file: .env
     environment:
       ZEROVPN_BIND_ADDRESS: 0.0.0.0:8080
+      ZEROVPN_WG__BACKEND: kernel
+      ZEROVPN_WG__INTERFACE: wg0
+      ZEROVPN_WG__SERVER_CONFIG_PATH: /wg/wg0.conf
+      # The worker shares THIS container's netns (see worker.network_mode) so it
+      # can see wg0 for stats; its ZMQ publisher is therefore on loopback here.
+      ZEROVPN_EVENTS__SUBSCRIBER_CONNECT: tcp://127.0.0.1:5555
     ports:
       # Loopback-only — for native debugging via host. Safe to leave in prod.
       - "127.0.0.1:18080:8080"
+      # WireGuard — reachable from the internet (the api is the WG endpoint now).
+      - "51820:51820/udp"
+      # Published on behalf of the `worker` (it shares this netns): loopback ZMQ
+      # + the public destination-ingest endpoint.
+      - "127.0.0.1:5555:5555"
+      - "9898:9898"
     networks:
       - web
       - backend
     depends_on:
+      # NOT the worker anymore — the worker shares this container's netns, so it
+      # must start *after* the api (see worker.depends_on). The api's ZMQ
+      # subscriber just retries until the worker's publisher is up.
       db:
         condition: service_healthy
-      worker:
-        condition: service_started
     volumes:
-      # Derived cache, not durable state: the server WG key lives in the DB
-      # (KEK-encrypted), and the api rewrites wg0.conf here from it on every
-      # boot for the `wg` container to read. Safe to wipe — rebuilt from the DB.
-      - wg_config:/wg
-      # Shared with the `dnsmasq` (CoreDNS) service: the API writes the
-      # per-peer hosts file here (routes/dns.rs::sync_dnsmasq →
-      # ZEROVPN_WG__DNSMASQ_HOSTS_FILE=/etc/dnsmasq.d/zerovpn-peers.conf)
-      # and CoreDNS serves it. Without this mount the write lands in the
-      # API's read-only rootfs and never reaches the resolver, so
-      # `*.vpn.local` names never resolve.
+      # Shared with the `dnsmasq` (CoreDNS) service: the API writes the per-peer
+      # hosts file here (routes/dns.rs::sync_dnsmasq) and CoreDNS serves it.
+      # Derived from the DB, regenerated on boot — not durable state.
       - dnsmasq_conf:/etc/dnsmasq.d
-    read_only: true
+      # Host kernel modules (read-only) so wg-quick can load the wireguard
+      # module. Unneeded if the host preloads it (`modprobe wireguard`).
+      - /lib/modules:/lib/modules:ro
+    # wg0.conf + wg-quick runtime state live on tmpfs — ephemeral, rebuilt from
+    # the DB each boot.
     tmpfs:
       - /tmp:size=64m
+      - /wg:size=1m
+      - /run:size=1m
     cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
     mem_limit: 256m
 
+  # Shares the api's network namespace so its wg_poller can see wg0 (`wg show`)
+  # for per-peer stats. Because of that it has no own `networks:`/`ports:` — its
+  # ZMQ (5555) + ingest (9898) endpoints are published by the `api` container,
+  # and the api subscribes to the worker's ZMQ on 127.0.0.1:5555. Mirrors the
+  # dev topology; requires the api to start first (depends_on below).
   worker:
     build:
       context: .
@@ -137,45 +168,21 @@ services:
     env_file: .env
     environment:
       ZEROVPN_INGEST__DEST_BIND: 0.0.0.0:9898
-    ports:
-      # Loopback-only ZMQ for native api debugging.
-      - "127.0.0.1:5555:5555"
-      # destination_ingest TCP endpoint — public-facing so external nflog
-      # exporters can connect.
-      - "9898:9898"
-    networks:
-      - backend
+      ZEROVPN_EVENTS__PUBLISHER_BIND: tcp://0.0.0.0:5555
+      ZEROVPN_WG__BACKEND: kernel
+      ZEROVPN_WG__INTERFACE: wg0
+    network_mode: "service:api"
     depends_on:
       db:
         condition: service_healthy
+      api:
+        condition: service_started
     read_only: true
     tmpfs:
       - /tmp:size=64m
     cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
+    cap_add: [NET_ADMIN]
     mem_limit: 192m
-    # --- Real-WG stats capture (shell/kernel backend) -------------------
-    # By default the worker is on the `backend` bridge (above) and the WG
-    # stats poller is disabled (ZEROVPN_WG__BACKEND=noop). To capture peer
-    # endpoints, connection sessions, handshakes and per-peer bandwidth, the
-    # poller runs `wg show <iface> dump`, which needs (a) CAP_NET_ADMIN and
-    # (b) visibility of the WG interface's network namespace.
-    #
-    # On a Linux host running the tunnel (the `wg` service, network_mode:
-    # host → wg0 lives in the host netns), enable capture by REPLACING the
-    # `networks: [backend]` block above with the host netns and adding the
-    # cap, then set ZEROVPN_WG__BACKEND=kernel (or shell) in .env:
-    #
-    #   network_mode: "service:wg"     # share wg's (host) netns; see wg0
-    #   cap_add: [NET_ADMIN]
-    #   # security_opt no-new-privileges must be dropped for the cap to apply
-    #
-    # Trade-off: in that netns the worker no longer resolves db/api by
-    # service name. db already publishes to host loopback (127.0.0.1:55432),
-    # so point ZEROVPN_DATABASE_URL at that, and have the api subscribe to the
-    # worker's ZMQ over the host instead of `worker:5555`. Verify api↔worker
-    # connectivity after the switch — that link is the main thing this breaks.
 
   db:
     image: postgres:18-alpine
@@ -247,34 +254,8 @@ services:
       - backend
     mem_limit: 64m
 
-  # WireGuard runtime — opt-in via the `wg` profile so the rest of the
-  # stack works on macOS Docker Desktop where the WG kernel module may not
-  # be available. On a Linux host with the kernel module, set
-  # ZEROVPN_WG__BACKEND=kernel in .env so api+worker drive peers via the
-  # netlink UAPI directly (no `wg` binary, no nsenter).
-  wg:
-    image: linuxserver/wireguard:latest
-    profiles: [wg]
-    <<: [*default-restart, *default-logging]
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    sysctls:
-      - net.ipv4.ip_forward=1
-      - net.ipv4.conf.all.src_valid_mark=1
-    network_mode: host
-    environment:
-      PUID: "1000"
-      PGID: "1000"
-      TZ: UTC
-      INTERNAL_SUBNET: "10.10.0.0/22"
-      SERVERPORT: "51820"
-      # We supply our own wg0.conf — written by the api on first boot.
-      PEERS: "0"
-    volumes:
-      - wg_config:/config
-      - /lib/modules:/lib/modules:ro
-    mem_limit: 64m
+  # (The separate `wg` container was removed: the api is the WG host now — it
+  # brings up wg0 itself and programs peers. See the `api` service above.)
 
   nflog-exporter:
     build:
@@ -285,9 +266,11 @@ services:
     networks:
       - backend
     depends_on:
-      - worker
+      - api
     environment:
-      INGEST_ENDPOINT: worker:9898
+      # The ingest endpoint (:9898) is published by the `api` container now (the
+      # worker shares the api's netns), so connect there, not to `worker`.
+      INGEST_ENDPOINT: api:9898
     stdin_open: true
     tty: false
     mem_limit: 32m
@@ -296,7 +279,6 @@ volumes:
   traefik_letsencrypt:
   pg_data:
   dnsmasq_conf:
-  wg_config:
 
 networks:
   web:

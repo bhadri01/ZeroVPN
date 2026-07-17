@@ -11,10 +11,10 @@ ZeroVPN ships a single `docker-compose.yml` + single `.env`. Dev vs. prod is dri
 | TLS | self-signed (`ZEROVPN_CERT_RESOLVER` empty → Traefik default cert) | Let's Encrypt (`ZEROVPN_CERT_RESOLVER=le` in `.env`) |
 | Exposed host ports | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 + 8025 (MailHog via `dev` profile) | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 (no MailHog) |
 | Mailer | MailHog (via `dev` profile) | real SMTP relay (set `ZEROVPN_SMTP__HOST` in `.env`) |
-| WG backend | `noop` | `kernel` (set in `.env`; requires `--profile wg`) |
+| WG backend | `noop` (userspace boringtun in api-dev) | `kernel` (set in `.env`; the api is the WG host — no `wg` container) |
 | Session cookie | not Secure (plaintext localhost) | Secure flag set (api enforces when `ZEROVPN_ENVIRONMENT=production`) |
 
-Compose profiles compose: `--profile dev --profile wg` enables both.
+Compose profiles compose: `--profile dev --profile ingest` enables both.
 
 ## First-time setup (dev)
 
@@ -88,13 +88,13 @@ The default `make up` runs the management plane only — **no actual WireGuard i
    sudo modprobe wireguard
    ```
 
-2. **Set `ZEROVPN_WG__BACKEND=kernel` in `.env`.** The api/worker drive peers directly via the kernel WireGuard netlink UAPI through `defguard_wireguard_rs` — no `wg` binary on the host, no `nsenter` shell hop. The legacy `shell` backend that shells out to `wg set` is still available for environments where netlink isn't reachable. Either way, the container running the controller needs `CAP_NET_ADMIN` and visibility of the WG interface's netns.
+2. **Set `ZEROVPN_WG__BACKEND=kernel` in `.env`.** The **api is the WireGuard host itself**: on boot it brings `wg0` up (`wg-quick`, from the DB-stored server key) in its own container netns and programs peers via the kernel netlink UAPI (`defguard_wireguard_rs`). The worker shares the api's netns to read `wg show` stats. Both hold `CAP_NET_ADMIN`; the api also gets `SYS_MODULE` + a read-only `/lib/modules` mount to load the kernel module (skip if the host preloads it with `modprobe wireguard`). There is **no separate `wg` container** and no `wg_config` volume.
 
-3. **Bring up the wg container alongside the rest of the stack:**
+3. **Bring up the stack:**
    ```
-   docker compose --profile wg up -d
+   make up-prod
    ```
-   The bootstrap routine writes `wg0.conf` into the shared `wg_config` volume on first boot; the wg container picks it up and runs `wg-quick up wg0`.
+   The api creates `wg0`, publishes `udp/51820`, and rewrites `wg0.conf` from the DB on every boot (nothing persists on disk). ⚠ **This prod topology has only been verified on macOS/dev (userspace boringtun); validate the kernel path on your Linux host before relying on it.**
 
 4. **Open UDP 51820** on your firewall.
 
@@ -212,7 +212,7 @@ For zero-downtime upgrades, drain peers off this server first by toggling **main
 - [ ] `secrets/*.txt` mode 0600, `.env` mode 0600 and not in git (`git check-ignore .env` should print the file)
 - [ ] Admin email/password rotated from the bootstrap default
 - [ ] Off-box backups of `pg_data` + `secrets/` + `.env` configured (the KEK decrypts the server **and** peer keys stored in `pg_data`; `wg_config` is a derived cache and need not be backed up) + verify a restore drill before relying on it
-- [ ] `ZEROVPN_WG__BACKEND=kernel` (or `shell` for legacy `wg`-binary deployments) and `docker compose --profile wg up -d` to actually route packets
+- [ ] `ZEROVPN_WG__BACKEND=kernel` and the host WG kernel module loaded — the api brings up `wg0` itself (no separate `wg` container). Note the api runs privileged (`NET_ADMIN`) as a result
 
 ## Container hardening notes (1C)
 

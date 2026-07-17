@@ -36,6 +36,11 @@ This file is the reference that lives with the code.
                                       └─────────┘    │
 ```
 
+> Diagram is illustrative and predates recent changes: there is no `redis`
+> (removed — Postgres backs sessions/jobs), and `wg` is not a separate box — the
+> **api** is the WireGuard host (see *WireGuard runtime* below). The reverse
+> proxy is Traefik.
+
 ## Process model
 
 - **api** (binary `zerovpn-api`): HTTP + WebSocket, Axum 0.8. Reads/writes the DB, subscribes to ZMQ for live data, fans out to connected WS clients. Serves OpenAPI spec.
@@ -68,7 +73,21 @@ full logging system" for the decision record. Concretely:
 - Still **not** captured anywhere in the stack: traffic content / payloads and DNS query contents.
 - Each operational table is purged on its own window — 30 days by default for `bandwidth_samples`, `server_samples`, `destination_ips`, `audit_logs`, and `failed_logins` — overridable per table via the `ZEROVPN_*_RETENTION_DAYS` env vars (set a var to `0` to keep that table forever; e.g. `ZEROVPN_AUDIT_RETENTION_DAYS=0` for an unbounded audit trail). Soft-deleted users are hard-purged at +30 days.
 
+## WireGuard runtime
+
+The **api is the WireGuard host itself** — there is no separate `wg` container.
+On boot the api:
+1. materializes `wg0.conf` from the DB-stored server key (`servers.private_key_encrypted`, KEK-encrypted) onto ephemeral tmpfs — nothing WG-related persists on disk;
+2. brings `wg0` up in its own container netns (`wg-quick`; kernel module in prod, userspace boringtun in dev) and applies forwarding/NAT/DNS-DNAT best-effort;
+3. re-adds every active peer (`reconcile_peers`) and thereafter programs peers on device create/revoke.
+
+The **worker shares the api's netns** (`network_mode: service:api`) so its poller can `wg show wg0` for stats. Consequences:
+
+- **Stateless api, DB-only recovery**: the api mounts no `wg_config` volume; a `pg_data` restore (+ the KEK) brings the whole tunnel back.
+- **Trade-off**: the internet-facing api now runs privileged (`cap_add: NET_ADMIN`, `/dev/net/tun`, `SYS_MODULE`) instead of the old `cap_drop: [ALL]` / `read_only` sidecar isolation. This was a deliberate choice to eliminate the api's volumes; the security-conservative alternative is a separate privileged WG sidecar.
+- ⚠ **Verified on macOS/dev only** (userspace boringtun). The prod kernel path (privileged image, host module) has **not** been validated on a real Linux host — test before relying on it.
+
 ## Obfuscation
 
-- Device `.conf` downloads are vanilla WireGuard, which the official WireGuard clients accept and which matches the default `linuxserver/wireguard` server runtime.
+- Device `.conf` downloads are vanilla WireGuard, which the official WireGuard clients accept.
 - wstunnel (escape-hatch transport for UDP-blocked networks) is deferred to v1.1.
