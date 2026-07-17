@@ -2,7 +2,7 @@
 
 ## Dev vs. prod isolation
 
-ZeroVPN ships a single `docker-compose.yml` + single `.env`. Dev vs. prod is driven by `.env` values; optional service groups (MailHog, WG, ingest) come up via compose **profiles**:
+ZeroVPN ships a single `docker-compose.yml` + single `.env`. Dev vs. prod is driven by `.env` values; the only optional service group is the `dev`-profile MailHog:
 
 | | dev | prod |
 |---|---|---|
@@ -14,7 +14,7 @@ ZeroVPN ships a single `docker-compose.yml` + single `.env`. Dev vs. prod is dri
 | WG backend | `noop` (userspace boringtun in api-dev) | `kernel` (set in `.env`; the api is the WG host — no `wg` container) |
 | Session cookie | not Secure (plaintext localhost) | Secure flag set (api enforces when `ZEROVPN_ENVIRONMENT=production`) |
 
-Compose profiles compose: `--profile dev --profile ingest` enables both.
+`make up` adds MailHog via `--profile dev`; `make up-prod` omits it.
 
 ## First-time setup (dev)
 
@@ -77,6 +77,9 @@ make bootstrap-admin EMAIL=admin@yourdomain
 The `.env.example` header lists the eight values that must flip for prod (`ZEROVPN_ENVIRONMENT`, `ZEROVPN_DOMAIN`, `ZEROVPN_PUBLIC_URL`, `ZEROVPN_ACME_EMAIL`, `ZEROVPN_CERT_RESOLVER`, `ZEROVPN_SMTP__HOST`, `ZEROVPN_WG__BACKEND`, log levels).
 
 `ZEROVPN_DOMAIN` must resolve to this host before `make up-prod`, or Traefik's first Let's Encrypt issuance attempt will fail. The api will also refuse to boot if `ZEROVPN_DOMAIN` is `localhost` or a `REPLACE_*` placeholder — see [validate_production_config in crates/zerovpn-api/src/main.rs](../crates/zerovpn-api/src/main.rs).
+
+**Mail (prod):** MailHog is dev-only (`dev` profile) and never starts under `make up-prod`. Point `ZEROVPN_SMTP__*` at a real relay — e.g. Gmail: `smtp.gmail.com:587` with a Google **App Password** (STARTTLS is auto-selected for 587). See the SMTP block in `.env.example`.
+
 
 ## Bringing up the real WireGuard runtime (Linux production)
 
@@ -189,7 +192,7 @@ make up                                # or make up-prod
 
 ## Building & publishing images
 
-App images (`api`, `worker`, `frontend`, `nflog-exporter`) are pre-built and pushed to a registry; the base `docker-compose.yml` references them by tag (`image:`), so a deploy host **pulls** them and never builds. CI does this automatically (`.github/workflows/images.yml` → GHCR on push to `main`/tags). To do it by hand:
+App images (`api`, `worker`, `frontend`) are pre-built and pushed to a registry; the base `docker-compose.yml` references them by tag (`image:`), so a deploy host **pulls** them and never builds. CI does this automatically (`.github/workflows/images.yml` → GHCR on push to `main`/tags). To do it by hand:
 
 ```
 docker login ghcr.io                 # or your registry

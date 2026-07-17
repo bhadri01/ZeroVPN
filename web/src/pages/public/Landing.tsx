@@ -1480,8 +1480,7 @@ services:
   db:      { image: postgres:18-alpine                          }
   traefik: { image: traefik:v3.3                                }
   wg:      { image: linuxserver/wireguard, profiles: ["wg"]     }
-
-# optional profile: nflog-exporter (ingest)`}</CodeBlock>
+`}</CodeBlock>
       </motion.div>
     </section>
   )

@@ -5,11 +5,10 @@ name: zerovpn
 #
 #   docker compose --profile dev up -d                          # core + MailHog (default for `make up`)
 #   docker compose up -d                                        # core only — prod-shape (no MailHog)
-#   docker compose --profile ingest up -d                       # add the nflog-exporter
 #
 # The api is the WireGuard host itself (brings up wg0 + programs peers), so
-# there is no separate `wg` container or profile. Profiles compose; e.g.
-# `--profile dev --profile ingest` brings up both.
+# there is no separate `wg` container. The only optional service group is the
+# `dev`-profile MailHog.
 # Dev vs. prod knobs (TLS cert resolver, RUST_LOG, ZEROVPN_DOMAIN, SMTP relay,
 # secrets) live in `.env`. See `.env.example` for the full set.
 
@@ -115,10 +114,8 @@ services:
       - "127.0.0.1:18080:8080"
       # WireGuard — reachable from the internet (the api is the WG endpoint now).
       - "51820:51820/udp"
-      # Published on behalf of the `worker` (it shares this netns): loopback ZMQ
-      # + the public destination-ingest endpoint.
+      # Loopback ZMQ, published on behalf of the `worker` (it shares this netns).
       - "127.0.0.1:5555:5555"
-      - "9898:9898"
     networks:
       - web
       - backend
@@ -153,15 +150,14 @@ services:
 
   # Shares the api's network namespace so its wg_poller can see wg0 (`wg show`)
   # for per-peer stats. Because of that it has no own `networks:`/`ports:` — its
-  # ZMQ (5555) + ingest (9898) endpoints are published by the `api` container,
-  # and the api subscribes to the worker's ZMQ on 127.0.0.1:5555. Mirrors the
-  # dev topology; requires the api to start first (depends_on below).
+  # ZMQ publisher (5555) is published by the `api` container, and the api
+  # subscribes to it on 127.0.0.1:5555. Mirrors the dev topology; requires the
+  # api to start first (depends_on below).
   worker:
     image: ${ZEROVPN_REGISTRY:-ghcr.io/bhadri01}/zerovpn-worker:${ZEROVPN_IMAGE_TAG:-latest}
     <<: [*default-restart, *default-logging]
     env_file: .env
     environment:
-      ZEROVPN_INGEST__DEST_BIND: 0.0.0.0:9898
       ZEROVPN_EVENTS__PUBLISHER_BIND: tcp://0.0.0.0:5555
       ZEROVPN_WG__BACKEND: kernel
       ZEROVPN_WG__INTERFACE: wg0
@@ -236,6 +232,9 @@ services:
       - -conf
       - /etc/coredns/Corefile
 
+  # Dev-only mail catcher (web UI at http://localhost:8025). Gated to the `dev`
+  # profile so `make up-prod` never starts it — prod points ZEROVPN_SMTP__* at a
+  # real relay (e.g. Gmail/SMTP) via `.env`. See .env.example → "SMTP".
   mailhog:
     image: mailhog/mailhog:latest
     platform: linux/amd64
@@ -250,22 +249,6 @@ services:
 
   # (The separate `wg` container was removed: the api is the WG host now — it
   # brings up wg0 itself and programs peers. See the `api` service above.)
-
-  nflog-exporter:
-    image: ${ZEROVPN_REGISTRY:-ghcr.io/bhadri01}/zerovpn-nflog-exporter:${ZEROVPN_IMAGE_TAG:-latest}
-    profiles: [ingest]
-    <<: [*default-restart, *default-logging]
-    networks:
-      - backend
-    depends_on:
-      - api
-    environment:
-      # The ingest endpoint (:9898) is published by the `api` container now (the
-      # worker shares the api's netns), so connect there, not to `worker`.
-      INGEST_ENDPOINT: api:9898
-    stdin_open: true
-    tty: false
-    mem_limit: 32m
 
 volumes:
   traefik_letsencrypt:

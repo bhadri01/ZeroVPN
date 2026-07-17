@@ -6,7 +6,7 @@ SHELL := /bin/bash
 # are gated by compose profiles.
 COMPOSE     := docker compose
 COMPOSE_DEV := $(COMPOSE) --profile dev
-# App images (api/worker/frontend/nflog-exporter) are pre-built + pushed to a
+# App images (api/worker/frontend) are pre-built + pushed to a
 # registry; the base compose references them by tag (image:). This overlay
 # re-adds `build:` so they can be built/pushed locally or in CI. A *deploy* host
 # uses the base file only → it pulls, never builds. Set ZEROVPN_REGISTRY and

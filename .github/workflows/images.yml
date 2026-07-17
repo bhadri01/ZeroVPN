@@ -1,6 +1,6 @@
 name: images
 
-# Build the app images (api / worker / frontend / nflog-exporter) and push them
+# Build the app images (api / worker / frontend) and push them
 # to GHCR. Deploy hosts then pull these by tag (docker-compose.yml is
 # image-only) instead of building at deploy time.
 #
