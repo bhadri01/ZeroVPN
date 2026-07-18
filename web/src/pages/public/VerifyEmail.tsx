@@ -112,8 +112,8 @@ Subject: Verify your account
         )}
 
         <AuthFooterRule>
-          <Link to="/" className="hover:text-foreground">
-            ← Home
+          <Link to="/login" className="hover:text-foreground">
+            ← Back to sign in
           </Link>
         </AuthFooterRule>
       </AuthForm>

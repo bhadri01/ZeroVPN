@@ -109,7 +109,7 @@ export function AuditLogPage() {
         <PageHead
           eyebrow="Admin · 03"
           title="Audit log"
-          sub={`${total.toLocaleString()} entries${filtersActive ? " (filtered)" : ""} · retained indefinitely · IP + UA captured · CSV export honors filters`}
+          sub={`${total.toLocaleString()} entries${filtersActive ? " (filtered)" : ""} · retained per policy (30d default) · IP + UA captured · CSV export honors filters`}
           right={
             <Button asChild variant="outline" size="sm">
               <a href={adminAuditCsvUrl(filters, 5000)} download="audit.csv">

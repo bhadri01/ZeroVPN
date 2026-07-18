@@ -57,6 +57,16 @@ export function useBootstrapAuth() {
   }, [setUser, setLoading])
 }
 
+/** Root "/" entry. The deployed app has no marketing landing — wait for the
+ *  auth bootstrap to settle (showing the branded loader so signed-in users
+ *  aren't flashed the login form), then send authenticated users to the
+ *  dashboard and everyone else to the login page, which is the front door. */
+export function HomeRedirect() {
+  const { user, loading } = useAuth()
+  if (loading) return <LogoLoader caption="loading" />
+  return <Navigate to={user ? "/app" : "/login"} replace />
+}
+
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, mustChangePassword } = useAuth()
   if (loading) {

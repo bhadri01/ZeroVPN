@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ZeroVPN — Run your own VPN, without running a fleet</title>
+    <meta
+      name="description"
+      content="ZeroVPN is a self-hosted WireGuard control plane you deploy in ~15 minutes. Manage devices, peers, and admin policy from one fast console — live telemetry, full audit trails, no third-party SaaS in the data path. Open source, AGPL-3.0."
+    />
+    <link rel="canonical" href="https://bhadri01.github.io/ZeroVPN/" />
+    <meta name="theme-color" content="#fafaf7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="ZeroVPN — self-hosted WireGuard, boring by design" />
+    <meta
+      property="og:description"
+      content="A transparent, self-hostable WireGuard control plane. Devices, live telemetry, full admin visibility. Deploy in ~15 minutes. AGPL-3.0."
+    />
+    <meta property="og:url" content="https://bhadri01.github.io/ZeroVPN/" />
+    <meta name="twitter:card" content="summary" />
+
+    <!-- Anti-FOUC theme bootstrap: set the class before first paint. -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("zv-theme");
+          var dark =
+            saved === "dark" ||
+            (!saved &&
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="stylesheet" href="./site.css" />
+  </head>
+  <body>
+    <!-- ── Nav ─────────────────────────────────────────────────────────── -->
+    <header class="nav">
+      <div class="zv-wrap nav-inner">
+        <a href="#top" class="wordmark" aria-label="ZeroVPN home">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <line x1="1" y1="10" x2="5.5" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <line x1="14.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            <circle cx="10" cy="10" r="4.25" stroke="currentColor" stroke-width="1.5" />
+            <circle cx="10" cy="10" r="1.6" fill="var(--primary)" />
+          </svg>
+          <span>ZER<span class="zero">0</span>VPN</span>
+        </a>
+
+        <nav class="nav-links" id="nav-links" aria-label="Primary">
+          <a href="#what">What</a>
+          <a href="#features">Features</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#security">Security</a>
+          <a href="#get-started">Get started</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+
+        <div class="nav-actions">
+          <a
+            class="btn btn-ghost"
+            href="https://github.com/bhadri01/ZeroVPN"
+            style="padding: 0.4rem 0.8rem"
+            >GitHub ↗</a
+          >
+          <button
+            class="icon-btn theme-toggle"
+            id="theme-toggle"
+            type="button"
+            aria-label="Toggle dark mode"
+          >
+            <svg class="sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5" />
+            </svg>
+            <svg class="moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+            </svg>
+          </button>
+          <button class="icon-btn" id="nav-menu-btn" type="button" aria-label="Menu" aria-expanded="false">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M3 6h18M3 12h18M3 18h18" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main id="top">
+      <!-- ── 00 · Hero ─────────────────────────────────────────────────── -->
+      <section class="hero" id="hero">
+        <div class="zv-wrap hero-grid">
+          <div>
+            <span class="eyebrow"><span class="num">00</span> Self-hosted · WireGuard · Full admin visibility</span>
+            <h1>
+              Run your own VPN.
+              <span class="sub">— without running a fleet.</span>
+            </h1>
+            <p class="lead">
+              A self-hosted WireGuard control plane you deploy in about fifteen
+              minutes. Manage devices, peers, and admin policy from one quiet,
+              fast console — with live telemetry and a full audit trail, and no
+              third-party SaaS anywhere in the data path.
+            </p>
+            <div class="hero-cta">
+              <a class="btn btn-primary" href="#get-started">Get started ↓</a>
+              <a class="btn btn-ghost" href="https://github.com/bhadri01/ZeroVPN">View on GitHub ↗</a>
+            </div>
+            <div class="kbd">
+              <span class="prompt">$</span>
+              <span class="mono">docker compose --profile wg up -d</span>
+              <span class="caret" aria-hidden="true"></span>
+            </div>
+            <div class="trust">
+              <span class="pill"><span class="dot"></span> AGPL-3.0 · open source</span>
+              <span class="pill">Rust · edition 2024</span>
+              <span class="pill">WireGuard · userspace</span>
+              <span class="pill">0 trackers</span>
+            </div>
+          </div>
+
+          <!-- Hero figure: static topology mock in the app's visual language -->
+          <div class="hero-fig">
+            <div class="fig-cap"><span>Fig. 01 · Live topology</span><span>self-hosted</span></div>
+            <svg viewBox="0 0 360 260" width="100%" role="img" aria-label="Diagram: a VPN hub connected to five devices across three users">
+              <!-- edges -->
+              <path class="topo-edge" d="M180 130 L70 55" />
+              <path class="topo-edge" d="M180 130 L300 55" />
+              <path class="topo-edge" d="M180 130 L55 150" />
+              <path class="topo-edge" d="M180 130 L305 155" />
+              <path class="topo-edge" d="M180 130 L180 225" />
+              <!-- hub -->
+              <rect class="topo-node topo-hub" x="150" y="112" width="60" height="36" rx="2" />
+              <text class="topo-hub-t" x="180" y="127" text-anchor="middle">vpn-server</text>
+              <text class="topo-hub-t" x="180" y="139" text-anchor="middle" opacity="0.7">hub · wg0</text>
+              <!-- devices -->
+              <g>
+                <rect class="topo-node" x="24" y="38" width="92" height="34" rx="2" />
+                <text class="topo-t" x="34" y="54">macbook-pro</text>
+                <text class="topo-r" x="34" y="65">▲ 182 · ▼ 240 Mb/s</text>
+              </g>
+              <g>
+                <rect class="topo-node" x="256" y="38" width="80" height="34" rx="2" />
+                <text class="topo-t" x="266" y="54">pixel-8</text>
+                <text class="topo-r" x="266" y="65">▲ 8 · ▼ 44 Mb/s</text>
+              </g>
+              <g>
+                <rect class="topo-node" x="12" y="134" width="78" height="34" rx="2" />
+                <text class="topo-t" x="22" y="150">ipad</text>
+                <text class="topo-r" x="22" y="161">idle · 12s hs</text>
+              </g>
+              <g>
+                <rect class="topo-node" x="266" y="138" width="80" height="34" rx="2" />
+                <text class="topo-t" x="276" y="154">nas</text>
+                <text class="topo-r" x="276" y="165">▲ 4 · ▼ 2 Mb/s</text>
+              </g>
+              <g>
+                <rect class="topo-node" x="138" y="210" width="84" height="34" rx="2" />
+                <text class="topo-t" x="148" y="226">workstation</text>
+                <text class="topo-r" x="148" y="237">▲ 61 · ▼ 90 Mb/s</text>
+              </g>
+              <circle class="topo-core" cx="158" cy="120" r="2.2" />
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 01 · What is ZeroVPN ──────────────────────────────────────── -->
+      <section id="what">
+        <div class="zv-wrap">
+          <div class="section-head">
+            <span class="eyebrow"><span class="num">01</span> What is it</span>
+            <h2>A control plane for your own WireGuard network.</h2>
+            <p>
+              ZeroVPN manages devices, peers, IP allocation, and admin policy for
+              a WireGuard network you host yourself — and puts a live console over
+              the whole fleet. A Rust API and worker, a React single-page app, and
+              one Docker Compose stack. No accounts on someone else's servers.
+            </p>
+          </div>
+
+          <p style="max-width: 46rem; color: var(--muted-foreground); margin-bottom: 2rem">
+            It's a <b style="color: var(--foreground)">private-network access VPN</b> —
+            each device split-tunnels only the VPN's own subnet
+            (<code class="mono">10.10.0.0/22</code> by default), so it connects your
+            people to your machines. It is deliberately <b style="color: var(--foreground)">not</b>
+            an anonymity or full-tunnel product.
+          </p>
+
+          <div class="grid grid-3">
+            <div class="cell persona">
+              <span class="lbl mono">P/01</span>
+              <h3>Homelab tinkerer</h3>
+              <p>One box in the basement, a handful of devices, a NAS, a Pi. Five-minute Docker bootstrap, QR onboarding, live topology on the TV.</p>
+            </div>
+            <div class="cell persona">
+              <span class="lbl mono">P/02</span>
+              <h3>Small team</h3>
+              <p>Ten to fifty peers with real users and real auditors. Suspend, quota, and key-rotate from an admin console; audit log with CSV export.</p>
+            </div>
+            <div class="cell persona">
+              <span class="lbl mono">P/03</span>
+              <h3>Compliance operator</h3>
+              <p>You need to answer "who did what, from where" on demand. Per-user sign-in and audit trail; per-device handshake and endpoint history.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 02 · Features ─────────────────────────────────────────────── -->
+      <section id="features">
+        <div class="zv-wrap">
+          <div class="section-head">
+            <span class="eyebrow"><span class="num">02</span> Features</span>
+            <h2>The boring parts. Handled.</h2>
+            <p>Everything below ships in the current codebase — nothing here is a mockup or a promise.</p>
+          </div>
+
+          <p class="eyebrow" style="margin-bottom: 1rem"><span class="num accent">02.1</span> For everyone</p>
+          <div class="feat" style="margin-bottom: 2rem">
+            <div class="item">
+              <span class="lbl">Onboarding</span>
+              <h4>Device provisioning</h4>
+              <p>Server-generated keypairs, IP allocation, and a ready <code class="mono">.conf</code> plus QR to scan into the WireGuard app.</p>
+            </div>
+            <div class="item">
+              <span class="lbl">Live</span>
+              <h4>Real-time telemetry</h4>
+              <p>Worker → ZeroMQ → API → WebSocket at ~1 Hz. Samples are stored and replayed on refresh, so the chart is never empty on reload.</p>
+            </div>
+            <div class="item">
+              <span class="lbl">Map</span>
+              <h4>Topology &amp; flows</h4>
+              <p>A two-level tree that mirrors how WireGuard thinks. Toggle to a live flows view of active connections. Layout persists per user.</p>
+            </div>
+            <div class="item">
+              <span class="lbl">Per-device</span>
+              <h4>Stats &amp; lifecycle</h4>
+              <p>Per-device bandwidth, handshake and endpoint history, and a timeline of every lifecycle event from creation to revoke.</p>
+            </div>
+            <div class="item">
+              <span class="lbl">2FA</span>
+              <h4>TOTP &amp; recovery codes</h4>
+              <p>RFC 6238 authenticator support with hashed one-time recovery codes, opt-in per account.</p>
+            </div>
+            <div class="item">
+              <span class="lbl">Client</span>
+              <h4>Installable PWA</h4>
+              <p>Install to the home screen; in-app and OS notifications for connectivity, quota, security, and device lifecycle events.</p>
+            </div>
+          </div>
+
+          <p class="eyebrow" style="margin-bottom: 1rem"><span class="num accent">02.2</span> For admins</p>
+          <div class="feat">
+            <div class="item">
+              <span class="lbl">Users</span>
+              <h4>Full user control</h4>
+              <p>Suspend, set quotas, rotate keys, impersonate for support, and page through every account from one board.</p>
+            </div>
+            <div class="item">
+              <span class="lbl">Fleet</span>
+              <h4>Servers &amp; sessions</h4>
+              <p>Manage WireGuard hub servers, review the session &amp; security event log (logins, 2FA, impersonation), and view a fleet-wide topology across every user.</p>
+            </div>
+            <div class="item">
+              <span class="lbl">Trail</span>
+              <h4>Audit &amp; access logs</h4>
+              <p>Append-only audit log (filterable, with CSV export), a failed-login board, and filterable access logs.</p>
+            </div>
+            <div class="item">
+              <span class="lbl">Ops</span>
+              <h4>Quotas &amp; maintenance</h4>
+              <p>Per-user bandwidth quotas with auto-pause, plus a maintenance mode that gates the app during upkeep.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 03 · Architecture ─────────────────────────────────────────── -->
+      <section id="architecture">
+        <div class="zv-wrap">
+          <div class="section-head">
+            <span class="eyebrow"><span class="num">03</span> How it works</span>
+            <h2>One stack. Every hop is yours.</h2>
+            <p>
+              Five well-defined layers from browser to backbone. No third-party
+              SaaS in the data path, and no telemetry phoning home.
+            </p>
+          </div>
+
+          <div class="diagram" style="margin-bottom: 2rem">
+            <svg viewBox="0 0 720 300" width="100%" role="img" aria-label="Architecture diagram of the ZeroVPN stack">
+              <!-- edge -->
+              <rect class="arch-box" x="20" y="120" width="120" height="60" rx="2" />
+              <text class="arch-t" x="80" y="146" text-anchor="middle">Traefik</text>
+              <text class="arch-s" x="80" y="162" text-anchor="middle">TLS · ACME · edge</text>
+
+              <!-- web -->
+              <rect class="arch-box" x="200" y="40" width="140" height="60" rx="2" />
+              <text class="arch-t" x="270" y="66" text-anchor="middle">Web SPA</text>
+              <text class="arch-s" x="270" y="82" text-anchor="middle">React · Vite · PWA</text>
+
+              <!-- api -->
+              <rect class="arch-box" x="200" y="200" width="140" height="60" rx="2" />
+              <text class="arch-t" x="270" y="226" text-anchor="middle">API · axum</text>
+              <text class="arch-s" x="270" y="242" text-anchor="middle">auth · devices · mail</text>
+
+              <!-- worker -->
+              <rect class="arch-box" x="400" y="200" width="140" height="60" rx="2" />
+              <text class="arch-t" x="470" y="226" text-anchor="middle">Worker</text>
+              <text class="arch-s" x="470" y="242" text-anchor="middle">poller · ZeroMQ pub</text>
+
+              <!-- wireguard -->
+              <rect class="arch-box arch-box" x="400" y="40" width="140" height="60" rx="2" style="stroke: var(--primary)" />
+              <text class="arch-t" x="470" y="66" text-anchor="middle">WireGuard</text>
+              <text class="arch-s" x="470" y="82" text-anchor="middle">boringtun · userspace</text>
+              <circle class="arch-accent" cx="415" cy="55" r="3" />
+
+              <!-- data -->
+              <rect class="arch-box" x="600" y="120" width="100" height="42" rx="2" />
+              <text class="arch-t" x="650" y="146" text-anchor="middle">Postgres</text>
+              <rect class="arch-box" x="600" y="178" width="100" height="42" rx="2" />
+              <text class="arch-t" x="650" y="204" text-anchor="middle">CoreDNS</text>
+
+              <!-- links -->
+              <path class="arch-line" d="M140 140 L200 70" />
+              <path class="arch-line" d="M140 160 L200 230" />
+              <path class="arch-line" d="M340 230 L400 230" />
+              <path class="arch-line" d="M340 210 L400 90" />
+              <path class="arch-line" d="M540 230 L600 200" />
+              <path class="arch-line" d="M340 220 L600 150" />
+              <path class="arch-line" d="M470 200 L470 100" stroke-dasharray="3 3" />
+              <path class="arch-line" d="M270 200 L470 100" stroke-dasharray="3 3" />
+            </svg>
+          </div>
+
+          <div class="grid grid-3">
+            <div class="cell"><span class="lbl">Edge</span><h3>Traefik</h3><p>TLS termination and automatic HTTPS via ACME. The only port open to the internet besides WireGuard's UDP.</p></div>
+            <div class="cell"><span class="lbl">Control</span><h3>API · Rust/axum</h3><p>Auth, devices, admin, and mail. It also brings up the WireGuard interface in its own container — no separate <code class="mono">wg</code> sidecar — and serves the OpenAPI spec.</p></div>
+            <div class="cell"><span class="lbl">Worker</span><h3>Poller · ZeroMQ</h3><p>Polls WireGuard peer stats (~1 Hz), rolls up bandwidth, and publishes tick-level samples over a ZeroMQ socket.</p></div>
+            <div class="cell"><span class="lbl">Data</span><h3>PostgreSQL 18</h3><p>Sessions, devices, samples, and every application record. The single source of truth for the whole stack.</p></div>
+            <div class="cell"><span class="lbl">Resolver</span><h3>CoreDNS</h3><p>Serves per-peer DNS from a hosts file the API maintains, so devices resolve each other by friendly name.</p></div>
+            <div class="cell"><span class="lbl">Wire</span><h3>WireGuard · userspace</h3><p>The API brings up <code class="mono">wg0</code> with userspace boringtun — no host kernel module, no <code class="mono">modprobe</code>.</p></div>
+          </div>
+
+          <p style="color: var(--muted-foreground); font-size: 0.92rem; margin-top: 1.5rem; max-width: 46rem">
+            Live-stats path: the worker samples peers and publishes over ZeroMQ;
+            the API relays those frames to the browser over a WebSocket
+            (MessagePack-encoded); the SPA hydrates from stored history on load so
+            charts are populated immediately. Full details in
+            <a class="accent" href="./architecture.md">docs/architecture.md</a>.
+          </p>
+        </div>
+      </section>
+
+      <!-- ── 04 · Security ─────────────────────────────────────────────── -->
+      <section id="security">
+        <div class="zv-wrap">
+          <div class="section-head">
+            <span class="eyebrow"><span class="num">04</span> Security &amp; transparency</span>
+            <h2>Quiet by default. Honest about the edges.</h2>
+            <p>
+              Radical transparency is the whole point: here is exactly what is
+              protected, what gets recorded, and — just as importantly — where the
+              limits are.
+            </p>
+          </div>
+
+          <div class="split-2" style="margin-bottom: 2rem">
+            <div class="card">
+              <h3 style="margin-bottom: 0.8rem">Authentication</h3>
+              <ul style="list-style: none; padding: 0; display: grid; gap: 0.55rem; color: var(--muted-foreground); font-size: 0.92rem">
+                <li>Argon2 password hashing with tuned work factors.</li>
+                <li>Server-side sessions over an HTTP-only cookie.</li>
+                <li>Mandatory email verification; reset links emailed by the API.</li>
+                <li>Optional Google OAuth (PKCE) sign-in.</li>
+                <li>Opt-in TOTP (RFC 6238) with hashed recovery codes.</li>
+                <li>Failed-login tracking + rate limiting (5 tries / 15 min per email).</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3 style="margin-bottom: 0.8rem">Data at rest &amp; in transit</h3>
+              <ul style="list-style: none; padding: 0; display: grid; gap: 0.55rem; color: var(--muted-foreground); font-size: 0.92rem">
+                <li>Column secrets (TOTP seeds, WireGuard device &amp; server private keys) sealed with a key-encryption key (AES-256-GCM).</li>
+                <li>Tunnel traffic encrypted end-to-end by WireGuard's Noise protocol.</li>
+                <li>The KEK is operator-provided and never leaves your box.</li>
+                <li>No content inspection or DPI anywhere in the path.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="ledger" style="margin-bottom: 2rem">
+            <div class="yes">
+              <h3>What it logs <span class="mono" style="color: var(--status-online)">✓ metadata</span></h3>
+              <ul>
+                <li>Device lifecycle events (add, online/offline, key rotate, revoke)</li>
+                <li>WireGuard handshake times and endpoint history per device</li>
+                <li>Per-device byte counters and rolled-up bandwidth</li>
+                <li>Sign-ins, the admin audit trail, and access logs</li>
+                <li>Failed logins with source IP and user-agent</li>
+                <li>Retention is operator-tunable — indefinite by default</li>
+              </ul>
+            </div>
+            <div class="no">
+              <h3>What it never logs <span class="mono" style="color: var(--status-revoked)">✕ content</span></h3>
+              <ul>
+                <li>No deep packet inspection or traffic-content capture</li>
+                <li>No DNS-query logging</li>
+                <li>No destination IPs or browsing history</li>
+                <li>No third-party analytics, trackers, or telemetry off-box</li>
+              </ul>
+            </div>
+          </div>
+
+          <span class="eyebrow"><span class="num accent">04.1</span> Honest caveats</span>
+          <ul class="caveats">
+            <li><b>Not zero-knowledge.</b> The server generates and stores each device's WireGuard keypair. A client-only key mode was considered and deliberately removed; keys are always stored server-side.</li>
+            <li><b>Single key-encryption key.</b> The KEK is provided once via env/secret — there's no HSM and no automatic rotation. Lose it and the sealed secrets can't be recovered.</li>
+            <li><b>Split-tunnel only.</b> Devices route the VPN subnet, not all traffic. ZeroVPN is a private-network VPN, not a full-tunnel or anonymity tool.</li>
+            <li><b>Rate limiting is per-email.</b> Login throttling keys on the email address, not the source IP.</li>
+            <li><b>Google sign-in bypasses TOTP.</b> If you require TOTP everywhere, don't enable the Google link.</li>
+            <li><b>The API runs elevated.</b> Because it brings up the WireGuard interface in its own container, the API holds <code class="mono">NET_ADMIN</code> and <code class="mono">/dev/net/tun</code>.</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ── 05 · Get started ──────────────────────────────────────────── -->
+      <section id="get-started">
+        <div class="zv-wrap">
+          <div class="section-head">
+            <span class="eyebrow"><span class="num">05</span> Get started</span>
+            <h2>Boring. Repeatable. Fast.</h2>
+            <p>Bring your own Linux box with Docker. From clone to a live topology in about fifteen minutes.</p>
+          </div>
+
+          <div class="split-2">
+            <div>
+              <pre class="code"><span class="c"># clone and enter</span>
+git clone https://github.com/bhadri01/ZeroVPN
+cd ZeroVPN
+
+<span class="c"># generate secrets (session, db, KEK)</span>
+make setup
+
+<span class="c"># dev stack: real userspace tunnel + hot reload</span>
+make up-dev
+
+<span class="c"># open the console</span>
+<span class="k">→</span> Web   http://localhost:6173
+<span class="k">→</span> API   http://localhost:18080
+<span class="k">→</span> Mail  http://localhost:8025</pre>
+              <p style="color: var(--muted-foreground); font-size: 0.9rem; margin-top: 1rem">
+                Production runs a build-push-pull model: <code class="mono">make images &amp;&amp; make push</code>,
+                then on the host <code class="mono">make setup</code>, edit <code class="mono">.env</code>,
+                and <code class="mono">make up-prod</code>. See the
+                <a class="accent" href="./runbook.md">runbook</a>.
+              </p>
+            </div>
+
+            <div>
+              <ol class="timeline">
+                <li><span class="t mono">00:00</span><span class="d">Clone &amp; <code class="mono">make setup</code><small>Generates session secret, DB password, and the KEK. Copy the KEK somewhere safe and off-box.</small></span></li>
+                <li><span class="t mono">00:02</span><span class="d"><code class="mono">make up-dev</code><small>API auto-migrates the database and brings up <code class="mono">wg0</code> itself.</small></span></li>
+                <li><span class="t mono">00:05</span><span class="d">Register the first user<small>The first account is promoted to admin automatically.</small></span></li>
+                <li><span class="t mono">00:09</span><span class="d">Add a device · scan the QR<small>Server mints the keypair; scan the QR into WireGuard and you're connected.</small></span></li>
+                <li><span class="t mono">00:15</span><span class="d">Live topology &amp; audit<small>Watch peers, bandwidth, and the audit trail update in real time.</small></span></li>
+              </ol>
+              <div class="stack">
+                <span class="pill">Docker + Compose v2</span>
+                <span class="pill">~1 GB RAM · 1 vCPU</span>
+                <span class="pill">tcp 80/443 · udp 51820</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="stack" style="margin-top: 2rem">
+            <a class="btn btn-ghost" href="https://github.com/bhadri01/ZeroVPN#quickstart">README quickstart ↗</a>
+            <a class="btn btn-ghost" href="./architecture.md">Architecture ↗</a>
+            <a class="btn btn-ghost" href="./API.md">API reference ↗</a>
+            <a class="btn btn-ghost" href="./runbook.md">Runbook ↗</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 06 · FAQ ──────────────────────────────────────────────────── -->
+      <section id="faq">
+        <div class="zv-wrap">
+          <div class="section-head">
+            <span class="eyebrow"><span class="num">06</span> FAQ</span>
+            <h2>Honest answers to the obvious questions.</h2>
+          </div>
+
+          <div class="faq">
+            <details open>
+              <summary>What does ZeroVPN log about my traffic?</summary>
+              <div class="answer">Operational metadata only — device lifecycle events, WireGuard handshake and endpoint history, per-device byte counters, sign-ins, and the admin audit trail. It never inspects packet contents, never logs DNS queries, and never records destination IPs or browsing history. Retention is operator-tunable and defaults to indefinite.</div>
+            </details>
+            <details>
+              <summary>Do I need the WireGuard kernel module?</summary>
+              <div class="answer">No. The API brings up the tunnel with <code>userspace boringtun</code> baked into its image, in both dev and production — no <code>modprobe</code>, no <code>/lib/modules</code>, no host kernel dependency.</div>
+            </details>
+            <details>
+              <summary>Can I run multiple regions or hubs?</summary>
+              <div class="answer">You can register multiple WireGuard hub servers today and manage them from the admin console. Automatic multi-region failover is on the roadmap, not shipped — the site won't pretend otherwise.</div>
+            </details>
+            <details>
+              <summary>How do I back it up?</summary>
+              <div class="answer">Bring your own <code>pg_dump</code> of PostgreSQL plus a copy of <code>secrets/</code> and <code>.env</code> on a schedule. Guard the KEK above all else: without it, the sealed TOTP seeds and WireGuard private keys can't be decrypted.</div>
+            </details>
+            <details>
+              <summary>What about SSO / bring-your-own auth?</summary>
+              <div class="answer">Email + password with optional TOTP, plus Google OAuth, ship today. OIDC / SAML for enterprise SSO is on the roadmap.</div>
+            </details>
+            <details>
+              <summary>What's the license?</summary>
+              <div class="answer">AGPL-3.0-or-later. Because of the AGPL's §13 network-use clause, if you run a modified version as a network service you must offer its corresponding source to your users. Self-hosting an unmodified copy for yourself or your team has no such obligation.</div>
+            </details>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ── 07 · Footer ─────────────────────────────────────────────────── -->
+    <footer>
+      <div class="zv-wrap">
+        <div class="foot-grid">
+          <div>
+            <a href="#top" class="wordmark" aria-label="ZeroVPN">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <line x1="1" y1="10" x2="5.5" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                <line x1="14.5" y1="10" x2="19" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                <circle cx="10" cy="10" r="4.25" stroke="currentColor" stroke-width="1.5" />
+                <circle cx="10" cy="10" r="1.6" fill="var(--primary)" />
+              </svg>
+              <span>ZER<span class="zero">0</span>VPN</span>
+            </a>
+            <p style="color: var(--muted-foreground); font-size: 0.88rem; margin-top: 0.9rem; max-width: 22rem">
+              A transparent, self-hostable WireGuard control plane. Your tunnel, your box, your logs.
+            </p>
+          </div>
+          <div>
+            <h5>Product</h5>
+            <ul>
+              <li><a href="#what">What is it</a></li>
+              <li><a href="#features">Features</a></li>
+              <li><a href="#architecture">Architecture</a></li>
+              <li><a href="#security">Security</a></li>
+            </ul>
+          </div>
+          <div>
+            <h5>Docs</h5>
+            <ul>
+              <li><a href="https://github.com/bhadri01/ZeroVPN#readme">README ↗</a></li>
+              <li><a href="./architecture.md">Architecture ↗</a></li>
+              <li><a href="./API.md">API reference ↗</a></li>
+              <li><a href="./runbook.md">Runbook ↗</a></li>
+            </ul>
+          </div>
+          <div>
+            <h5>Project</h5>
+            <ul>
+              <li><a href="https://github.com/bhadri01/ZeroVPN">GitHub ↗</a></li>
+              <li><a href="https://github.com/bhadri01/ZeroVPN/issues">Issues ↗</a></li>
+              <li><a href="https://github.com/bhadri01/ZeroVPN/releases">Releases ↗</a></li>
+              <li><a href="https://github.com/bhadri01/ZeroVPN/blob/main/LICENSE">License ↗</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="foot-bottom">
+          <span>AGPL-3.0 · <span id="year">2026</span> · Built with Rust + React</span>
+          <span>Not affiliated with WireGuard LLC. "WireGuard" is a registered trademark of Jason A. Donenfeld.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      (function () {
+        var root = document.documentElement;
+        // Theme toggle
+        var toggle = document.getElementById("theme-toggle");
+        if (toggle) {
+          toggle.addEventListener("click", function () {
+            var dark = root.classList.toggle("dark");
+            try {
+              localStorage.setItem("zv-theme", dark ? "dark" : "light");
+            } catch (e) {}
+          });
+        }
+        // Mobile nav
+        var menuBtn = document.getElementById("nav-menu-btn");
+        var links = document.getElementById("nav-links");
+        if (menuBtn && links) {
+          menuBtn.addEventListener("click", function () {
+            var open = links.classList.toggle("open");
+            menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+          });
+          links.addEventListener("click", function (e) {
+            if (e.target.tagName === "A") {
+              links.classList.remove("open");
+              menuBtn.setAttribute("aria-expanded", "false");
+            }
+          });
+        }
+        // Year
+        try {
+          document.getElementById("year").textContent = new Date().getFullYear();
+        } catch (e) {}
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,55 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! Please **do not report security vulnerabilities here** —
+        follow [SECURITY.md](https://github.com/bhadri01/ZeroVPN/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to '...'
+        2. Click '...'
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Output from `make logs-dev` / `make logs`, browser console, etc. Redact secrets.
+      render: shell
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running ZeroVPN?
+      options:
+        - Dev containers (make up-dev)
+        - Dockerized dev (make up)
+        - Native dev (make dev)
+        - Production (make up-prod)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git rev-parse --short HEAD` or the image tag.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "OS, Docker version, browser"

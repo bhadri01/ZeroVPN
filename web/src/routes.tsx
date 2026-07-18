@@ -7,15 +7,13 @@ import { PublicRouteError, RouteError } from "@/components/RouteError"
 import {
   AdminRoute,
   DeviceDetailRoute,
+  HomeRedirect,
   ProtectedRoute,
   useBootstrapAuth,
 } from "@/lib/auth-guard"
 
 // All pages lazy-loaded to keep the entry chunk small. The DashboardLayout
 // wraps the lazy load with its own Suspense fallback (skeleton).
-const LandingPage = lazy(() =>
-  import("@/pages/public/Landing").then((m) => ({ default: m.LandingPage })),
-)
 const LoginPage = lazy(() =>
   import("@/pages/public/Login").then((m) => ({ default: m.LoginPage })),
 )
@@ -137,7 +135,7 @@ export const router = createBrowserRouter([
         element: <PublicShell />,
         errorElement: <PublicRouteError />,
         children: [
-          { path: "/", element: <LandingPage /> },
+          { path: "/", element: <HomeRedirect /> },
           { path: "/login", element: <LoginPage /> },
           { path: "/register", element: <RegisterPage /> },
           { path: "/verify-email", element: <VerifyEmailPage /> },
