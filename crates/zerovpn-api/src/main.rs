@@ -260,6 +260,10 @@ async fn main() -> Result<()> {
                 .route("/auth/logout", post(routes::auth::logout))
                 .route("/auth/google/start", get(routes::oauth::google_start))
                 .route("/auth/google/callback", post(routes::oauth::google_callback))
+                .route(
+                    "/auth/google/verify-totp",
+                    post(routes::oauth::google_verify_totp),
+                )
                 .route("/me", get(routes::auth::me))
                 .route(
                     "/connections",

@@ -19,6 +19,14 @@ pub const SESSION_KEY_USER_ID: &str = "user_id";
 /// reach into tower-sessions' opaque storage.
 pub const SESSION_KEY_PW_CHANGED_AT: &str = "pw_changed_at_unix";
 
+/// Holds the user_id of a half-authenticated Google OAuth login that still
+/// owes a TOTP challenge. Set by the Google callback when the account has 2FA
+/// enabled; consumed by `/auth/google/verify-totp`, which swaps it for the
+/// real [`SESSION_KEY_USER_ID`] once the code checks out. A request carrying
+/// only this key is NOT authenticated — the `CurrentUser` extractor reads
+/// [`SESSION_KEY_USER_ID`], never this — so no route is reachable mid-challenge.
+pub const SESSION_KEY_PENDING_TOTP_USER: &str = "pending_totp_user_id";
+
 /// Set when an admin is impersonating another user. Stores the admin's
 /// real UUID so the session can be restored when impersonation ends.
 pub const SESSION_KEY_REAL_USER_ID: &str = "real_user_id";

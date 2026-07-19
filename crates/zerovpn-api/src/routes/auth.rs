@@ -510,7 +510,7 @@ pub async fn login(
 
 /// Verify a code against the stored TOTP secret OR consume a recovery code.
 /// On a successful recovery match, that code is removed from the user's set.
-async fn verify_totp_or_recovery(
+pub(crate) async fn verify_totp_or_recovery(
     state: &AppState,
     user_id: uuid::Uuid,
     code: &str,

@@ -190,6 +190,15 @@ export const googleCallback = (body: { code: string; state: string }) =>
     body: JSON.stringify(body),
   })
 
+/** Second leg of a Google sign-in when the account has 2FA enabled — the
+ *  callback returned `totp_required`, and this submits the TOTP/recovery code
+ *  against the session's pending-2FA marker to finish authenticating. */
+export const googleVerifyTotp = (totp_code: string) =>
+  apiFetch<LoginResponse>("/auth/google/verify-totp", {
+    method: "POST",
+    body: JSON.stringify({ totp_code }),
+  })
+
 export const me = () => apiFetch<PublicUser>("/me")
 
 /** Public-safe info about the user's WG server — used by the create-device
