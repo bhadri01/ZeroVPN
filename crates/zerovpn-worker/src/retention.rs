@@ -165,6 +165,17 @@ async fn run_once(pool: &PgPool, windows: &RetentionWindows) -> sqlx::Result<()>
     )
     .await?;
 
+    // Expired OAuth states. `consume` deletes a row on use and filters on
+    // `expires_at`, so this is purely a growth bound for abandoned sign-in
+    // flows that never hit the callback.
+    purge(
+        pool,
+        "purged expired oauth states",
+        "DELETE FROM oauth_states WHERE expires_at <= $1",
+        now,
+    )
+    .await?;
+
     // Hard-purge users soft-deleted >30 days ago. Cascades remove devices,
     // sessions, etc.
     purge(

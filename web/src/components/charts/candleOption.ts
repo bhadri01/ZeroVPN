@@ -10,7 +10,7 @@ import { formatBps } from "@/lib/units"
 
 export type ChartType = "bar" | "line"
 
-export const DEFAULT_VISIBLE = 60
+const DEFAULT_VISIBLE = 60
 
 /** Zoom-in floor: never show fewer than this many candles. One candle is the
  *  finest data we have (per-second rates rolled into one timeframe window), so
@@ -31,8 +31,7 @@ export const CANDLE_MS: Record<Timeframe, number> = {
 }
 
 /** Day-or-longer timeframes label the axis by date; intraday by clock time. */
-export const isDaily = (tf: Timeframe) =>
-  tf === "1d" || tf === "7d" || tf === "1mo"
+const isDaily = (tf: Timeframe) => tf === "1d" || tf === "7d" || tf === "1mo"
 
 /** One row of the chart: [ts, rxLow, rxHigh, txLow, txHigh, rxAvg, txAvg]. */
 export type Row = [number, number, number, number, number, number, number]
@@ -73,14 +72,14 @@ export function buildCandleOption(
     /** Manual value-axis range (set by scaling over the right gutter). When
      *  null the axis auto-fits the visible data (`min: 0` .. `dataMax`). */
     yWindow?: Window | null
-  },
+  }
 ) {
   const { tf, chartType, colors, yWindow } = opts
   const daily = isDaily(tf)
 
   const rangeRenderItem = (
     _params: CustomSeriesRenderItemParams,
-    api: CustomSeriesRenderItemAPI,
+    api: CustomSeriesRenderItemAPI
   ): CustomSeriesRenderItemReturn => {
     const ts = api.value(0) as number
     const x = api.coord([ts, 0])[0]
@@ -171,8 +170,18 @@ export function buildCandleOption(
       // axis and a time readout on the x axis (TradingView-style).
       axisPointer: {
         type: "cross" as const,
-        lineStyle: { color: colors.axis, width: 1, opacity: 0.5, type: "dashed" as const },
-        crossStyle: { color: colors.axis, width: 1, opacity: 0.5, type: "dashed" as const },
+        lineStyle: {
+          color: colors.axis,
+          width: 1,
+          opacity: 0.5,
+          type: "dashed" as const,
+        },
+        crossStyle: {
+          color: colors.axis,
+          width: 1,
+          opacity: 0.5,
+          type: "dashed" as const,
+        },
         label: {
           backgroundColor: colors.muted,
           color: colors.axis,
@@ -196,7 +205,7 @@ export function buildCandleOption(
           color: string,
           lo: number,
           hi: number,
-          avg: number,
+          avg: number
         ) =>
           `<div style="color:${color}">${label}&nbsp;&nbsp;H ${formatBps(hi)} · L ${formatBps(lo)} · avg ${formatBps(avg)}</div>`
         return (
@@ -254,7 +263,11 @@ export function buildCandleOption(
         },
       },
       splitLine: {
-        lineStyle: { color: colors.border, type: "dashed" as const, opacity: 0.6 },
+        lineStyle: {
+          color: colors.border,
+          type: "dashed" as const,
+          opacity: 0.6,
+        },
       },
     },
     dataZoom: [

@@ -10,7 +10,12 @@ export class ApiError extends Error {
   readonly code: string
   readonly requestId?: string
 
-  constructor(status: number, code: string, message: string, requestId?: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    requestId?: string
+  ) {
     super(message)
     this.name = "ApiError"
     this.status = status
@@ -44,7 +49,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       res.status,
       body.error?.code ?? `http_${res.status}`,
       body.error?.message ?? res.statusText,
-      body.error?.request_id,
+      body.error?.request_id
     )
   }
   if (res.status === 204) return undefined as T
@@ -54,7 +59,13 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 // --- types ---------------------------------------------------------------
 
 export type UserRole = "admin" | "user"
-export type DeviceOs = "ios" | "android" | "macos" | "windows" | "linux" | "other"
+export type DeviceOs =
+  | "ios"
+  | "android"
+  | "macos"
+  | "windows"
+  | "linux"
+  | "other"
 export type DeviceType =
   | "phone"
   | "tablet"
@@ -72,11 +83,6 @@ export type UserStatus =
   | "suspended"
   | "pending_verification"
   | "deleted"
-
-export interface PingResponse {
-  pong: boolean
-  ts_ms: number
-}
 
 export interface PublicUser {
   id: string
@@ -151,8 +157,6 @@ export interface CreatedDevice {
 }
 
 // --- endpoints -----------------------------------------------------------
-
-export const ping = () => apiFetch<PingResponse>("/ping")
 
 export const register = (body: { email: string; password: string }) =>
   apiFetch<{ status: string }>("/auth/register", {
@@ -265,19 +269,7 @@ export type ToastPositionPref =
 /** Visual theme variant. Each ships its own light + dark color tokens,
  *  font stack, radius, and spacing scale. Orthogonal to the light/dark
  *  mode toggle (stored client-side). */
-export type ThemePref =
-  | "swiss"
-  | "brutalist"
-  | "terminal"
-  | "editorial"
-  | "soft"
-export const THEME_VALUES: ThemePref[] = [
-  "swiss",
-  "brutalist",
-  "terminal",
-  "editorial",
-  "soft",
-]
+type ThemePref = "swiss" | "brutalist" | "terminal" | "editorial" | "soft"
 
 export interface UserPreferences {
   units: UnitsPref
@@ -380,7 +372,7 @@ export const resetPassword = (token: string, new_password: string) =>
  *  other session for this user. */
 export const changePassword = (
   current_password: string,
-  new_password: string,
+  new_password: string
 ) =>
   apiFetch<{ status: string }>("/me/change-password", {
     method: "POST",
@@ -411,7 +403,8 @@ export const verifyResetToken = (token: string) =>
 
 export const listDevices = () => apiFetch<PublicDevice[]>("/devices")
 
-export const getDevice = (id: string) => apiFetch<PublicDevice>(`/devices/${id}`)
+export const getDevice = (id: string) =>
+  apiFetch<PublicDevice>(`/devices/${id}`)
 
 export const createDevice = (body: {
   name: string
@@ -445,7 +438,7 @@ export const patchDevice = (
     os?: DeviceOs
     device_type?: DeviceType
     dns_override?: string[] | null
-  },
+  }
 ) =>
   apiFetch<{ status: string }>(`/devices/${id}`, {
     method: "PATCH",
@@ -490,10 +483,7 @@ export const setDeviceDns = (id: string, dns_names: string[]) =>
 /** User-facing per-device monthly cap setter. Pass `null` (or 0) to
  *  clear the device-level cap — the account cap still applies. The
  *  server clamps explicit values to the caller's own account cap. */
-export const setMyDeviceQuota = (
-  id: string,
-  monthly_byte_cap: number | null,
-) =>
+export const setMyDeviceQuota = (id: string, monthly_byte_cap: number | null) =>
   apiFetch<{ status: string }>(`/devices/${id}/quota`, {
     method: "PUT",
     body: JSON.stringify({ monthly_byte_cap }),
@@ -516,7 +506,7 @@ export interface DeviceEvent {
  */
 export const listDeviceEvents = (
   id: string,
-  opts: { limit?: number; beforeId?: number } = {},
+  opts: { limit?: number; beforeId?: number } = {}
 ) => {
   const params = new URLSearchParams()
   if (opts.limit != null) params.set("limit", String(opts.limit))
@@ -534,25 +524,7 @@ export interface DnsCheck {
   reason?: "invalid" | "taken"
 }
 export const checkDnsName = (name: string) =>
-  apiFetch<DnsCheck>(
-    `/devices/dns-check?name=${encodeURIComponent(name)}`,
-  )
-
-// --- bandwidth -----------------------------------------------------------
-
-export type BandwidthRange = "24h" | "7d" | "30d"
-
-export interface BandwidthBucket {
-  bucket_start: string
-  rx_bytes: number
-  tx_bytes: number
-}
-
-export interface BandwidthResponse {
-  bucket: "hour" | "day"
-  range: BandwidthRange
-  buckets: BandwidthBucket[]
-}
+  apiFetch<DnsCheck>(`/devices/dns-check?name=${encodeURIComponent(name)}`)
 
 // --- raw tick-level history (server-side bandwidth_samples / server_samples) ---
 // Used to hydrate the live charts on page load. The chart then continues
@@ -666,19 +638,28 @@ export const deviceCandles = (
   id: string,
   tf: Timeframe = "1m",
   limit = 120,
-  before?: string,
-) => apiFetch<CandleResponse>(`/devices/${id}/candles?${candleQs(tf, limit, before)}`)
+  before?: string
+) =>
+  apiFetch<CandleResponse>(
+    `/devices/${id}/candles?${candleQs(tf, limit, before)}`
+  )
 
 export const serverCandles = (
   id: string,
   tf: Timeframe = "1m",
   limit = 120,
-  before?: string,
-) => apiFetch<CandleResponse>(`/servers/${id}/candles?${candleQs(tf, limit, before)}`)
+  before?: string
+) =>
+  apiFetch<CandleResponse>(
+    `/servers/${id}/candles?${candleQs(tf, limit, before)}`
+  )
 
 /** User-aggregate candles across all of the caller's devices (dashboard). */
-export const userCandles = (tf: Timeframe = "1m", limit = 120, before?: string) =>
-  apiFetch<CandleResponse>(`/candles?${candleQs(tf, limit, before)}`)
+export const userCandles = (
+  tf: Timeframe = "1m",
+  limit = 120,
+  before?: string
+) => apiFetch<CandleResponse>(`/candles?${candleQs(tf, limit, before)}`)
 
 /** Admin: per-device candles for any device — backs the live bandwidth chart
  *  on the admin device-detail page. */
@@ -686,10 +667,10 @@ export const adminDeviceCandles = (
   deviceId: string,
   tf: Timeframe = "1m",
   limit = 120,
-  before?: string,
+  before?: string
 ) =>
   apiFetch<CandleResponse>(
-    `/admin/devices/${deviceId}/candles?${candleQs(tf, limit, before)}`,
+    `/admin/devices/${deviceId}/candles?${candleQs(tf, limit, before)}`
   )
 
 /** Admin: aggregate candles across all of a target user's devices — backs the
@@ -698,10 +679,10 @@ export const adminUserCandles = (
   userId: string,
   tf: Timeframe = "1m",
   limit = 120,
-  before?: string,
+  before?: string
 ) =>
   apiFetch<CandleResponse>(
-    `/admin/users/${userId}/candles?${candleQs(tf, limit, before)}`,
+    `/admin/users/${userId}/candles?${candleQs(tf, limit, before)}`
   )
 
 // --- 2FA -----------------------------------------------------------------
@@ -755,7 +736,7 @@ export interface AdminUserListFilters {
 function adminUserListQs(
   filters: AdminUserListFilters,
   limit?: number,
-  offset?: number,
+  offset?: number
 ): string {
   const params = new URLSearchParams()
   if (filters.q) params.set("q", filters.q)
@@ -772,10 +753,10 @@ function adminUserListQs(
 export const adminListUsers = (
   filters: AdminUserListFilters = {},
   limit = 50,
-  offset = 0,
+  offset = 0
 ) =>
   apiFetch<{ total: number; items: AdminUser[] }>(
-    `/admin/users?${adminUserListQs(filters, limit, offset)}`,
+    `/admin/users?${adminUserListQs(filters, limit, offset)}`
   )
 
 // ── User detail (admin) ──────────────────────────────────────────────
@@ -853,7 +834,7 @@ export interface ConnectionSessionRow {
 
 export const adminListDeviceConnectionHistory = (deviceId: string) =>
   apiFetch<ConnectionSessionRow[]>(
-    `/admin/devices/${deviceId}/connection-history`,
+    `/admin/devices/${deviceId}/connection-history`
   )
 
 // ── Admin device detail (Phase 2 / Stage B) ─────────────────────────
@@ -907,7 +888,7 @@ export interface AdminDeviceDetailResponse {
 export const adminGetDeviceDetail = (id: string) =>
   apiFetch<AdminDeviceDetailResponse>(`/admin/devices/${id}`)
 
-export interface AdminUserActivity {
+interface AdminUserActivity {
   id: number
   action: string
   metadata: unknown
@@ -1016,20 +997,6 @@ export const adminCreateUser = (body: AdminCreateUserBody) =>
     body: JSON.stringify(body),
   })
 
-// ── Admin user bandwidth history ────────────────────────────────────────
-
-interface AdminUserBandwidthBucket {
-  bucket_start: string
-  rx_bytes: number
-  tx_bytes: number
-}
-
-export interface AdminUserBandwidthResponse {
-  bucket: "hour" | "day"
-  range: BandwidthRange
-  buckets: AdminUserBandwidthBucket[]
-}
-
 export interface AdminStats {
   total: number
   active: number
@@ -1057,7 +1024,10 @@ export const adminSetUserStatus = (id: string, status: UserStatus) =>
     body: JSON.stringify({ status }),
   })
 
-export const adminSetUserQuota = (id: string, monthly_byte_cap: number | null) =>
+export const adminSetUserQuota = (
+  id: string,
+  monthly_byte_cap: number | null
+) =>
   apiFetch<{ status: string }>(`/admin/users/${id}/quota`, {
     method: "PUT",
     body: JSON.stringify({ monthly_byte_cap }),
@@ -1066,7 +1036,7 @@ export const adminSetUserQuota = (id: string, monthly_byte_cap: number | null) =
 /** Set (or clear, with null) a single device's monthly byte cap. */
 export const adminSetDeviceQuota = (
   deviceId: string,
-  monthly_byte_cap: number | null,
+  monthly_byte_cap: number | null
 ) =>
   apiFetch<{ status: string }>(`/admin/devices/${deviceId}/quota`, {
     method: "PUT",
@@ -1104,7 +1074,7 @@ export interface AdminAuditFilters {
 function adminAuditQs(
   filters: AdminAuditFilters,
   limit?: number,
-  offset?: number,
+  offset?: number
 ): string {
   const p = new URLSearchParams()
   if (filters.action) p.set("action", filters.action)
@@ -1121,15 +1091,15 @@ function adminAuditQs(
 export const adminListAudit = (
   filters: AdminAuditFilters = {},
   limit = 100,
-  offset = 0,
+  offset = 0
 ) =>
   apiFetch<{ total: number; items: AuditRow[] }>(
-    `/admin/audit?${adminAuditQs(filters, limit, offset)}`,
+    `/admin/audit?${adminAuditQs(filters, limit, offset)}`
   )
 
 export const adminAuditCsvUrl = (
   filters: AdminAuditFilters = {},
-  limit = 5000,
+  limit = 5000
 ) => `/api/v1/admin/audit.csv?${adminAuditQs(filters, limit)}`
 
 export interface FailedLoginRow {
@@ -1146,7 +1116,7 @@ export interface FailedLoginRow {
 
 export const adminListFailedLogins = (limit = 100, offset = 0) =>
   apiFetch<{ total: number; items: FailedLoginRow[] }>(
-    `/admin/failed-logins?limit=${limit}&offset=${offset}`,
+    `/admin/failed-logins?limit=${limit}&offset=${offset}`
   )
 
 // ── Session events (Phase 2 / Stage B) ──────────────────────────────────
@@ -1187,7 +1157,7 @@ export interface AdminSessionEventFilters {
 function adminSessionEventsQs(
   f: AdminSessionEventFilters,
   limit: number,
-  offset: number,
+  offset: number
 ): string {
   const params = new URLSearchParams()
   params.set("limit", String(limit))
@@ -1203,10 +1173,10 @@ function adminSessionEventsQs(
 export const adminListSessionEvents = (
   filters: AdminSessionEventFilters = {},
   limit = 100,
-  offset = 0,
+  offset = 0
 ) =>
   apiFetch<{ total: number; items: SessionEventRow[] }>(
-    `/admin/session-events?${adminSessionEventsQs(filters, limit, offset)}`,
+    `/admin/session-events?${adminSessionEventsQs(filters, limit, offset)}`
   )
 
 // ── Access logs (Phase 2 / Stage B) ─────────────────────────────────────
@@ -1242,7 +1212,7 @@ export interface AdminAccessLogFilters {
 function adminAccessLogsQs(
   f: AdminAccessLogFilters,
   limit: number,
-  offset: number,
+  offset: number
 ): string {
   const params = new URLSearchParams()
   params.set("limit", String(limit))
@@ -1261,10 +1231,10 @@ function adminAccessLogsQs(
 export const adminListAccessLogs = (
   filters: AdminAccessLogFilters = {},
   limit = 100,
-  offset = 0,
+  offset = 0
 ) =>
   apiFetch<{ total: number; items: AccessLogRow[] }>(
-    `/admin/access-logs?${adminAccessLogsQs(filters, limit, offset)}`,
+    `/admin/access-logs?${adminAccessLogsQs(filters, limit, offset)}`
   )
 
 // ── Finder (Phase 2 / Stage B) ──────────────────────────────────────────
@@ -1320,7 +1290,7 @@ export const adminGetMaintenance = () =>
 
 export const adminSetMaintenance = (
   maintenance_mode: boolean,
-  maintenance_message?: string | null,
+  maintenance_message?: string | null
 ) =>
   apiFetch<{ status: string }>("/admin/maintenance", {
     method: "PUT",
@@ -1374,7 +1344,7 @@ export const adminPatchServer = (
     mtu?: number
     dns_servers?: string[]
     persistent_keepalive?: number
-  },
+  }
 ) =>
   apiFetch<{ status: string }>(`/admin/servers/${id}`, {
     method: "PATCH",
@@ -1414,18 +1384,9 @@ export interface AdminServerDetail {
 export const adminGetServerDetail = (id: string) =>
   apiFetch<AdminServerDetail>(`/admin/servers/${id}`)
 
-export const adminServerBandwidth = (
-  id: string,
-  range: BandwidthRange = "24h",
-) =>
-  apiFetch<AdminUserBandwidthResponse>(
-    `/admin/servers/${id}/bandwidth?range=${range}`,
-  )
-
 /** Admin-only: every non-revoked device across the fleet, each row
  *  carrying its owning `user_id`. Powers the admin topology view. */
-export const adminListDevices = () =>
-  apiFetch<PublicDevice[]>("/admin/devices")
+export const adminListDevices = () => apiFetch<PublicDevice[]>("/admin/devices")
 
 // ---------------------------------------------------------------------------
 // Connections (live conntrack flows for the topology view)
@@ -1435,7 +1396,7 @@ export const adminListDevices = () =>
  *  `user_id` are populated and `name` is the device's display name; for
  *  foreign endpoints (the internet target, NAT gateway, …) `name` is
  *  `"External"` and the ids are absent. */
-export interface FlowEndpoint {
+interface FlowEndpoint {
   ip: string
   name: string
   device_id?: string

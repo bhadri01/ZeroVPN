@@ -320,7 +320,7 @@ export function Pill({
    Tiny inline chart for KPIs. SVG-only, vector-effect non-scaling so the
    stroke stays 1.2-1.4px regardless of container width. */
 
-export function Sparkline({
+function Sparkline({
   data,
   height = 26,
   kind = "area",

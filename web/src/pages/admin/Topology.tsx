@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useMemo, useState } from "react"
 
-import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
+import { LiveIndicator } from "@/components/charts/LiveIndicator"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { PageHead, Panel } from "@/components/swiss"
 import { FlowTopology } from "@/components/topology/FlowTopology"

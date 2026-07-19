@@ -3,7 +3,7 @@ import { IconDeviceTablet, IconPlus } from "@tabler/icons-react"
 import { useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router"
 
-import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
+import { LiveIndicator } from "@/components/charts/LiveIndicator"
 import { CandleChart } from "@/components/charts/CandleChart"
 import { LiveEventStream } from "@/components/dashboard/LiveEventStream"
 import { RecentActivity } from "@/components/dashboard/RecentActivity"
@@ -13,10 +13,7 @@ import { PageStagger, StaggerItem } from "@/components/motion"
 import { Kpi, KpiStrip, PageHead, Panel } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetTrigger } from "@/components/ui/sheet"
-import {
-  listDevices,
-  myUsage,
-} from "@/lib/api"
+import { listDevices, myUsage } from "@/lib/api"
 import { formatDate } from "@/lib/datetime"
 import { connState } from "@/lib/deviceState"
 import { formatBytes } from "@/lib/units"
@@ -41,7 +38,7 @@ export function DashboardPage() {
       (devicesQ.data ?? [])
         .filter((d) => d.status === "active" || d.status === "paused")
         .map((d) => d.id),
-    [devicesQ.data],
+    [devicesQ.data]
   )
   useHistoryHydration({ deviceIds, windowSec: 300 })
   const [addOpen, setAddOpen] = useState(false)
@@ -76,18 +73,18 @@ export function DashboardPage() {
       devices.reduce(
         (s, d) =>
           s + Math.max(d.total_rx_bytes, liveDevices[d.id]?.lifeRxBytes ?? 0),
-        0,
+        0
       ),
-    [devices, liveDevices],
+    [devices, liveDevices]
   )
   const totalTxBytes = useMemo(
     () =>
       devices.reduce(
         (s, d) =>
           s + Math.max(d.total_tx_bytes, liveDevices[d.id]?.lifeTxBytes ?? 0),
-        0,
+        0
       ),
-    [devices, liveDevices],
+    [devices, liveDevices]
   )
   const totalUsageBytes = totalRxBytes + totalTxBytes
 
@@ -105,7 +102,7 @@ export function DashboardPage() {
   // so any rate the WS store still holds for it is stale and dropped.
   const onlineDeviceIds = useMemo(
     () => devices.filter((d) => connState(d) === "online").map((d) => d.id),
-    [devices],
+    [devices]
   )
   const onlineCount = onlineDeviceIds.length
   const totalRx = useMemo(() => {
@@ -169,63 +166,63 @@ export function DashboardPage() {
           so "right now" is still readable at a glance. */}
       <StaggerItem>
         <KpiStrip cols={5}>
-        <Kpi
-          label="Devices · online"
-          value={onlineCount}
-          unit={devices.length > 0 ? `/ ${devices.length}` : undefined}
-          deltaTone={onlineCount > 0 ? "up" : undefined}
-        />
-        <Kpi
-          label="Total RX"
-          value={devicesQ.isLoading ? "—" : formatBytes(totalRxBytes)}
-          spark={liveHistory.rx}
-          sparkColor="var(--chart-1)"
-          footL={
-            onlineCount === 0
-              ? "no online devices"
-              : `live · ${formatRate(totalRx)}`
-          }
-        />
-        <Kpi
-          label="Total TX"
-          value={devicesQ.isLoading ? "—" : formatBytes(totalTxBytes)}
-          spark={liveHistory.tx}
-          sparkColor="var(--primary)"
-          footL={
-            onlineCount === 0
-              ? "no online devices"
-              : `live · ${formatRate(totalTx)}`
-          }
-        />
-        <Kpi
-          label="Total usage"
-          value={devicesQ.isLoading ? "—" : formatBytes(totalUsageBytes)}
-          spark={liveHistory.total}
-          sparkColor="var(--primary)"
-        />
-        <Kpi
-          label="Quota"
-          value={
-            usageQ.isLoading
-              ? "—"
-              : quotaPct == null
-                ? "Unlimited"
-                : `${quotaPct}%`
-          }
-          // Usage-so-far and the reset date only mean something against a
-          // cap — an unlimited account shows just "Unlimited" (the actual
-          // consumption already lives in the Total usage card).
-          footL={
-            quotaPct == null
-              ? undefined
-              : `${formatBytes(quotaUsed)} / ${formatBytes(quotaCap ?? 0)}`
-          }
-          footR={
-            quotaPct != null && quotaResetsAt
-              ? `resets ${formatDate(quotaResetsAt)}`
-              : undefined
-          }
-        />
+          <Kpi
+            label="Devices · online"
+            value={onlineCount}
+            unit={devices.length > 0 ? `/ ${devices.length}` : undefined}
+            deltaTone={onlineCount > 0 ? "up" : undefined}
+          />
+          <Kpi
+            label="Total RX"
+            value={devicesQ.isLoading ? "—" : formatBytes(totalRxBytes)}
+            spark={liveHistory.rx}
+            sparkColor="var(--chart-1)"
+            footL={
+              onlineCount === 0
+                ? "no online devices"
+                : `live · ${formatRate(totalRx)}`
+            }
+          />
+          <Kpi
+            label="Total TX"
+            value={devicesQ.isLoading ? "—" : formatBytes(totalTxBytes)}
+            spark={liveHistory.tx}
+            sparkColor="var(--primary)"
+            footL={
+              onlineCount === 0
+                ? "no online devices"
+                : `live · ${formatRate(totalTx)}`
+            }
+          />
+          <Kpi
+            label="Total usage"
+            value={devicesQ.isLoading ? "—" : formatBytes(totalUsageBytes)}
+            spark={liveHistory.total}
+            sparkColor="var(--primary)"
+          />
+          <Kpi
+            label="Quota"
+            value={
+              usageQ.isLoading
+                ? "—"
+                : quotaPct == null
+                  ? "Unlimited"
+                  : `${quotaPct}%`
+            }
+            // Usage-so-far and the reset date only mean something against a
+            // cap — an unlimited account shows just "Unlimited" (the actual
+            // consumption already lives in the Total usage card).
+            footL={
+              quotaPct == null
+                ? undefined
+                : `${formatBytes(quotaUsed)} / ${formatBytes(quotaCap ?? 0)}`
+            }
+            footR={
+              quotaPct != null && quotaResetsAt
+                ? `resets ${formatDate(quotaResetsAt)}`
+                : undefined
+            }
+          />
         </KpiStrip>
       </StaggerItem>
 
@@ -283,7 +280,7 @@ export function DashboardPage() {
             isAdmin ? (
               <Link
                 to="/admin/audit"
-                className="text-muted-foreground hover:text-foreground font-mono text-xs"
+                className="font-mono text-xs text-muted-foreground hover:text-foreground"
               >
                 View all ↗
               </Link>
@@ -312,4 +309,3 @@ function formatRate(bps: number): string {
   if (bps < 1_000_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`
   return `${(bps / 1_000_000_000).toFixed(2)} Gbps`
 }
-

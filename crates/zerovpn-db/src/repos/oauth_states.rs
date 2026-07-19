@@ -53,13 +53,3 @@ pub async fn consume(pool: &PgPool, state_hash: &str) -> sqlx::Result<Option<Str
     .await?;
     Ok(row.map(|r| r.0))
 }
-
-/// Best-effort sweep of expired rows. Not strictly required for
-/// correctness (`consume` filters on `expires_at`), but keeps the table
-/// from growing without bound across many failed flows.
-pub async fn purge_expired(pool: &PgPool) -> sqlx::Result<u64> {
-    let res = sqlx::query("DELETE FROM oauth_states WHERE expires_at <= NOW()")
-        .execute(pool)
-        .await?;
-    Ok(res.rows_affected())
-}
