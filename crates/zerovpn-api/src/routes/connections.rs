@@ -91,9 +91,26 @@ pub async fn list_for_user(
         .iter()
         .map(|d| d.allocated_ip.ip().to_string())
         .collect();
+    // Keep only flows that touch one of the caller's own peers, then mask the
+    // identity of the *other* side. AllowedIPs is a split-tunnel to the whole
+    // VPN subnet, so a peer↔peer flow can cross another user's device; a
+    // non-admin must never learn that peer's device name / device_id / user_id
+    // just because the flow touched their own device. The IP is retained (it's
+    // the far end of the caller's own traffic) but rendered as an anonymous
+    // "Peer". Own devices and genuine `External` endpoints are untouched.
     let filtered: Vec<Flow> = all
         .into_iter()
         .filter(|f| own_ips.contains(&f.source.ip) || own_ips.contains(&f.target.ip))
+        .map(|mut f| {
+            for ep in [&mut f.source, &mut f.target] {
+                if !own_ips.contains(&ep.ip) && ep.device_id.is_some() {
+                    ep.name = "Peer".to_string();
+                    ep.device_id = None;
+                    ep.user_id = None;
+                }
+            }
+            f
+        })
         .collect();
     Ok(Json(filtered))
 }

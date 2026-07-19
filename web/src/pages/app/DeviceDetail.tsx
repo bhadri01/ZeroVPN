@@ -569,10 +569,11 @@ export function DeviceDetailPage() {
       <ConfirmDialog
         open={revokeOpen}
         onOpenChange={setRevokeOpen}
-        title="Revoke device?"
+        title={`Revoke ${d.name}?`}
         description="This removes the peer from WireGuard, frees its IP, and is irreversible. The user must add a new device to reconnect."
         confirmLabel="Revoke"
         destructive
+        confirmText={d.name}
         pending={deleteM.isPending}
         onConfirm={() => deleteM.mutate()}
       />

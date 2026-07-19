@@ -25,6 +25,7 @@ import {
   type ChartType,
   type Colors,
   defaultWindow,
+  MIN_VISIBLE,
   type Row,
   type Window,
 } from "./candleOption"
@@ -166,43 +167,101 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
     }
     chart.on("datazoom", onZoom)
 
-    // Value-axis (bytes) zoom: wheel over the right gutter scales the value
-    // range, anchored at the cursor. Wheel over the plot is left to ECharts'
-    // built-in time-axis zoom. Non-passive + capture so we can pre-empt it.
-    const onWheelY = (e: WheelEvent) => {
+    // All wheel input is handled here (non-passive + capture) so the speed is
+    // tame — ECharts' built-in wheel zoom steps far too coarsely:
+    //  · over the value-axis gutter → scale the bytes range, cursor-anchored
+    //  · over the plot, vertical scroll / pinch → zoom the time window
+    //  · over the plot, horizontal scroll → pan, ~1:1 with the pointer
+    const onWheel = (e: WheelEvent) => {
       const rect = el.getBoundingClientRect()
       const x = e.clientX - rect.left
-      // Only act in the value-axis gutter (right edge); else let ECharts zoom X.
-      if (x < rect.width - 72) return
       e.preventDefault()
       e.stopPropagation()
-      const y = e.clientY - rect.top
-      const conv = (py: number) => {
-        const v = chart.convertFromPixel({ gridIndex: 0 }, [x, py]) as
+      const norm = (d: number) =>
+        e.deltaMode === 1 ? d * 16 : e.deltaMode === 2 ? d * 400 : d
+      if (x >= rect.width - 72) {
+        // Value-axis gutter: rescale the bytes range, anchored at the cursor.
+        const y = e.clientY - rect.top
+        const conv = (py: number) => {
+          const v = chart.convertFromPixel({ gridIndex: 0 }, [x, py]) as
+            | number[]
+            | null
+          return Array.isArray(v) ? v[1] : NaN
+        }
+        const topV = conv(8)
+        const botV = conv(rect.height - 22)
+        const curV = conv(y)
+        const span = topV - botV
+        if (!isFinite(span) || span <= 0 || !isFinite(curV)) return
+        const dy = norm(e.deltaY)
+        // Up (deltaY<0) → factor<1 → smaller range → zoom into finer detail.
+        const factor = Math.min(1.8, Math.max(0.55, Math.exp(dy * 0.0012)))
+        const frac = (curV - botV) / span
+        const newSpan = span * factor
+        let newBot = curV - frac * newSpan
+        let newTop = newBot + newSpan
+        if (newBot < 0) {
+          newTop -= newBot
+          newBot = 0
+        }
+        yZoomRef.current = { startValue: newBot, endValue: newTop }
+        chart.setOption({ yAxis: { min: newBot, max: newTop } })
+        return
+      }
+      // Time axis. Work from the current window + loaded data extent.
+      const w = zoomRef.current
+      const s = stateRef.current
+      const nRows = s.rows.length
+      if (!w || nRows === 0) return
+      const span = w.endValue - w.startValue
+      if (!(span > 0)) return
+      const earliest = s.rows[0][0]
+      const latest = s.rows[nRows - 1][0]
+      const pad = CANDLE_MS[tf]
+      const minSpan = CANDLE_MS[tf] * MIN_VISIBLE
+      const maxSpan = Math.max(latest - earliest + pad * 2, minSpan)
+      const dx = norm(e.deltaX)
+      const dy = norm(e.deltaY)
+      let next: Window
+      if (Math.abs(dx) > Math.abs(dy)) {
+        // Horizontal scroll pans at drag speed: one pixel of scroll moves the
+        // window one pixel's worth of time.
+        const plotW = Math.max(1, rect.width - 70) // grid left + right margins
+        const dt = dx * (span / plotW)
+        next = { startValue: w.startValue + dt, endValue: w.endValue + dt }
+      } else {
+        // Vertical scroll zooms, anchored at the cursor's timestamp. Pinch
+        // (ctrlKey) sends tiny deltas, so it gets a stronger coefficient.
+        const k = e.ctrlKey ? 0.005 : 0.0008
+        const factor = Math.min(1.35, Math.max(0.75, Math.exp(dy * k)))
+        const newSpan = Math.min(maxSpan, Math.max(minSpan, span * factor))
+        const p = chart.convertFromPixel({ gridIndex: 0 }, [x, 10]) as
           | number[]
           | null
-        return Array.isArray(v) ? v[1] : NaN
+        const anchor =
+          Array.isArray(p) && isFinite(p[0]) ? p[0] : w.startValue + span / 2
+        const frac = Math.min(1, Math.max(0, (anchor - w.startValue) / span))
+        const start = anchor - frac * newSpan
+        next = { startValue: start, endValue: start + newSpan }
       }
-      const topV = conv(8)
-      const botV = conv(rect.height - 22)
-      const curV = conv(y)
-      const span = topV - botV
-      if (!isFinite(span) || span <= 0 || !isFinite(curV)) return
-      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY
-      // Up (deltaY<0) → factor<1 → smaller range → zoom into finer detail.
-      const factor = Math.min(1.8, Math.max(0.55, Math.exp(dy * 0.0012)))
-      const frac = (curV - botV) / span
-      const newSpan = span * factor
-      let newBot = curV - frac * newSpan
-      let newTop = newBot + newSpan
-      if (newBot < 0) {
-        newTop -= newBot
-        newBot = 0
+      // Keep the window inside the loaded data (one candle of pad each side);
+      // reaching the left edge triggers the datazoom handler's lazy history
+      // load, which extends `earliest` and lets the next tick continue.
+      if (next.endValue > latest + pad) {
+        const d = next.endValue - (latest + pad)
+        next = { startValue: next.startValue - d, endValue: next.endValue - d }
       }
-      yZoomRef.current = { startValue: newBot, endValue: newTop }
-      chart.setOption({ yAxis: { min: newBot, max: newTop } })
+      if (next.startValue < earliest - pad) {
+        const d = earliest - pad - next.startValue
+        next = {
+          startValue: next.startValue + d,
+          endValue: Math.min(next.endValue + d, latest + pad),
+        }
+      }
+      zoomRef.current = next
+      chart.dispatchAction({ type: "dataZoom", dataZoomId: "dzX", ...next })
     }
-    el.addEventListener("wheel", onWheelY, { capture: true, passive: false })
+    el.addEventListener("wheel", onWheel, { capture: true, passive: false })
 
     // Value-axis drag-to-scale (TradingView price-axis style): press on the
     // bytes gutter and drag — up stretches the scale (zoom in), down compresses
@@ -267,7 +326,7 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
 
     return () => {
       ro.disconnect()
-      el.removeEventListener("wheel", onWheelY, { capture: true })
+      el.removeEventListener("wheel", onWheel, { capture: true })
       el.removeEventListener("mousedown", onDown, { capture: true })
       el.removeEventListener("mousemove", onHover)
       window.removeEventListener("mousemove", onDragMove)

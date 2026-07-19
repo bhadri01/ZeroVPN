@@ -127,16 +127,17 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
     ? (auditQ.data?.items ?? []).map(auditToItem)
     : userTail.slice(-limit).reverse().map(tailToItem)
 
-  // Always offered — for users the preview above is the ephemeral live tail,
-  // so the persisted full log (which may have history the tail doesn't) must
-  // stay reachable even when the preview is empty.
-  const viewAllFooter = (
+  // Footer link only for regular users: their preview above is the ephemeral
+  // live tail, so the persisted full log must stay reachable even when the
+  // preview is empty. Admins reach the full audit log via the card's top-right
+  // "View all" action, so the footer would just duplicate it — omit it there.
+  const viewAllFooter = isAdmin ? null : (
     <div className="border-border bg-card/70 sticky bottom-0 border-t px-4 py-2">
       <Link
-        to={isAdmin ? "/admin/audit" : "/app/activity"}
+        to="/app/activity"
         className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 font-mono text-[11px]"
       >
-        {isAdmin ? "View full audit log" : "View all activity"}
+        View all activity
         <IconArrowUpRight size={12} aria-hidden />
       </Link>
     </div>

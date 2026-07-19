@@ -508,6 +508,23 @@ async fn poll_once(
         // admin connection-history dialog should surface. The audit log
         // stays quiet here to avoid spamming the per-device timeline
         // after every worker restart.
+
+        // ── Device-perspective re-base ──────────────────────────────────
+        // `wg show dump` counters are the SERVER's: rx = bytes the server
+        // received from the peer (= the device's UPLOAD), tx = bytes the
+        // server sent to it (= the device's DOWNLOAD). Every PER-DEVICE stat
+        // below (lifetime totals, history samples, live rates, session
+        // snapshots, StatsDelta) must present the DEVICE's own perspective —
+        // "RX" on a device card means the device's download — so we re-base
+        // here. The server rollup (`srv_totals` above) and the keepalive
+        // liveness check deliberately keep the raw server-perspective
+        // `drx`/`dtx`/`rx_total`/`tx_total`, since a server card correctly
+        // shows the server's own interface direction.
+        let dev_rx_delta = dtx; // device download this tick (server → peer)
+        let dev_tx_delta = drx; // device upload this tick   (peer → server)
+        let dev_rx_total = tx_total; // absolute device-download counter
+        let dev_tx_total = rx_total; // absolute device-upload counter
+
         match (prev, online) {
             // Fresh connection (None → online is "this peer was already
             // online when we booted, sweep-then-open kicks off a fresh
@@ -518,8 +535,8 @@ async fn poll_once(
                     device_id,
                     user_id,
                     endpoint_now.as_deref(),
-                    rx_total as i64,
-                    tx_total as i64,
+                    dev_rx_total as i64,
+                    dev_tx_total as i64,
                     now,
                 )
                 .await
@@ -534,8 +551,8 @@ async fn poll_once(
                     pool,
                     device_id,
                     endpoint_now.as_deref(),
-                    rx_total as i64,
-                    tx_total as i64,
+                    dev_rx_total as i64,
+                    dev_tx_total as i64,
                     now,
                 )
                 .await
@@ -568,8 +585,8 @@ async fn poll_once(
                 pool,
                 device_id,
                 now,
-                drx as i64,
-                dtx as i64,
+                dev_rx_delta as i64,
+                dev_tx_delta as i64,
             )
             .await
             {
@@ -585,8 +602,13 @@ async fn poll_once(
         // report an accurate absolute total without a DB round-trip.
         if report_rates {
             if first_sight {
-                match devices::seed_lifetime(pool, device_id, rx_total as i64, tx_total as i64)
-                    .await
+                match devices::seed_lifetime(
+                    pool,
+                    device_id,
+                    dev_rx_total as i64,
+                    dev_tx_total as i64,
+                )
+                .await
                 {
                     Ok((lr, lt)) => {
                         lifetimes.insert(device_id, (lr.max(0) as u64, lt.max(0) as u64));
@@ -594,7 +616,14 @@ async fn poll_once(
                     Err(e) => warn!(?e, %device_id, "seed_lifetime failed"),
                 }
             } else if drx > 0 || dtx > 0 {
-                match devices::accumulate_lifetime(pool, device_id, drx as i64, dtx as i64).await {
+                match devices::accumulate_lifetime(
+                    pool,
+                    device_id,
+                    dev_rx_delta as i64,
+                    dev_tx_delta as i64,
+                )
+                .await
+                {
                     Ok((lr, lt)) => {
                         lifetimes.insert(device_id, (lr.max(0) as u64, lt.max(0) as u64));
                     }
@@ -665,8 +694,8 @@ async fn poll_once(
             }
         }
 
-        let rate_rx_bps = if report_rates { drx / secs * 8 } else { 0 };
-        let rate_tx_bps = if report_rates { dtx / secs * 8 } else { 0 };
+        let rate_rx_bps = if report_rates { dev_rx_delta / secs * 8 } else { 0 };
+        let rate_tx_bps = if report_rates { dev_tx_delta / secs * 8 } else { 0 };
 
         // Fold this peer's rate into its in-progress 1-minute candle. Every
         // tick (including idle 0-rate ones) counts toward the sample so the
@@ -680,8 +709,8 @@ async fn poll_once(
         let event = Event::StatsDelta {
             device_id,
             user_id,
-            rx_bytes: if report_rates { drx } else { 0 },
-            tx_bytes: if report_rates { dtx } else { 0 },
+            rx_bytes: if report_rates { dev_rx_delta } else { 0 },
+            tx_bytes: if report_rates { dev_tx_delta } else { 0 },
             rate_rx_bps,
             rate_tx_bps,
             total_rx_bytes,

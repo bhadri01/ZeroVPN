@@ -50,6 +50,7 @@ const WORKSPACE: NavEntry[] = [
   { to: "/app", label: "Dashboard", icon: IconLayoutDashboard, k: "D", end: true },
   { to: "/app/devices", label: "Devices", icon: IconDevices, k: "V" },
   { to: "/app/topology", label: "Topology", icon: IconHierarchy3, k: "T" },
+  { to: "/app/finder", label: "Finder", icon: IconSearch, k: "N" },
   { to: "/app/settings", label: "Settings", icon: IconSettings, k: "," },
 ]
 

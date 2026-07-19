@@ -4,10 +4,9 @@ import {
   IconRouter,
   IconUsers,
 } from "@tabler/icons-react"
-import { useState } from "react"
 import { Link, useParams } from "react-router"
 
-import { BandwidthChart } from "@/components/charts/LazyBandwidthChart"
+import { CandleChart } from "@/components/charts/CandleChart"
 import { CopyableCode } from "@/components/CopyableCode"
 import { Identicon } from "@/components/Identicon"
 import { PageStagger, StaggerItem } from "@/components/motion"
@@ -17,11 +16,8 @@ import { StatusPill, type Status } from "@/components/StatusPill"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   ApiError,
-  type BandwidthBucket,
-  type BandwidthRange,
   type DeviceStatus,
   adminGetServerDetail,
-  adminServerBandwidth,
 } from "@/lib/api"
 
 const DEVICE_STATUS_TO_PILL: Record<DeviceStatus, Status> = {
@@ -32,17 +28,10 @@ const DEVICE_STATUS_TO_PILL: Record<DeviceStatus, Status> = {
 
 export function ServerDetailPage() {
   const { id = "" } = useParams<{ id: string }>()
-  const [bwRange, setBwRange] = useState<BandwidthRange>("24h")
 
   const detailQ = useQuery({
     queryKey: ["admin", "server", id],
     queryFn: () => adminGetServerDetail(id),
-    enabled: !!id,
-  })
-
-  const bwQ = useQuery({
-    queryKey: ["admin", "server", id, "bandwidth", bwRange],
-    queryFn: () => adminServerBandwidth(id, bwRange),
     enabled: !!id,
   })
 
@@ -156,18 +145,10 @@ export function ServerDetailPage() {
 
           <StaggerItem>
             <Panel
-              title="Bandwidth history"
-              sub={`Aggregated across every device hosted on this server · ${bwRange}`}
-              right={<RangePicker value={bwRange} onChange={setBwRange} />}
+              title="Bandwidth"
+              sub="Aggregated across every device on this server · scroll to zoom · drag to pan"
             >
-              {bwQ.isLoading ? (
-                <Skeleton className="h-[220px] rounded-none" />
-              ) : (
-                <BandwidthChart
-                  buckets={(bwQ.data?.buckets ?? []) as BandwidthBucket[]}
-                  height={220}
-                />
-              )}
+              <CandleChart scope="server" id={id} height={260} />
             </Panel>
           </StaggerItem>
 
@@ -295,30 +276,6 @@ function Stat({
       <span className="text-foreground font-mono text-2xl tabular-nums">
         {value}
       </span>
-    </div>
-  )
-}
-
-function RangePicker({
-  value,
-  onChange,
-}: {
-  value: BandwidthRange
-  onChange: (r: BandwidthRange) => void
-}) {
-  const opts: BandwidthRange[] = ["24h", "7d", "30d"]
-  return (
-    <div className="border-border inline-flex border">
-      {opts.map((r) => (
-        <button
-          key={r}
-          type="button"
-          onClick={() => onChange(r)}
-          className={`px-2 py-0.5 font-mono text-[11px] transition-colors ${value === r ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
-        >
-          {r}
-        </button>
-      ))}
     </div>
   )
 }

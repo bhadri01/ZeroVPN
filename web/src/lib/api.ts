@@ -1027,6 +1027,9 @@ export interface AdminStats {
   suspended: number
   pending_verification: number
   devices_total: number
+  /** Devices online now (active + handshake within 180s), DB-computed with
+   *  the same rule as the user dashboard so it's correct on first paint. */
+  online_now: number
 }
 /** Deployment-wide user + device counts. Use this for the admin KPI
  *  strip rather than summing client-side over a paginated list. */

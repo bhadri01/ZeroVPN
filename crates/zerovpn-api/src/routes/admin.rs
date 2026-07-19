@@ -3187,6 +3187,9 @@ pub struct AdminStatsResponse {
     pub suspended: i64,
     pub pending_verification: i64,
     pub devices_total: i64,
+    /// Devices online right now (active + handshake within 180s) — matches
+    /// the user dashboard's definition, DB-backed so it's correct on load.
+    pub online_now: i64,
 }
 
 /// Deployment-wide user + device counts. Powers the admin overview KPI
@@ -3213,6 +3216,7 @@ pub async fn stats(
         suspended: s.suspended,
         pending_verification: s.pending_verification,
         devices_total: s.devices_total,
+        online_now: s.online_now,
     }))
 }
 

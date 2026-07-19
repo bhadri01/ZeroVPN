@@ -48,6 +48,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import {
   ApiError,
   type ConnectionSessionRow,
@@ -893,72 +894,116 @@ function QuotaDialog({
   currentCap: number | null
   onSaved: () => void
 }) {
-  const [gibStr, setGibStr] = useState("")
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        {/* Mounted per open (Radix unmounts closed content), so the form
+            seeds fresh from `currentCap` via useState initializers. */}
+        {open && (
+          <QuotaCapForm
+            userId={userId}
+            currentCap={currentCap}
+            onClose={() => onOpenChange(false)}
+            onSaved={onSaved}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
 
-  useEffect(() => {
-    if (open) {
-      setGibStr(currentCap ? (currentCap / GIB).toFixed(2) : "")
-    }
-  }, [open, currentCap])
+function QuotaCapForm({
+  userId,
+  currentCap,
+  onClose,
+  onSaved,
+}: {
+  userId: string
+  currentCap: number | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  // A switch decides whether the account is capped at all: off = unlimited,
+  // on = a required positive GiB value (same model as the device dialogs).
+  const [capEnabled, setCapEnabled] = useState(!!currentCap && currentCap > 0)
+  const [gibStr, setGibStr] = useState(
+    currentCap ? (currentCap / GIB).toFixed(2) : "",
+  )
 
   const m = useMutation({
     mutationFn: (cap: number | null) => adminSetUserQuota(userId, cap),
     onSuccess: () => {
       toast.success("Quota updated")
       onSaved()
-      onOpenChange(false)
+      onClose()
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)
     },
   })
 
+  const gib = Number(gibStr.trim())
+  const capValid =
+    gibStr.trim().length > 0 && Number.isFinite(gib) && gib > 0
+  const canSave = !m.isPending && (!capEnabled || capValid)
+
   const submit = () => {
-    const trimmed = gibStr.trim()
-    if (!trimmed) {
-      m.mutate(null)
-      return
-    }
-    const gib = Number(trimmed)
-    if (!Number.isFinite(gib) || gib < 0) {
-      toast.error("Enter a non-negative number of GiB, or leave blank for unlimited")
-      return
-    }
-    m.mutate(gib > 0 ? Math.round(gib * GIB) : null)
+    m.mutate(capEnabled ? Math.round(gib * GIB) : null)
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit monthly bandwidth cap</DialogTitle>
-          <DialogDescription>
-            Cap is enforced per calendar month. Leave blank or enter 0 for unlimited.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-2">
+    <>
+      <DialogHeader>
+        <DialogTitle>Edit monthly bandwidth cap</DialogTitle>
+        <DialogDescription>
+          Cap is enforced per calendar month. Toggle off for unlimited.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-3">
           <Label htmlFor="cap-gib">Monthly cap (GiB)</Label>
-          <Input
-            id="cap-gib"
-            type="number"
-            inputMode="decimal"
-            step="0.5"
-            min="0"
-            value={gibStr}
-            onChange={(e) => setGibStr(e.target.value)}
-            placeholder="Unlimited"
+          <Switch
+            checked={capEnabled}
+            onCheckedChange={setCapEnabled}
+            aria-label="Enable a monthly bandwidth cap for this account"
           />
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={m.isPending} onClick={submit}>
-            {m.isPending ? "Saving…" : "Save"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        {capEnabled ? (
+          <>
+            <Input
+              id="cap-gib"
+              type="number"
+              inputMode="decimal"
+              step="0.5"
+              min="0"
+              value={gibStr}
+              onChange={(e) => setGibStr(e.target.value)}
+              placeholder="e.g. 100"
+            />
+            <p className="text-muted-foreground text-xs">
+              All of the user's devices pause when the account hits this cap.
+              {!capValid && (
+                <span className="text-destructive ml-1">
+                  Enter a positive number of GiB.
+                </span>
+              )}
+            </p>
+          </>
+        ) : (
+          <p className="text-muted-foreground text-xs">
+            Unlimited — this account has no monthly bandwidth cap.
+          </p>
+        )}
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button disabled={!canSave} onClick={submit}>
+          {m.isPending ? "Saving…" : "Save"}
+        </Button>
+      </DialogFooter>
+    </>
   )
 }
 
@@ -1017,74 +1062,117 @@ function DeviceQuotaDialog({
   onOpenChange: (o: boolean) => void
   onSaved: () => void
 }) {
-  const [gibStr, setGibStr] = useState("")
+  return (
+    <Dialog open={!!device} onOpenChange={onOpenChange}>
+      <DialogContent>
+        {/* Keyed per device + mounted per open, so the form seeds fresh
+            from the device's cap via useState initializers. */}
+        {device && (
+          <DeviceCapForm
+            key={device.id}
+            device={device}
+            onClose={() => onOpenChange(false)}
+            onSaved={onSaved}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
 
-  useEffect(() => {
-    if (device) setGibStr(device.cap ? (device.cap / GIB).toFixed(2) : "")
-  }, [device])
+function DeviceCapForm({
+  device,
+  onClose,
+  onSaved,
+}: {
+  device: { id: string; name: string; cap: number | null }
+  onClose: () => void
+  onSaved: () => void
+}) {
+  // Same switch model as the account-cap dialog: off = no device cap,
+  // on = a required positive GiB value.
+  const [capEnabled, setCapEnabled] = useState(!!device.cap && device.cap > 0)
+  const [gibStr, setGibStr] = useState(
+    device.cap ? (device.cap / GIB).toFixed(2) : "",
+  )
 
   const m = useMutation({
-    mutationFn: (cap: number | null) =>
-      adminSetDeviceQuota(device?.id ?? "", cap),
+    mutationFn: (cap: number | null) => adminSetDeviceQuota(device.id, cap),
     onSuccess: () => {
       toast.success("Device quota updated")
       onSaved()
-      onOpenChange(false)
+      onClose()
     },
     onError: (e: unknown) => {
       if (e instanceof ApiError) toast.error(e.message)
     },
   })
 
+  const gib = Number(gibStr.trim())
+  const capValid =
+    gibStr.trim().length > 0 && Number.isFinite(gib) && gib > 0
+  const canSave = !m.isPending && (!capEnabled || capValid)
+
   const submit = () => {
-    const trimmed = gibStr.trim()
-    if (!trimmed) {
-      m.mutate(null)
-      return
-    }
-    const gib = Number(trimmed)
-    if (!Number.isFinite(gib) || gib < 0) {
-      toast.error("Enter a non-negative number of GiB, or leave blank for no cap")
-      return
-    }
-    m.mutate(gib > 0 ? Math.round(gib * GIB) : null)
+    m.mutate(capEnabled ? Math.round(gib * GIB) : null)
   }
 
   return (
-    <Dialog open={!!device} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Per-device data cap</DialogTitle>
-          <DialogDescription>
-            Cap for <span className="font-medium">{device?.name}</span>, enforced
-            per calendar month. The device pauses when it hits this cap or the
-            account cap — whichever comes first. Blank or 0 removes the device
-            cap.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-2">
+    <>
+      <DialogHeader>
+        <DialogTitle>Per-device data cap</DialogTitle>
+        <DialogDescription>
+          Cap for <span className="font-medium">{device.name}</span>, enforced
+          per calendar month. The device pauses when it hits this cap or the
+          account cap — whichever comes first. Toggle off to remove the
+          device cap.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-3">
           <Label htmlFor="dev-cap-gib">Monthly cap (GiB)</Label>
-          <Input
-            id="dev-cap-gib"
-            type="number"
-            inputMode="decimal"
-            step="0.5"
-            min="0"
-            value={gibStr}
-            onChange={(e) => setGibStr(e.target.value)}
-            placeholder="No device cap"
+          <Switch
+            checked={capEnabled}
+            onCheckedChange={setCapEnabled}
+            aria-label="Enable a monthly data cap for this device"
           />
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={m.isPending} onClick={submit}>
-            {m.isPending ? "Saving…" : "Save"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        {capEnabled ? (
+          <>
+            <Input
+              id="dev-cap-gib"
+              type="number"
+              inputMode="decimal"
+              step="0.5"
+              min="0"
+              value={gibStr}
+              onChange={(e) => setGibStr(e.target.value)}
+              placeholder="e.g. 100"
+            />
+            <p className="text-muted-foreground text-xs">
+              The device auto-pauses when it reaches this cap.
+              {!capValid && (
+                <span className="text-destructive ml-1">
+                  Enter a positive number of GiB.
+                </span>
+              )}
+            </p>
+          </>
+        ) : (
+          <p className="text-muted-foreground text-xs">
+            No device cap — the account cap still applies.
+          </p>
+        )}
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button disabled={!canSave} onClick={submit}>
+          {m.isPending ? "Saving…" : "Save"}
+        </Button>
+      </DialogFooter>
+    </>
   )
 }
 

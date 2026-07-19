@@ -245,6 +245,7 @@ export function DevicesPage() {
   const gridHoverRef = useRef<string | null>(null)
 
   const devices = devicesQ.data ?? []
+  const revokeDevice = devices.find((x) => x.id === revokeId)
 
   /** When the user reorders the *filtered* list, splice the new order
    *  back into the full device array — keeping any filtered-out items
@@ -666,10 +667,11 @@ export function DevicesPage() {
       <ConfirmDialog
         open={!!revokeId}
         onOpenChange={(o) => !o && setRevokeId(null)}
-        title="Revoke device?"
+        title={`Revoke ${revokeDevice?.name ?? "device"}?`}
         description="This removes the peer from WireGuard, frees its IP, and is irreversible. The user must add a new device to reconnect."
         confirmLabel="Revoke"
         destructive
+        confirmText={revokeDevice?.name}
         pending={deleteM.isPending}
         onConfirm={() => revokeId && deleteM.mutate(revokeId)}
       />

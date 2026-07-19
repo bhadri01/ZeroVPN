@@ -79,6 +79,10 @@ export function AdminOverviewPage() {
   const suspended = stats?.suspended ?? 0
   const pending = stats?.pending_verification ?? 0
   const totalDevices = stats?.devices_total ?? 0
+  // Durable, DB-computed online count (same 180s handshake rule as the user
+  // dashboard). Used as the KPI base so it's correct on first paint and
+  // survives refresh; live WS ticks below can only refine it upward.
+  const onlineDb = stats?.online_now ?? 0
   const fleetRx = fleetBwQ.data?.rx_bytes ?? 0
   const fleetTx = fleetBwQ.data?.tx_bytes ?? 0
   const maintOn = !!maintQ.data?.maintenance_mode
@@ -170,7 +174,7 @@ export function AdminOverviewPage() {
           />
           <Kpi
             label="Online · now"
-            value={statsQ.isLoading ? "—" : onlineNow}
+            value={statsQ.isLoading ? "—" : Math.max(onlineDb, onlineNow)}
             unit={totalDevices > 0 ? `/ ${totalDevices}` : undefined}
             footL={
               maintOn

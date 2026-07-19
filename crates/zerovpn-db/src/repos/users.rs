@@ -634,7 +634,18 @@ pub async fn admin_stats(pool: &PgPool) -> sqlx::Result<AdminStats> {
               (SELECT COUNT(*) FROM devices d
                  JOIN users u ON u.id = d.user_id
                 WHERE u.deleted_at IS NULL AND d.status <> 'revoked')::BIGINT
-                AS devices_total
+                AS devices_total,
+              -- Devices online *now*, using the same rule the frontend's
+              -- connState() applies (active + handshake within the 180s
+              -- window). DB-backed so the admin KPI is correct on first
+              -- paint and survives refresh, instead of depending on a live
+              -- WS tick that starts empty each session.
+              (SELECT COUNT(*) FROM devices d
+                 JOIN users u ON u.id = d.user_id
+                WHERE u.deleted_at IS NULL
+                  AND d.status = 'active'
+                  AND d.last_handshake_at > now() - interval '180 seconds')::BIGINT
+                AS online_now
            FROM users"#,
     )
     .fetch_one(pool)
@@ -649,6 +660,7 @@ pub struct AdminStats {
     pub suspended: i64,
     pub pending_verification: i64,
     pub devices_total: i64,
+    pub online_now: i64,
 }
 
 pub async fn admin_set_status(

@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import { OptionTiles } from "@/components/devices/OptionTiles"
 import {
   ApiError,
@@ -92,26 +93,28 @@ export function AddDeviceDialog({
   const [ipInput, setIpInput] = useState("")
   const [dnsPrefix, setDnsPrefix] = useState("")
   const [dnsTouched, setDnsTouched] = useState(false)
-  // Per-device monthly cap input. Stored as a free-form string the user
-  // types in GB so we can distinguish "empty" (inherit / unlimited) from
-  // "0" (which the backend treats as unlimited anyway). `capTouched`
-  // gates the auto-seed from the account cap so we don't clobber the
-  // user's edit when `usageQ` refetches.
+  // Per-device monthly cap. A toggle decides whether the device is capped
+  // at all: off = unlimited (no per-device cap), on = a required GB value.
+  // `capGbInput` holds the GB string while the toggle is on. `capTouched`
+  // gates the auto-seed from the account cap so we don't clobber the user's
+  // choice when `usageQ` refetches.
+  const [capEnabled, setCapEnabled] = useState(false)
   const [capGbInput, setCapGbInput] = useState("")
   const [capTouched, setCapTouched] = useState(false)
   const [result, setResult] = useState<CreatedDevice | null>(null)
 
-  // Seed the cap input with the account cap (in GB) once /me/usage
-  // resolves, so the field defaults to the user's own quota. If the
-  // account is unlimited, leave the input blank — submission with a
-  // blank cap means "no per-device cap" on an unlimited account.
+  // Default to NO per-device cap (unlimited) — the toggle always starts off,
+  // regardless of the account cap, and the user opts in when they want a
+  // limit. We still pre-seed the GB field with the account cap (when there is
+  // one) so enabling the toggle offers a sensible starting value to adjust.
+  // Stops once the user touches the control so a refetch never clobbers their
+  // choice.
   useEffect(() => {
     if (capTouched) return
-    if (accountCapBytes && accountCapBytes > 0) {
-      setCapGbInput(formatCapGb(accountCapBytes))
-    } else {
-      setCapGbInput("")
-    }
+    setCapEnabled(false)
+    setCapGbInput(
+      accountCapBytes && accountCapBytes > 0 ? formatCapGb(accountCapBytes) : "",
+    )
   }, [accountCapBytes, capTouched])
 
   const userSlug = useMemo(
@@ -180,19 +183,22 @@ export function AddDeviceDialog({
   }, [ipMode, ipInput, serverCidr])
   const ipLooksValid = ipValidation.ok
 
-  // Cap input validation. Empty = inherit account cap (server defaults).
-  // A finite number is clamped to the account cap server-side; surface
-  // the constraint client-side so the user sees the violation before
-  // they hit submit.
+  // Cap validation. Toggle off = unlimited (no per-device cap → null bytes).
+  // Toggle on = a GB value is required and must be a positive number, clamped
+  // to the account cap (also enforced server-side); surface the constraint
+  // client-side so the user sees the violation before they hit submit.
   const capValidation = useMemo<{
     ok: boolean
     bytes: number | null
     error: string | null
   }>(() => {
+    if (!capEnabled) return { ok: true, bytes: null, error: null }
     const raw = capGbInput.trim()
-    if (!raw) return { ok: true, bytes: null, error: null }
+    if (!raw) {
+      return { ok: false, bytes: null, error: "enter a monthly cap in GB" }
+    }
     const n = Number(raw)
-    if (!Number.isFinite(n) || n < 0) {
+    if (!Number.isFinite(n) || n <= 0) {
       return { ok: false, bytes: null, error: "must be a positive number of GB" }
     }
     const bytes = Math.round(n * 1024 ** 3)
@@ -203,8 +209,8 @@ export function AddDeviceDialog({
         error: `can't exceed your account cap (${formatBytes(accountCapBytes)})`,
       }
     }
-    return { ok: true, bytes: bytes > 0 ? bytes : null, error: null }
-  }, [capGbInput, accountCapBytes])
+    return { ok: true, bytes, error: null }
+  }, [capEnabled, capGbInput, accountCapBytes])
 
   const addM = useMutation({
     mutationFn: async () => {
@@ -266,6 +272,7 @@ export function AddDeviceDialog({
     setResult(null)
     setDnsPrefix("")
     setDnsTouched(false)
+    setCapEnabled(false)
     setCapGbInput("")
     setCapTouched(false)
   }
@@ -469,58 +476,76 @@ export function AddDeviceDialog({
             )}
           </div>
 
-          {/* Per-device monthly cap. Pre-filled with the user's own
-              account cap so the device stays bounded by the account
-              quota by default; the user can lower it (e.g. throttle a
-              phone separately) or leave it blank to inherit. Hard cap
-              client-side is the account cap — the server clamps too. */}
+          {/* Per-device monthly cap. A toggle chooses whether the device is
+              capped at all: off = unlimited (no per-device cap), on = a
+              required GB value. Defaults OFF (unlimited) — the user opts in
+              when they want a limit; the account cap is still enforced
+              server-side regardless. */}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="dev-cap" className="zv-eyebrow">
-              Monthly cap
-              {accountCapBytes && accountCapBytes > 0 && (
-                <span className="text-muted-foreground/70 normal-case">
-                  {" "}· account cap{" "}
-                  <span className="text-foreground font-mono">
-                    {formatBytes(accountCapBytes)}
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="dev-cap" className="zv-eyebrow">
+                Monthly cap
+                {accountCapBytes && accountCapBytes > 0 && (
+                  <span className="text-muted-foreground/70 normal-case">
+                    {" "}· account cap{" "}
+                    <span className="text-foreground font-mono">
+                      {formatBytes(accountCapBytes)}
+                    </span>
                   </span>
-                </span>
-              )}
-            </Label>
-            <div
-              data-invalid={!capValidation.ok ? "1" : undefined}
-              className="border-input bg-transparent focus-within:border-ring focus-within:ring-ring/50 data-[invalid=1]:border-destructive data-[invalid=1]:ring-destructive/20 flex h-8 items-stretch overflow-hidden rounded-lg border transition-colors focus-within:ring-3 data-[invalid=1]:ring-3"
-            >
-              <input
-                id="dev-cap"
-                type="number"
-                min={0}
-                step="0.1"
-                value={capGbInput}
-                onChange={(e) => {
+                )}
+              </Label>
+              <Switch
+                checked={capEnabled}
+                onCheckedChange={(v) => {
                   setCapTouched(true)
-                  setCapGbInput(e.target.value)
+                  setCapEnabled(v)
                 }}
-                placeholder={
-                  accountCapBytes && accountCapBytes > 0
-                    ? formatCapGb(accountCapBytes)
-                    : "unlimited"
-                }
-                className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm outline-none"
+                aria-label="Enable a monthly data cap for this device"
               />
-              <span className="border-input bg-muted/40 text-muted-foreground inline-flex shrink-0 items-center border-l px-2.5 font-mono text-[12px]">
-                GB / month
-              </span>
             </div>
-            <p className="text-muted-foreground font-mono text-[11px]">
-              {accountCapBytes && accountCapBytes > 0
-                ? "Defaults to your account cap. Lower it to throttle this device separately."
-                : "Your account has no cap — leave blank for an unlimited device, or set a value to throttle this device alone."}
-              {capValidation.error && (
-                <span className="text-destructive ml-2">
-                  {capValidation.error}
-                </span>
-              )}
-            </p>
+            {capEnabled ? (
+              <>
+                <div
+                  data-invalid={!capValidation.ok ? "1" : undefined}
+                  className="border-input bg-transparent focus-within:border-ring focus-within:ring-ring/50 data-[invalid=1]:border-destructive data-[invalid=1]:ring-destructive/20 flex h-8 items-stretch overflow-hidden rounded-lg border transition-colors focus-within:ring-3 data-[invalid=1]:ring-3"
+                >
+                  <input
+                    id="dev-cap"
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    value={capGbInput}
+                    onChange={(e) => {
+                      setCapTouched(true)
+                      setCapGbInput(e.target.value)
+                    }}
+                    placeholder={
+                      accountCapBytes && accountCapBytes > 0
+                        ? formatCapGb(accountCapBytes)
+                        : "e.g. 100"
+                    }
+                    className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm outline-none"
+                  />
+                  <span className="border-input bg-muted/40 text-muted-foreground inline-flex shrink-0 items-center border-l px-2.5 font-mono text-[12px]">
+                    GB / month
+                  </span>
+                </div>
+                <p className="text-muted-foreground font-mono text-[11px]">
+                  This device auto-pauses when it reaches the cap this cycle.
+                  {capValidation.error && (
+                    <span className="text-destructive ml-2">
+                      {capValidation.error}
+                    </span>
+                  )}
+                </p>
+              </>
+            ) : (
+              <p className="text-muted-foreground font-mono text-[11px]">
+                {accountCapBytes && accountCapBytes > 0
+                  ? "Unlimited for this device — your account cap still applies."
+                  : "Unlimited — this device has no monthly data cap."}
+              </p>
+            )}
           </div>
 
         </div>
