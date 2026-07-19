@@ -2640,6 +2640,9 @@ pub struct FinderUserMatch {
 pub struct FinderDeviceMatch {
     pub id: Uuid,
     pub user_id: Uuid,
+    /// Owner's email so the finder can say who a matched device belongs
+    /// to without a second lookup — the UI groups device matches by owner.
+    pub user_email: String,
     pub name: String,
     pub allocated_ip: String,
     pub last_peer_endpoint: Option<String>,
@@ -3069,20 +3072,29 @@ ip: crate::routes::auth::client_ip(&headers),
         _ => {}
     }
 
-    // Devices — same tuple-style shape: (id, user_id, name, allocated_ip, last_peer_endpoint).
+    // Devices — same tuple-style shape:
+    // (id, user_id, user_email, name, allocated_ip, last_peer_endpoint).
     {
-        type DeviceTuple = (Uuid, Uuid, String, ipnetwork::IpNetwork, Option<String>);
+        type DeviceTuple = (
+            Uuid,
+            Uuid,
+            String,
+            String,
+            ipnetwork::IpNetwork,
+            Option<String>,
+        );
         let rows: Vec<DeviceTuple> = match kind {
             "ip" => {
                 // allocated_ip exact match OR last_peer_endpoint starts
                 // with `ip:`. Union both axes.
                 sqlx::query_as(
-                    r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
-                         FROM devices
-                        WHERE status <> 'revoked'
-                          AND (allocated_ip = $1
-                               OR last_peer_endpoint LIKE $2)
-                        ORDER BY created_at DESC
+                    r#"SELECT d.id, d.user_id, u.email::TEXT, d.name, d.allocated_ip, d.last_peer_endpoint
+                         FROM devices d
+                         JOIN users u ON u.id = d.user_id
+                        WHERE d.status <> 'revoked'
+                          AND (d.allocated_ip = $1
+                               OR d.last_peer_endpoint LIKE $2)
+                        ORDER BY d.created_at DESC
                         LIMIT 10"#,
                 )
                 .bind(inet_q)
@@ -3091,31 +3103,34 @@ ip: crate::routes::auth::client_ip(&headers),
                 .await?
             }
             "endpoint" => sqlx::query_as(
-                r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
-                     FROM devices
-                    WHERE status <> 'revoked' AND last_peer_endpoint = $1
-                    ORDER BY created_at DESC
+                r#"SELECT d.id, d.user_id, u.email::TEXT, d.name, d.allocated_ip, d.last_peer_endpoint
+                     FROM devices d
+                     JOIN users u ON u.id = d.user_id
+                    WHERE d.status <> 'revoked' AND d.last_peer_endpoint = $1
+                    ORDER BY d.created_at DESC
                     LIMIT 10"#,
             )
             .bind(&q_trim)
             .fetch_all(pool)
             .await?,
             "regex" => sqlx::query_as(
-                r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
-                     FROM devices
-                    WHERE status <> 'revoked'
-                      AND (name ~* $1 OR last_peer_endpoint ~* $1)
-                    ORDER BY created_at DESC
+                r#"SELECT d.id, d.user_id, u.email::TEXT, d.name, d.allocated_ip, d.last_peer_endpoint
+                     FROM devices d
+                     JOIN users u ON u.id = d.user_id
+                    WHERE d.status <> 'revoked'
+                      AND (d.name ~* $1 OR d.last_peer_endpoint ~* $1)
+                    ORDER BY d.created_at DESC
                     LIMIT 10"#,
             )
             .bind(regex_pat.as_deref().unwrap_or(""))
             .fetch_all(pool)
             .await?,
             _ => sqlx::query_as(
-                r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
-                     FROM devices
-                    WHERE status <> 'revoked' AND name ILIKE $1
-                    ORDER BY created_at DESC
+                r#"SELECT d.id, d.user_id, u.email::TEXT, d.name, d.allocated_ip, d.last_peer_endpoint
+                     FROM devices d
+                     JOIN users u ON u.id = d.user_id
+                    WHERE d.status <> 'revoked' AND d.name ILIKE $1
+                    ORDER BY d.created_at DESC
                     LIMIT 10"#,
             )
             .bind(&like_pat)
@@ -3124,7 +3139,7 @@ ip: crate::routes::auth::client_ip(&headers),
         };
         let bare_ip = q_trim.clone();
         let regex_body = regex_pat.clone();
-        for (id, user_id, name, allocated_ip, last_peer_endpoint) in rows {
+        for (id, user_id, user_email, name, allocated_ip, last_peer_endpoint) in rows {
             let matched_on: &'static str = match kind {
                 "endpoint" => "last_peer_endpoint",
                 "ip" => {
@@ -3156,6 +3171,7 @@ ip: crate::routes::auth::client_ip(&headers),
             devices.push(FinderDeviceMatch {
                 id,
                 user_id,
+                user_email,
                 name,
                 allocated_ip: allocated_ip.ip().to_string(),
                 last_peer_endpoint,

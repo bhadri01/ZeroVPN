@@ -1278,6 +1278,8 @@ export interface FinderUserMatch {
 export interface FinderDeviceMatch {
   id: string
   user_id: string
+  /** Owner's email — lets the finder group device matches by user. */
+  user_email: string
   name: string
   allocated_ip: string
   last_peer_endpoint: string | null

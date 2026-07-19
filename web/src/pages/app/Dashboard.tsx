@@ -14,7 +14,6 @@ import { Kpi, KpiStrip, PageHead, Panel } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetTrigger } from "@/components/ui/sheet"
 import {
-  adminListServers,
   listDevices,
   myUsage,
 } from "@/lib/api"
@@ -56,16 +55,6 @@ export function DashboardPage() {
     return m
   }, [liveDevices])
 
-  // Hubs KPI — admin-only; the public API doesn't expose server topology to
-  // regular users. For non-admins we render a paused-devices KPI instead so
-  // the strip stays 4-up without inventing data.
-  const serversQ = useQuery({
-    queryKey: ["admin", "servers", "dashboard"],
-    queryFn: adminListServers,
-    enabled: isAdmin,
-    refetchInterval: 30_000,
-  })
-
   // Account-level monthly quota for the "Quota" KPI card.
   const usageQ = useQuery({
     queryKey: ["me", "usage"],
@@ -76,8 +65,6 @@ export function DashboardPage() {
   // Stable reference so the totals/online memos below don't recompute on
   // every render just because `?? []` minted a fresh array.
   const devices = useMemo(() => devicesQ.data ?? [], [devicesQ.data])
-  const active = devices.filter((d) => d.status === "active").length
-  const paused = devices.filter((d) => d.status === "paused").length
 
   // Headline totals = the sum of every device's lifetime RX/TX — the exact
   // figure each device card shows — grown live by the WS store so the numbers
@@ -169,9 +156,6 @@ export function DashboardPage() {
     return { rx, tx, total }
   }, [onlineDeviceIds, liveDevices])
 
-  const servers = serversQ.data ?? []
-  const liveHubs = servers.filter((s) => s.is_active).length
-
   return (
     <PageStagger>
       <StaggerItem>
@@ -189,14 +173,6 @@ export function DashboardPage() {
           label="Devices · online"
           value={onlineCount}
           unit={devices.length > 0 ? `/ ${devices.length}` : undefined}
-          footL={
-            paused > 0
-              ? `${active} active · ${paused} paused`
-              : onlineCount === 0 && active > 0
-                ? `${active} active · awaiting handshake`
-                : `${active} active`
-          }
-          footR={devicesQ.dataUpdatedAt ? "updated now" : ""}
           deltaTone={onlineCount > 0 ? "up" : undefined}
         />
         <Kpi
@@ -226,8 +202,6 @@ export function DashboardPage() {
           value={devicesQ.isLoading ? "—" : formatBytes(totalUsageBytes)}
           spark={liveHistory.total}
           sparkColor="var(--primary)"
-          footL={`RX ${formatBytes(totalRxBytes)} · TX ${formatBytes(totalTxBytes)}`}
-          footR={isAdmin && servers.length > 0 ? `${liveHubs}/${servers.length} hubs` : undefined}
         />
         <Kpi
           label="Quota"
@@ -238,12 +212,19 @@ export function DashboardPage() {
                 ? "Unlimited"
                 : `${quotaPct}%`
           }
+          // Usage-so-far and the reset date only mean something against a
+          // cap — an unlimited account shows just "Unlimited" (the actual
+          // consumption already lives in the Total usage card).
           footL={
             quotaPct == null
-              ? `${formatBytes(quotaUsed)} this month`
+              ? undefined
               : `${formatBytes(quotaUsed)} / ${formatBytes(quotaCap ?? 0)}`
           }
-          footR={quotaResetsAt ? `resets ${formatDate(quotaResetsAt)}` : undefined}
+          footR={
+            quotaPct != null && quotaResetsAt
+              ? `resets ${formatDate(quotaResetsAt)}`
+              : undefined
+          }
         />
         </KpiStrip>
       </StaggerItem>

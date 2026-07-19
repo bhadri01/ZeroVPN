@@ -41,29 +41,27 @@ type NavEntry = {
   to: string
   label: string
   icon: React.ComponentType<{ className?: string }>
-  /** Mono key hint shown to the right of the label, e.g. "D". */
-  k?: string
   end?: boolean
 }
 
 const WORKSPACE: NavEntry[] = [
-  { to: "/app", label: "Dashboard", icon: IconLayoutDashboard, k: "D", end: true },
-  { to: "/app/devices", label: "Devices", icon: IconDevices, k: "V" },
-  { to: "/app/topology", label: "Topology", icon: IconHierarchy3, k: "T" },
-  { to: "/app/finder", label: "Finder", icon: IconSearch, k: "N" },
-  { to: "/app/settings", label: "Settings", icon: IconSettings, k: "," },
+  { to: "/app", label: "Dashboard", icon: IconLayoutDashboard, end: true },
+  { to: "/app/devices", label: "Devices", icon: IconDevices },
+  { to: "/app/topology", label: "Topology", icon: IconHierarchy3 },
+  { to: "/app/finder", label: "Finder", icon: IconSearch },
+  { to: "/app/settings", label: "Settings", icon: IconSettings },
 ]
 
 const ADMIN: NavEntry[] = [
-  { to: "/admin", label: "Overview", icon: IconUserShield, k: "1", end: true },
-  { to: "/admin/users", label: "Users", icon: IconUsers, k: "2" },
-  { to: "/admin/audit", label: "Audit log", icon: IconClipboardList, k: "3" },
-  { to: "/admin/sessions", label: "Sessions", icon: IconLogin2, k: "4" },
-  { to: "/admin/access-logs", label: "Access logs", icon: IconRoute, k: "5" },
-  { to: "/admin/failed-logins", label: "Failed logins", icon: IconCircleDashedX, k: "6" },
-  { to: "/admin/servers", label: "Servers", icon: IconRouter, k: "7" },
-  { to: "/admin/topology", label: "Topology", icon: IconHierarchy3, k: "8" },
-  { to: "/admin/finder", label: "Finder", icon: IconSearch, k: "F" },
+  { to: "/admin", label: "Overview", icon: IconUserShield, end: true },
+  { to: "/admin/users", label: "Users", icon: IconUsers },
+  { to: "/admin/audit", label: "Audit log", icon: IconClipboardList },
+  { to: "/admin/sessions", label: "Sessions", icon: IconLogin2 },
+  { to: "/admin/access-logs", label: "Access logs", icon: IconRoute },
+  { to: "/admin/failed-logins", label: "Failed logins", icon: IconCircleDashedX },
+  { to: "/admin/servers", label: "Servers", icon: IconRouter },
+  { to: "/admin/topology", label: "Topology", icon: IconHierarchy3 },
+  { to: "/admin/finder", label: "Finder", icon: IconSearch },
 ]
 
 export function AppSidebar() {
@@ -169,11 +167,6 @@ function NavList({ entries }: { entries: NavEntry[] }) {
               <NavLink to={entry.to} end={entry.end} onClick={closeIfMobile}>
                 <Icon className="size-4" />
                 <span>{entry.label}</span>
-                {entry.k && (
-                  <span className="text-muted-foreground/70 ml-auto font-mono text-[10px]">
-                    ⌘{entry.k}
-                  </span>
-                )}
               </NavLink>
             </SidebarMenuButton>
           </SidebarMenuItem>

@@ -1,31 +1,35 @@
 import { useQuery } from "@tanstack/react-query"
-import {
-  IconChevronRight,
-  IconDeviceDesktop,
-  IconNetwork,
-  IconSearch,
-  IconX,
-} from "@tabler/icons-react"
+import { IconSearch, IconX } from "@tabler/icons-react"
 import { useMemo, useState } from "react"
-import { Link } from "react-router"
 
+import {
+  FinderDeviceCard,
+  OwnerAccordion,
+} from "@/components/finder/FinderResults"
 import { PageStagger, StaggerItem } from "@/components/motion"
+import { parseTokens } from "@/lib/finder"
 import { Kbd, PageHead, Panel } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useDeviceOnline } from "@/hooks/useDeviceOnline"
+import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import { listDevices, meServer, type PublicDevice } from "@/lib/api"
-import { connState } from "@/lib/deviceState"
+import { useAuth } from "@/stores/auth"
 
 /**
  * User Finder — the non-privileged counterpart to the admin Finder.
  *
- * A regular user pastes a VPN IP and learns which of *their own* devices
- * holds it, plus whether the address is inside the VPN subnet. It is
- * deliberately scoped to the caller's own devices and computed entirely
- * client-side from data the user already has (`/devices` + `/me/server`),
- * so it exposes nothing about other users' peers — the fleet-wide lookup
- * (emails, other users' devices, source endpoints, log counts) stays in
- * the admin-only Finder.
+ * A regular user pastes one or more VPN IPs and learns which of *their
+ * own* devices hold them, plus whether each address is inside the VPN
+ * subnet. It is deliberately scoped to the caller's own devices and
+ * computed entirely client-side from data the user already has
+ * (`/devices` + `/me/server`), so it exposes nothing about other users'
+ * peers — the fleet-wide lookup (emails, other users' devices, source
+ * endpoints, log counts) stays in the admin-only Finder.
+ *
+ * Matched devices render inside an accordion section headed by the
+ * account email — the same owner-grouped presentation the admin Finder
+ * uses — with a live card per device (name · IP · RX/TX · sparkline).
  */
 
 /** Strip a trailing CIDR suffix and whitespace: "10.10.0.5/32" → "10.10.0.5". */
@@ -61,6 +65,12 @@ function ipInCidr(ip: string, cidr: string): boolean {
   return (ipInt & mask) === (baseInt & mask)
 }
 
+type Lookup =
+  | { kind: "mine"; ip: string; device: PublicDevice }
+  | { kind: "in-subnet"; ip: string }
+  | { kind: "outside"; ip: string }
+  | { kind: "invalid"; ip: string }
+
 export function UserFinderPage() {
   const [input, setInput] = useState("")
   const [committed, setCommitted] = useState("")
@@ -68,28 +78,45 @@ export function UserFinderPage() {
   const devicesQ = useQuery({ queryKey: ["devices"], queryFn: listDevices })
   const serverQ = useQuery({ queryKey: ["me", "server"], queryFn: meServer })
   const cidr = serverQ.data?.cidr
+  const user = useAuth((s) => s.user)
 
-  const submit = () => setCommitted(bareIp(input))
+  const submit = () => setCommitted(input.trim())
   const clear = () => {
     setInput("")
     setCommitted("")
   }
 
-  const result = useMemo(() => {
-    if (!committed) return null
-    const ip = bareIp(committed)
-    if (ipv4ToInt(ip) === null) {
-      return { kind: "invalid" as const, ip }
-    }
-    const match = (devicesQ.data ?? []).find(
-      (d) => bareIp(d.allocated_ip) === ip,
-    )
-    if (match) return { kind: "mine" as const, ip, device: match }
-    if (cidr && ipInCidr(ip, cidr)) {
-      return { kind: "in-subnet" as const, ip }
-    }
-    return { kind: "outside" as const, ip }
+  // One lookup per pasted value — commas, spaces, and newlines all
+  // separate. Each token resolves independently against the caller's
+  // own devices.
+  const lookups: Lookup[] = useMemo(() => {
+    if (!committed) return []
+    return parseTokens(committed).map((ip) => {
+      if (ipv4ToInt(ip) === null) return { kind: "invalid" as const, ip }
+      const match = (devicesQ.data ?? []).find(
+        (d) => bareIp(d.allocated_ip) === ip,
+      )
+      if (match) return { kind: "mine" as const, ip, device: match }
+      if (cidr && ipInCidr(ip, cidr)) {
+        return { kind: "in-subnet" as const, ip }
+      }
+      return { kind: "outside" as const, ip }
+    })
   }, [committed, devicesQ.data, cidr])
+
+  const matched = lookups.flatMap((l) => (l.kind === "mine" ? [l] : []))
+  const unmatched = lookups.filter((l) => l.kind !== "mine")
+
+  // Seed the matched devices' sparklines from history so the cards show
+  // a trace immediately instead of building up frame-by-frame. Key the
+  // memo on the joined-id string so a stable match set keeps a stable
+  // array identity across re-renders.
+  const matchedIdsKey = matched.map((m) => m.device.id).join("|")
+  const matchedIds = useMemo(
+    () => (matchedIdsKey ? matchedIdsKey.split("|") : []),
+    [matchedIdsKey],
+  )
+  useHistoryHydration({ deviceIds: matchedIds })
 
   return (
     <PageStagger>
@@ -97,7 +124,7 @@ export function UserFinderPage() {
         <PageHead
           eyebrow="Workspace · Finder"
           title="Finder"
-          sub="paste a VPN IP · find which of your devices holds it"
+          sub="paste one or more VPN IPs · find which of your devices hold them"
         />
       </StaggerItem>
 
@@ -111,11 +138,27 @@ export function UserFinderPage() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") submit()
               }}
-              placeholder={cidr ? `e.g. ${cidr.split("/")[0]}` : "e.g. 10.10.0.5"}
-              inputMode="decimal"
+              onPaste={(e) => {
+                // Multi-line clipboard lists (one IP per line) lose
+                // their newlines in a single-line input — normalize to
+                // spaces so every pasted value survives as a token.
+                const text = e.clipboardData.getData("text")
+                if (/[\r\n]/.test(text)) {
+                  e.preventDefault()
+                  const cleaned = text.replace(/[\s,]+/g, " ").trim()
+                  setInput((cur) =>
+                    cur.trim() ? `${cur.trim()} ${cleaned}` : cleaned,
+                  )
+                }
+              }}
+              placeholder={
+                cidr
+                  ? `e.g. ${cidr.split("/")[0]} · comma or space separated`
+                  : "e.g. 10.10.0.5, 10.10.0.7"
+              }
               autoFocus
               className="pl-9 pr-9 font-mono"
-              aria-label="VPN IP address"
+              aria-label="VPN IP addresses"
             />
             {input && (
               <button
@@ -139,9 +182,10 @@ export function UserFinderPage() {
           <Panel title="What this does">
             <div className="text-muted-foreground space-y-3 text-sm">
               <p>
-                Enter a VPN IP address and Finder tells you which of your own
-                devices is assigned to it, and whether the address sits inside
-                your VPN subnet.
+                Enter one or more VPN IP addresses — separated by commas,
+                spaces, or newlines — and Finder tells you which of your own
+                devices hold them, and whether each address sits inside your
+                VPN subnet.
               </p>
               <p className="flex flex-wrap items-center gap-2">
                 <span>Your VPN subnet:</span>
@@ -152,95 +196,67 @@ export function UserFinderPage() {
                 )}
               </p>
               <p className="text-xs opacity-70">
-                Finder only searches your own devices. Looking up who else holds
-                an address across the whole fleet is an admin-only tool.
+                Finder only searches your own devices. Looking up who else
+                holds an address across the whole fleet is an admin-only
+                tool.
               </p>
             </div>
           </Panel>
         </StaggerItem>
       )}
 
-      {result && (
+      {committed && matched.length > 0 && (
         <StaggerItem>
-          {result.kind === "invalid" && (
-            <Panel title="Not an IP address">
-              <p className="text-muted-foreground text-sm">
-                <span className="text-foreground font-mono">{result.ip}</span>{" "}
-                isn&apos;t a valid IPv4 address. Try something like{" "}
-                <span className="font-mono">10.10.0.5</span>.
-              </p>
-            </Panel>
-          )}
+          <OwnerAccordion
+            email={user?.email ?? "your devices"}
+            count={matched.length}
+          >
+            {matched.map((m) => (
+              <OwnDeviceCard key={m.device.id} device={m.device} ip={m.ip} />
+            ))}
+          </OwnerAccordion>
+        </StaggerItem>
+      )}
 
-          {result.kind === "mine" && (
-            <DeviceResult ip={result.ip} device={result.device} />
-          )}
-
-          {result.kind === "in-subnet" && (
-            <Panel title="Inside your VPN subnet">
-              <p className="text-muted-foreground text-sm">
-                <span className="text-foreground font-mono">{result.ip}</span> is
-                inside your VPN subnet{cidr ? ` (${cidr})` : ""} but isn&apos;t
-                assigned to any of your devices. It may belong to another peer or
-                be unassigned.
-              </p>
-            </Panel>
-          )}
-
-          {result.kind === "outside" && (
-            <Panel title="Not a VPN address">
-              <p className="text-muted-foreground text-sm">
-                <span className="text-foreground font-mono">{result.ip}</span> is
-                outside your VPN subnet{cidr ? ` (${cidr})` : ""}, so it
-                isn&apos;t a ZeroVPN peer address.
-              </p>
-            </Panel>
-          )}
+      {committed && unmatched.length > 0 && (
+        <StaggerItem>
+          <Panel title={matched.length > 0 ? "Other addresses" : "No matches"}>
+            <div className="divide-border -m-4 flex flex-col divide-y">
+              {unmatched.map((l) => (
+                <div
+                  key={l.ip}
+                  className="flex items-center justify-between gap-3 px-4 py-2.5 font-mono text-xs"
+                >
+                  <span className="text-foreground shrink-0">{l.ip}</span>
+                  <span className="text-muted-foreground text-right">
+                    {l.kind === "invalid" &&
+                      "not a valid IPv4 address"}
+                    {l.kind === "in-subnet" &&
+                      `inside your VPN subnet${cidr ? ` (${cidr})` : ""} · not one of your devices`}
+                    {l.kind === "outside" &&
+                      `outside your VPN subnet${cidr ? ` (${cidr})` : ""}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Panel>
         </StaggerItem>
       )}
     </PageStagger>
   )
 }
 
-function DeviceResult({ ip, device }: { ip: string; device: PublicDevice }) {
-  const online = connState(device) === "online"
+/** Wrapper so `useDeviceOnline` (a hook, one per device) can feed the
+ *  shared finder card its resolved connectivity state. */
+function OwnDeviceCard({ device, ip }: { device: PublicDevice; ip: string }) {
+  const online = useDeviceOnline(device)
   return (
-    <Link
+    <FinderDeviceCard
+      deviceId={device.id}
+      name={device.name}
+      ip={ip}
       to={`/app/devices/${device.id}`}
-      className="border-border bg-card hover:border-foreground/30 group flex items-center gap-4 rounded-md border p-4 transition-colors"
-    >
-      <div className="bg-secondary grid size-10 shrink-0 place-items-center rounded-md">
-        <IconDeviceDesktop className="size-5" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate font-medium">{device.name}</span>
-          <span
-            className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide"
-            style={{
-              color: online
-                ? "var(--status-online)"
-                : "var(--muted-foreground)",
-            }}
-          >
-            <span
-              className="size-1.5 rounded-full"
-              style={{
-                background: online
-                  ? "var(--status-online)"
-                  : "var(--status-offline)",
-              }}
-            />
-            {online ? "online" : "offline"}
-          </span>
-        </div>
-        <div className="text-muted-foreground mt-0.5 flex items-center gap-1.5 font-mono text-xs">
-          <IconNetwork className="size-3.5" />
-          {ip}
-          <span className="opacity-50">· your device</span>
-        </div>
-      </div>
-      <IconChevronRight className="text-muted-foreground group-hover:text-foreground size-5 shrink-0" />
-    </Link>
+      online={online}
+    />
   )
 }

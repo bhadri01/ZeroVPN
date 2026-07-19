@@ -2,10 +2,14 @@ import { useQuery } from "@tanstack/react-query"
 import { IconActivity, IconArrowUpRight } from "@tabler/icons-react"
 import { Link } from "react-router"
 
-import { adminListAudit, type AuditRow } from "@/lib/api"
+import {
+  adminListAudit,
+  type AuditRow,
+  listMyActivity,
+  type MyActivityRow,
+} from "@/lib/api"
 import { formatTime } from "@/lib/datetime"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useEventTail, type TailLine } from "@/stores/eventTail"
 import { useAuth } from "@/stores/auth"
 
 type Tone = "ok" | "warn" | "err" | "info" | "muted"
@@ -76,17 +80,17 @@ function auditToItem(row: AuditRow): ActivityItem {
   }
 }
 
-function tailToItem(line: TailLine): ActivityItem {
-  // `text` is "kind · subject · detail" — split back into the three
-  // visible slots so the layout reads consistently with the audit path.
-  const parts = line.text.split(" · ")
+function myActivityToItem(row: MyActivityRow): ActivityItem {
+  const target = row.target_id
+    ? `${row.target_type ? row.target_type + " · " : ""}${row.target_id.slice(0, 12)}`
+    : (row.target_type ?? "—")
   return {
-    id: `t${line.id}`,
-    tsMs: line.tsMs,
-    tone: line.tone,
-    event: parts[0] ?? line.kind,
-    target: parts[1] ?? "",
-    actor: parts.slice(2).join(" · ") || "live",
+    id: `m${row.id}`,
+    tsMs: tsToMs(row.created_at),
+    tone: toneForAuditAction(row.action),
+    event: row.action,
+    target,
+    actor: "you",
   }
 }
 
@@ -115,22 +119,27 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
     refetchInterval: 15_000,
   })
 
-  const tail = useEventTail((s) => s.lines)
-  // For regular users, the tail also carries server-level signals
-  // (`server_health` for the sidebar, `server_sample` for admins) that
-  // aren't *their* activity. Drop those before slicing so the panel
-  // only reflects events tied to the viewer's own devices.
-  const userTail = tail.filter(
-    (l) => l.kind !== "server_health" && l.kind !== "server_sample",
-  )
+  // Regular users get their own persisted activity log (sign-ins, device
+  // changes, account updates) — the user-facing equivalent of the admin audit
+  // feed. Previously this panel replayed only the ephemeral live-event tail,
+  // so it stayed empty on load until an event happened to stream in; the
+  // persisted query keeps it populated across reloads. Instant real-time
+  // events still surface in the "Live event stream" panel beside it.
+  const myActivityQ = useQuery({
+    queryKey: ["me", "activity", "dashboard", limit],
+    queryFn: () => listMyActivity(limit, 0),
+    enabled: !isAdmin,
+    refetchInterval: 15_000,
+  })
+
+  const activeQ = isAdmin ? auditQ : myActivityQ
   const items: ActivityItem[] = isAdmin
     ? (auditQ.data?.items ?? []).map(auditToItem)
-    : userTail.slice(-limit).reverse().map(tailToItem)
+    : (myActivityQ.data?.items ?? []).map(myActivityToItem)
 
-  // Footer link only for regular users: their preview above is the ephemeral
-  // live tail, so the persisted full log must stay reachable even when the
-  // preview is empty. Admins reach the full audit log via the card's top-right
-  // "View all" action, so the footer would just duplicate it — omit it there.
+  // Footer link only for regular users: it deep-links to their full activity
+  // log at /app/activity. Admins reach the full audit log via the card's
+  // top-right "View all" action, so the footer would just duplicate it there.
   const viewAllFooter = isAdmin ? null : (
     <div className="border-border bg-card/70 sticky bottom-0 border-t px-4 py-2">
       <Link
@@ -143,7 +152,7 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
     </div>
   )
 
-  if (isAdmin && auditQ.isLoading) {
+  if (activeQ.isLoading) {
     return (
       <Shell>
         <div className="flex flex-col gap-2 px-4 py-3">
@@ -154,7 +163,7 @@ export function RecentActivity({ limit = 8 }: RecentActivityProps) {
       </Shell>
     )
   }
-  if (isAdmin && auditQ.isError) {
+  if (activeQ.isError) {
     return (
       <Shell>
         <p className="text-destructive px-4 py-3 font-mono text-xs">

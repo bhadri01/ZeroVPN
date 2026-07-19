@@ -1,8 +1,7 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQueries } from "@tanstack/react-query"
 import {
   IconChevronRight,
   IconClipboardList,
-  IconDeviceDesktop,
   IconLogin2,
   IconNetwork,
   IconRoute,
@@ -10,10 +9,15 @@ import {
   IconUserSearch,
   IconX,
 } from "@tabler/icons-react"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router"
 
+import {
+  FinderDeviceCard,
+  OwnerAccordion,
+} from "@/components/finder/FinderResults"
 import { PageStagger, StaggerItem } from "@/components/motion"
+import { parseTokens } from "@/lib/finder"
 import { Kbd, PageHead, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,13 +47,33 @@ export function FinderPage() {
   // the VS Code search affordance — a `.*` toggle next to the input.
   const [regex, setRegex] = useState(false)
 
+  // One committed search can hold several lookup values — paste a list
+  // of IPs separated by spaces / commas / newlines and each token runs
+  // as its own backend query, merged below into one owner-grouped view.
+  // Regex mode (or a slash-wrapped pattern) always stays a single query
+  // since the pattern itself may contain separators.
+  const tokens = useMemo(() => {
+    if (!committed) return []
+    const isRegexQuery =
+      committed.length >= 3 &&
+      committed.startsWith("/") &&
+      committed.endsWith("/")
+    return isRegexQuery ? [committed] : parseTokens(committed)
+  }, [committed])
+
   // Empty committed = no fetch. Page renders a help card instead.
-  const q = useQuery({
-    queryKey: ["admin", "finder", committed],
-    queryFn: () => adminFinder(committed),
-    enabled: committed.length > 0,
-    placeholderData: (prev) => prev,
+  const queries = useQueries({
+    queries: tokens.map((t) => ({
+      queryKey: ["admin", "finder", t] as const,
+      queryFn: () => adminFinder(t),
+      placeholderData: (prev: FinderResponse | undefined) => prev,
+    })),
   })
+  const anyLoading = queries.some((qq) => qq.isLoading && !qq.data)
+  const firstError = queries.find((qq) => qq.isError)?.error
+  // Index-aligned with `tokens`; undefined while that token's query is
+  // in flight.
+  const results = queries.map((qq) => qq.data)
 
   // Wrap raw input for the backend. Regex mode auto-slashes when the
   // user hasn't already done it themselves, so they can type a literal
@@ -126,6 +150,21 @@ export function FinderPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") submit()
                 }}
+                onPaste={(e) => {
+                  // Multi-line clipboard lists (one IP per line) lose
+                  // their newlines in a single-line input — normalize
+                  // to spaces so each value survives as a token. Regex
+                  // patterns are left untouched.
+                  if (regex) return
+                  const text = e.clipboardData.getData("text")
+                  if (/[\r\n]/.test(text)) {
+                    e.preventDefault()
+                    const cleaned = text.replace(/[\s,]+/g, " ").trim()
+                    setInput((cur) =>
+                      cur.trim() ? `${cur.trim()} ${cleaned}` : cleaned,
+                    )
+                  }
+                }}
                 placeholder={
                   regex
                     ? "10\\.10\\.0\\..*  ·  curl|wget|python  ·  ^api\\/v1\\/(login|register)$"
@@ -185,20 +224,32 @@ export function FinderPage() {
           </div>
 
           {committed === "" && <FinderHelp />}
-          {committed !== "" && q.isLoading && !q.data && (
+          {committed !== "" && anyLoading && (
             <div className="flex flex-col gap-2 p-4">
               <Skeleton className="h-8 rounded-none" />
               <Skeleton className="h-8 rounded-none" />
               <Skeleton className="h-8 rounded-none" />
             </div>
           )}
-          {committed !== "" && q.isError && (
+          {committed !== "" && !anyLoading && firstError != null && (
             <div className="text-destructive p-6 font-mono text-sm">
               Search failed:{" "}
-              {q.error instanceof Error ? q.error.message : "unknown error"}
+              {firstError instanceof Error
+                ? firstError.message
+                : "unknown error"}
             </div>
           )}
-          {committed !== "" && q.data && <FinderResults data={q.data} />}
+          {committed !== "" &&
+            !anyLoading &&
+            firstError == null &&
+            tokens.length === 1 &&
+            results[0] && <FinderResults data={results[0]} />}
+          {committed !== "" &&
+            !anyLoading &&
+            firstError == null &&
+            tokens.length > 1 && (
+              <MultiFinderResults tokens={tokens} results={results} />
+            )}
         </Panel>
       </StaggerItem>
     </PageStagger>
@@ -218,6 +269,11 @@ function FinderHelp() {
         <li>
           <Kbd>203.0.113.42:51820</Kbd> — exact WG `host:port` lookup against
           the peer endpoint history.
+        </li>
+        <li>
+          <Kbd>10.10.0.5, 10.10.0.7 10.10.0.9</Kbd> — several values at
+          once (comma / space / newline separated). Each runs its own
+          lookup; results merge into one owner-grouped view.
         </li>
         <li>
           <Kbd>alice@example.com</Kbd> — substring email match. Returns up to
@@ -334,13 +390,167 @@ function FinderResults({ data }: { data: FinderResponse }) {
 
       {devices.length > 0 && (
         <div>
-          <h3 className="zv-eyebrow mb-2">Device matches</h3>
+          <h3 className="zv-eyebrow mb-2">Device matches · by owner</h3>
+          <DeviceOwnerGroups devices={devices} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Group device matches by their owning user and render one accordion
+ *  section per owner, each holding live device cards (IP · rate · chart).
+ *  This is the "who does this IP belong to" answer: the owner's email is
+ *  the section header, the device holding the address sits inside. */
+function DeviceOwnerGroups({ devices }: { devices: FinderDeviceMatch[] }) {
+  const groups = new Map<string, { email: string; devices: FinderDeviceMatch[] }>()
+  for (const d of devices) {
+    const g = groups.get(d.user_id)
+    if (g) g.devices.push(d)
+    else groups.set(d.user_id, { email: d.user_email, devices: [d] })
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      {[...groups.entries()].map(([userId, g]) => (
+        <OwnerAccordion
+          key={userId}
+          email={g.email}
+          count={g.devices.length}
+          to={`/admin/users/${userId}`}
+        >
+          {g.devices.map((d) => (
+            <FinderDeviceCard
+              key={d.id}
+              deviceId={d.id}
+              name={d.name}
+              ip={d.allocated_ip}
+              to={`/admin/devices/${d.id}`}
+              note={
+                d.matched_on === "last_peer_endpoint"
+                  ? "matched source endpoint"
+                  : undefined
+              }
+            />
+          ))}
+        </OwnerAccordion>
+      ))}
+    </div>
+  )
+}
+
+/** Merged view for a multi-value search (several IPs pasted at once).
+ *  Shows a per-value ownership summary, then every matched device
+ *  grouped under its owner. Log-count cards stay single-value only —
+ *  their deep links can carry exactly one filter. */
+function MultiFinderResults({
+  tokens,
+  results,
+}: {
+  tokens: string[]
+  results: (FinderResponse | undefined)[]
+}) {
+  const devices: FinderDeviceMatch[] = []
+  const seenDev = new Set<string>()
+  const users: FinderUserMatch[] = []
+  const seenUser = new Set<string>()
+  for (const r of results) {
+    if (!r) continue
+    for (const d of r.devices) {
+      if (!seenDev.has(d.id)) {
+        seenDev.add(d.id)
+        devices.push(d)
+      }
+    }
+    for (const u of r.users) {
+      if (!seenUser.has(u.id)) {
+        seenUser.add(u.id)
+        users.push(u)
+      }
+    }
+  }
+  const anyMatch = devices.length + users.length > 0
+
+  return (
+    <div className="flex flex-col gap-4 p-4">
+      <div className="flex flex-wrap items-center gap-2 font-mono text-[11px]">
+        <span className="text-muted-foreground">Looked up</span>
+        <Pill tone="info" dot={false}>
+          {tokens.length} values
+        </Pill>
+        <span className="text-muted-foreground">
+          · log counts are shown for single-value searches
+        </span>
+      </div>
+
+      <div>
+        <h3 className="zv-eyebrow mb-2">Ownership</h3>
+        <div className="border-border divide-border flex flex-col divide-y border">
+          {tokens.map((t, i) => (
+            <TokenOwnershipRow key={t} token={t} result={results[i]} />
+          ))}
+        </div>
+      </div>
+
+      {devices.length > 0 && (
+        <div>
+          <h3 className="zv-eyebrow mb-2">Device matches · by owner</h3>
+          <DeviceOwnerGroups devices={devices} />
+        </div>
+      )}
+
+      {users.length > 0 && (
+        <div>
+          <h3 className="zv-eyebrow mb-2">User matches</h3>
           <div className="border-border divide-border flex flex-col divide-y border">
-            {devices.map((d) => (
-              <DeviceMatchRow key={d.id} d={d} />
+            {users.map((u) => (
+              <UserMatchRow key={u.id} u={u} />
             ))}
           </div>
         </div>
+      )}
+
+      {!anyMatch && (
+        <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+          None of the values matched a user or device.
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** One line of the multi-value summary: the searched value → who holds
+ *  it. An exact `allocated_ip` hit names the owner; an endpoint-only hit
+ *  means the address was a connection *source*, not a VPN peer address. */
+function TokenOwnershipRow({
+  token,
+  result,
+}: {
+  token: string
+  result: FinderResponse | undefined
+}) {
+  const holder = result?.devices.find((d) => d.allocated_ip === token)
+  const sourceOnly =
+    !holder &&
+    (result?.devices.some((d) => d.matched_on === "last_peer_endpoint") ??
+      false)
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2 font-mono text-xs">
+      <span className="text-foreground shrink-0">{token}</span>
+      {holder ? (
+        <Link
+          to={`/admin/users/${holder.user_id}`}
+          className="text-muted-foreground hover:text-foreground min-w-0 truncate text-right"
+        >
+          <span className="text-foreground">{holder.user_email}</span>
+          <span className="px-1 opacity-60">·</span>
+          {holder.name}
+        </Link>
+      ) : sourceOnly ? (
+        <span className="text-muted-foreground">
+          connection source only — no peer holds it
+        </span>
+      ) : (
+        <span className="text-muted-foreground opacity-60">no match</span>
       )}
     </div>
   )
@@ -393,32 +603,6 @@ function UserMatchRow({ u }: { u: FinderUserMatch }) {
         <span className="font-mono text-sm">{u.email}</span>
         <span className="text-muted-foreground font-mono text-[10px]">
           {u.id.slice(0, 8)} · matched on {u.matched_on}
-        </span>
-      </div>
-      <IconChevronRight className="text-muted-foreground size-4" />
-    </Link>
-  )
-}
-
-function DeviceMatchRow({ d }: { d: FinderDeviceMatch }) {
-  return (
-    <Link
-      to={`/admin/devices/${d.id}`}
-      className="hover:bg-muted/40 flex items-center justify-between gap-3 px-3 py-2 transition"
-    >
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="inline-flex items-center gap-2 font-mono text-sm">
-          <IconDeviceDesktop className="text-muted-foreground size-3.5" />
-          {d.name}
-          <span className="text-muted-foreground text-xs">
-            · {d.allocated_ip}
-          </span>
-        </span>
-        <span className="text-muted-foreground truncate font-mono text-[10px]">
-          {d.last_peer_endpoint
-            ? `last endpoint ${d.last_peer_endpoint} · `
-            : ""}
-          matched on {d.matched_on}
         </span>
       </div>
       <IconChevronRight className="text-muted-foreground size-4" />

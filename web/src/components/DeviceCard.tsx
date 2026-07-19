@@ -167,9 +167,9 @@ export function DeviceCard({
       )}
     >
       {/* Drag handle — only rendered when the caller supplies drag-source
-          props. Absolutely positioned in the top-left corner so it stays
-          out of the header's normal flow; the rest of the card keeps its
-          existing layout untouched. Faint at rest; lights up on
+          props. Absolutely positioned in the top-right corner (the live rate
+          overlay owns the top-left) so it stays out of the header's normal
+          flow; the rest of the card keeps its layout. Faint at rest; lights up on
           card-hover (via group-hover/card) so it doesn't compete with
           the name + status while idle. */}
       {dragHandleProps && (
@@ -183,16 +183,62 @@ export function DeviceCard({
           // see move events and reorder silently does nothing on touch.
           // Desktop (sm:): revert to opacity-0 + group-hover so the grip
           // stays out of the way until the row is hovered.
-          className="border-border bg-card text-muted-foreground/60 group-hover/card:text-muted-foreground hover:text-foreground hover:border-foreground absolute left-1.5 top-1.5 z-10 inline-flex size-5 cursor-grab touch-none select-none items-center justify-center border transition-[opacity,color,border-color] active:cursor-grabbing sm:opacity-0 sm:group-hover/card:opacity-100"
+          className="border-border bg-card text-muted-foreground/60 group-hover/card:text-muted-foreground hover:text-foreground hover:border-foreground absolute right-1.5 top-1.5 z-10 inline-flex size-5 cursor-grab touch-none select-none items-center justify-center border transition-[opacity,color,border-color] active:cursor-grabbing sm:opacity-0 sm:group-hover/card:opacity-100"
         >
           <IconGripVertical className="size-3" />
         </div>
       )}
-      {/* Header: name + status share the top row; the IP and WAN endpoint
-          each get their own full-width line below so they never get squeezed
-          (and wrapped) by a wide status pill. Fixed line count keeps every
-          card the same height across the grid. */}
-      <div className="flex flex-col gap-0.5 px-4 pt-4 pb-3">
+      {/* Hero: the live throughput sparkline leads the card. Fixed height +
+          overflow-hidden so recharts' ResponsiveContainer can't nudge the
+          card as frames stream in. The current I/O rate is overlaid top-left
+          (only while online); the drag grip lives top-right, so they don't
+          collide. */}
+      <div className="relative h-14 overflow-hidden">
+        {showChart ? (
+          <MiniAreaChart
+            rxHistory={rxHistory}
+            txHistory={txHistory}
+            height={56}
+          />
+        ) : (
+          <ChartPlaceholder
+            height={56}
+            text={
+              isOnline
+                ? "connecting…"
+                : hasEverHandshook
+                  ? "offline"
+                  : "not connected"
+            }
+          />
+        )}
+        {isOnline && (
+          <div className="pointer-events-none absolute left-2 top-1">
+            <span className="bg-card/55 text-muted-foreground inline-flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums backdrop-blur-sm">
+              <span
+                className="bg-status-online size-1.5 animate-pulse rounded-full"
+                aria-hidden
+              />
+              <span
+                className="inline-flex items-center gap-0.5"
+                style={{ color: "var(--chart-rx)" }}
+              >
+                <IconArrowDown className="size-2.5" />
+                {formatBps(rxBps)}
+              </span>
+              <span className="text-primary inline-flex items-center gap-0.5">
+                <IconArrowUp className="size-2.5" />
+                {formatBps(txBps)}
+              </span>
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Identity + addressing. Name + status on the top row; IP and last-seen
+          share the next line; the WAN endpoint gets its own line so a wide
+          value never squeezes the rest. Copy affordances on IP + endpoint. */}
+      <div className="flex flex-col gap-1 px-4 pb-2.5 pt-2.5">
         <div className="flex items-center justify-between gap-2">
           {hideDetail ? (
             <span className="text-foreground inline-flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium">
@@ -231,26 +277,38 @@ export function DeviceCard({
             )}
           </div>
         </div>
-        {/* IP — full card width, single line, with a copy affordance. */}
-        <div className="flex items-center gap-1.5">
-          {hideDetail ? (
-            <span className="text-muted-foreground min-w-0 truncate font-mono text-xs">
-              {d.allocated_ip}
+        {/* IP (left, with copy) + last-seen (right). */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            {hideDetail ? (
+              <span className="text-muted-foreground min-w-0 truncate font-mono text-xs">
+                {d.allocated_ip}
+              </span>
+            ) : (
+              <Link
+                to={`/app/devices/${d.id}`}
+                draggable={false}
+                className="text-muted-foreground hover:text-foreground min-w-0 truncate font-mono text-xs transition-colors"
+              >
+                {d.allocated_ip}
+              </Link>
+            )}
+            <CopyButton value={d.allocated_ip} label="Copy IP" />
+          </div>
+          <WithTooltip
+            label={
+              d.last_handshake_at
+                ? formatDateTime(d.last_handshake_at)
+                : "Never connected"
+            }
+          >
+            <span className="text-muted-foreground/70 shrink-0 cursor-default whitespace-nowrap font-mono text-[10px] tabular-nums">
+              {formatAgo(d.last_handshake_at, now, "Never")}
             </span>
-          ) : (
-            <Link
-              to={`/app/devices/${d.id}`}
-              draggable={false}
-              className="text-muted-foreground hover:text-foreground min-w-0 truncate font-mono text-xs transition-colors"
-            >
-              {d.allocated_ip}
-            </Link>
-          )}
-          <CopyButton value={d.allocated_ip} label="Copy IP" />
+          </WithTooltip>
         </div>
-        {/* WAN endpoint the peer connects from. Always rendered (with a dim
-            placeholder when unknown) so cards keep a uniform height. The
-            copy button only appears once there's an endpoint to copy. */}
+        {/* WAN endpoint the peer connects from. Always rendered (dim
+            placeholder when unknown) so cards keep a uniform height. */}
         <div className="flex items-center gap-1.5">
           <span
             className="text-muted-foreground/60 min-w-0 truncate font-mono text-[11px]"
@@ -270,68 +328,21 @@ export function DeviceCard({
         </div>
       </div>
 
-      {/* Prominent blocks show cumulative totals (the headline number);
-          the live I/O rate moves to the footer. */}
-      <div className="grid grid-cols-2 gap-3 px-4 pb-3">
-        <RateBlock
+      {/* Split footer: cumulative RX / TX totals. Label colors track the
+          sparkline series (RX cobalt, TX lime) so the card reads as one
+          coherent palette. */}
+      <div className="border-border mt-auto grid grid-cols-2 border-t">
+        <FooterStat
           label="↓ RX TOTAL"
           value={hasEverHandshook ? compactBytes(totalRx) : "—"}
-          color="text-status-online"
+          color="var(--chart-rx)"
         />
-        <RateBlock
+        <FooterStat
           label="↑ TX TOTAL"
           value={hasEverHandshook ? compactBytes(totalTx) : "—"}
-          color="text-primary"
+          color="var(--primary)"
+          divider
         />
-      </div>
-
-      {/* Fixed-height, clipped box. The chart sits cleanly above the footer
-          instead of bleeding into it — the previous `-mb-4` pulled the
-          footer up over the sparkline's lower 16px, which read as the
-          chart "breaking" into the footer row. `overflow-hidden` + a
-          locked height also stops recharts' ResponsiveContainer from
-          nudging the card's height as frames stream in. */}
-      <div className="h-14 overflow-hidden px-1">
-        {showChart ? (
-          <MiniAreaChart rxHistory={rxHistory} txHistory={txHistory} height={56} />
-        ) : (
-          <ChartPlaceholder
-            text={
-              isOnline
-                ? "connecting…"
-                : hasEverHandshook
-                  ? "offline"
-                  : "not connected"
-            }
-          />
-        )}
-      </div>
-
-      <div className="border-border bg-muted/40 flex items-center justify-between gap-3 border-t px-4 py-2.5 font-mono text-[11px]">
-        <span className="text-muted-foreground inline-flex items-center gap-1.5">
-          <span className="bg-status-paused size-1 rounded-full" aria-hidden />
-          <WithTooltip
-            label={
-              d.last_handshake_at
-                ? formatDateTime(d.last_handshake_at)
-                : "Never connected"
-            }
-          >
-            <span className="cursor-default whitespace-nowrap">
-              {formatAgo(d.last_handshake_at, now, "Never")}
-            </span>
-          </WithTooltip>
-        </span>
-        <span className="text-muted-foreground inline-flex items-center gap-2 tabular-nums">
-          <span className="inline-flex items-center gap-0.5">
-            <IconArrowDown className="size-2.5" />
-            {isOnline ? formatBps(rxBps) : "—"}
-          </span>
-          <span className="inline-flex items-center gap-0.5">
-            <IconArrowUp className="size-2.5" />
-            {isOnline ? formatBps(txBps) : "—"}
-          </span>
-        </span>
       </div>
     </div>
   )
@@ -365,28 +376,36 @@ export function ChartPlaceholder({
   )
 }
 
-function RateBlock({
+function FooterStat({
   label,
   value,
   color,
+  divider,
 }: {
   label: string
   value: string
+  /** CSS color for the label — a series/token var (e.g. `var(--chart-rx)`)
+   *  so the total tracks the sparkline's color for that direction. */
   color: string
+  /** Draw a left divider — the second cell of the split footer. */
+  divider?: boolean
 }) {
   return (
-    <div className="space-y-0.5">
-      <p
-        className={cn(
-          "font-mono text-[10px] font-medium uppercase tracking-[0.08em]",
-          color,
-        )}
+    <div
+      className={cn(
+        "flex flex-col gap-0.5 px-4 py-2.5",
+        divider && "border-border border-l",
+      )}
+    >
+      <span
+        className="font-mono text-[10px] font-medium uppercase tracking-[0.08em]"
+        style={{ color }}
       >
         {label}
-      </p>
-      <p className="text-foreground font-heading text-base font-medium tabular-nums tracking-tight">
+      </span>
+      <span className="text-foreground font-heading text-[15px] font-medium tabular-nums tracking-tight">
         {value}
-      </p>
+      </span>
     </div>
   )
 }
