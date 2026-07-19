@@ -257,11 +257,11 @@ pub async fn list_users_csv(
         for u in rows {
             // Enum serde already lowercases ("admin"/"user", "active"/...);
             // unwrap to the inner string to avoid the Debug-format trick.
-            let role_s = serde_json::to_value(&u.role)
+            let role_s = serde_json::to_value(u.role)
                 .ok()
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_default();
-            let status_s = serde_json::to_value(&u.status)
+            let status_s = serde_json::to_value(u.status)
                 .ok()
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_default();
@@ -836,11 +836,10 @@ pub async fn admin_set_email_route(
         // No-op: same email after normalisation. Don't write or audit.
         return Ok(Json(json!({ "status": "ok" })));
     }
-    if let Some(other) = users::find_by_email(&state.pool, &new_email).await? {
-        if other.id != target_id {
+    if let Some(other) = users::find_by_email(&state.pool, &new_email).await?
+        && other.id != target_id {
             return Err(ApiError::Validation("email already in use".into()));
         }
-    }
     let n = users::admin_set_email(&state.pool, target.id, &new_email).await?;
     if n == 0 {
         return Err(ApiError::NotFound);
@@ -906,11 +905,10 @@ pub async fn delete_user(
     // still exist. Best-effort: failures log but don't block the deletion.
     if let Ok(user_devices) = devices::list_for_user(&state.pool, target.id).await {
         for d in user_devices {
-            if d.status == zerovpn_core::models::DeviceStatus::Active {
-                if let Err(e) = state.wg.remove_peer(&d.public_key).await {
+            if d.status == zerovpn_core::models::DeviceStatus::Active
+                && let Err(e) = state.wg.remove_peer(&d.public_key).await {
                     warn!(?e, device_id = %d.id, "delete_user: wg remove_peer failed");
                 }
-            }
             if let Some(alloc) = state.allocators.get(d.server_id) {
                 let _ = alloc.release(d.allocated_ip.ip());
             }
@@ -1004,13 +1002,12 @@ pub async fn create_user(
     if !email.contains('@') {
         return Err(ApiError::Validation("email is required and must contain @".into()));
     }
-    if let Some(p) = body.password.as_deref() {
-        if p.len() < 12 {
+    if let Some(p) = body.password.as_deref()
+        && p.len() < 12 {
             return Err(ApiError::Validation(
                 "password must be at least 12 characters".into(),
             ));
         }
-    }
     if users::find_by_email(&state.pool, &email).await?.is_some() {
         return Err(ApiError::Validation("email already in use".into()));
     }
@@ -1844,23 +1841,20 @@ pub async fn patch_server(
     Path(id): Path<Uuid>,
     Json(body): Json<PatchServerBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if let Some(port) = body.endpoint_port {
-        if !(1..=65535).contains(&port) {
+    if let Some(port) = body.endpoint_port
+        && !(1..=65535).contains(&port) {
             return Err(ApiError::Validation("endpoint_port must be 1..=65535".into()));
         }
-    }
-    if let Some(mtu) = body.mtu {
-        if !(576..=9000).contains(&mtu) {
+    if let Some(mtu) = body.mtu
+        && !(576..=9000).contains(&mtu) {
             return Err(ApiError::Validation("mtu must be 576..=9000".into()));
         }
-    }
-    if let Some(ka) = body.persistent_keepalive {
-        if !(0..=3600).contains(&ka) {
+    if let Some(ka) = body.persistent_keepalive
+        && !(0..=3600).contains(&ka) {
             return Err(ApiError::Validation(
                 "persistent_keepalive must be 0..=3600 (0 disables)".into(),
             ));
         }
-    }
     let dns_parsed: Option<Vec<IpNetwork>> = match body.dns_servers.as_ref() {
         Some(list) => {
             let mut out = Vec::with_capacity(list.len());
@@ -3435,8 +3429,8 @@ pub async fn stop_impersonation(
     // Phase 2 / Stage B — record under the impersonated user (mirrors
     // the impersonation_start attribution). The metadata carries the
     // admin who's stepping out.
-    if let Some(target) = impersonated_user_id {
-        if let Err(e) = session_events::record(
+    if let Some(target) = impersonated_user_id
+        && let Err(e) = session_events::record(
             &state.pool,
             target,
             session_events::SessionEvent::ImpersonationEnd,
@@ -3448,7 +3442,6 @@ pub async fn stop_impersonation(
         {
             warn!(?e, target = %target, "session_events impersonation_end record failed");
         }
-    }
     info!(admin = %real_user_id, "admin stopped impersonation");
 
     Ok(Json(json!({ "status": "ok" })))

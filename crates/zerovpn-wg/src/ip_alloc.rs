@@ -231,10 +231,10 @@ impl V6Allocator {
         let mut set = self.allocated.lock();
         let mut cursor = self.cursor.lock();
         loop {
-            if let Some(total) = self.total {
-                if *cursor >= total {
-                    return Err(AllocError::Exhausted);
-                }
+            if let Some(total) = self.total
+                && *cursor >= total
+            {
+                return Err(AllocError::Exhausted);
             }
             if !set.contains(&*cursor) {
                 let offset = *cursor;

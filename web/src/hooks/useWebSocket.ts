@@ -26,16 +26,19 @@ interface Options {
  * `to_vec_named`). When the WASM port lands, swap `decode()` for the WASM
  * binding and the on-wire format stays identical.
  */
-export function useWebSocket({ path, onEvent, enabled = true }: Options): UseWebSocketReturn {
+export function useWebSocket({
+  path,
+  onEvent,
+  enabled = true,
+}: Options): UseWebSocketReturn {
   const [state, setState] = useState<ConnectionState>("closed")
   const onEventRef = useRef(onEvent)
-  onEventRef.current = onEvent
+  useEffect(() => {
+    onEventRef.current = onEvent
+  })
 
   useEffect(() => {
-    if (!enabled) {
-      setState("closed")
-      return
-    }
+    if (!enabled) return
 
     let cancelled = false
     let socket: WebSocket | null = null
@@ -113,5 +116,7 @@ export function useWebSocket({ path, onEvent, enabled = true }: Options): UseWeb
     }
   }, [path, enabled])
 
-  return { state }
+  // While disabled, the socket is torn down (or never opened) — report
+  // "closed" regardless of what the last enabled run left in state.
+  return { state: enabled ? state : "closed" }
 }

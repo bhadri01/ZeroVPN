@@ -279,8 +279,8 @@ pub async fn forgot_password(
     // shape regardless of whether the address exists. The email is only
     // sent (and the audit row only written) when the user is real and
     // in a state where receiving a reset link makes sense.
-    if let Some(u) = user {
-        if u.status == UserStatus::Active || u.status == UserStatus::PendingVerification {
+    if let Some(u) = user
+        && (u.status == UserStatus::Active || u.status == UserStatus::PendingVerification) {
             issue_password_reset(&state, u.id, &u.email).await?;
             // Audit the request itself (not just the eventual reset).
             // Useful when looking at "did someone try to take over this
@@ -298,7 +298,6 @@ pub async fn forgot_password(
             )
             .await?;
         }
-    }
     Ok(Json(Ack { status: "ok" }))
 }
 
@@ -455,8 +454,8 @@ pub async fn resend_verify(
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
     let email = body.email.trim().to_lowercase();
-    if let Some(u) = users::find_by_email(&state.pool, &email).await? {
-        if u.status == UserStatus::PendingVerification {
+    if let Some(u) = users::find_by_email(&state.pool, &email).await?
+        && u.status == UserStatus::PendingVerification {
             let recent = verification_tokens::count_recent_for_user(
                 &state.pool,
                 u.id,
@@ -475,6 +474,5 @@ pub async fn resend_verify(
                 );
             }
         }
-    }
     Ok(Json(Ack { status: "ok" }))
 }

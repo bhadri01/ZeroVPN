@@ -10,7 +10,6 @@ import {
   type Icon,
 } from "@tabler/icons-react"
 import { AnimatePresence, motion } from "motion/react"
-import { useEffect, useState } from "react"
 import { useLocation, useNavigate } from "react-router"
 import { toast } from "sonner"
 
@@ -105,7 +104,7 @@ const SECTIONS: SectionDef[] = [
 ]
 
 const HASH_TO_KEY: Record<string, SectionKey> = Object.fromEntries(
-  SECTIONS.map((s) => [s.hash, s.key]),
+  SECTIONS.map((s) => [s.hash, s.key])
 ) as Record<string, SectionKey>
 
 const ACCENT_SWATCHES: { value: Accent; label: string; preview: string }[] = [
@@ -135,20 +134,15 @@ export function SettingsPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const reduce = useReducedMotion()
-  // Tracks the active section. Synced to URL hash so deep links (e.g.
-  // /app/settings#appearance) and back/forward navigation work.
-  const initialFromHash = HASH_TO_KEY[location.hash.replace(/^#/, "")]
-  const [active, setActive] = useState<SectionKey>(initialFromHash ?? "account")
-
-  useEffect(() => {
-    const next = HASH_TO_KEY[location.hash.replace(/^#/, "")]
-    if (next && next !== active) setActive(next)
-  }, [location.hash, active])
+  // Active section derives straight from the URL hash, so deep links (e.g.
+  // /app/settings#appearance) and back/forward navigation work with no
+  // state syncing — selecting a section just navigates.
+  const active: SectionKey =
+    HASH_TO_KEY[location.hash.replace(/^#/, "")] ?? "account"
 
   const selectSection = (key: SectionKey) => {
     const def = SECTIONS.find((s) => s.key === key)
     if (!def) return
-    setActive(key)
     navigate(`/app/settings#${def.hash}`, { replace: false })
   }
 
@@ -184,7 +178,7 @@ export function SettingsPage() {
                   {isActive && (
                     <motion.div
                       layoutId="settings-nav-active"
-                      className="bg-primary/8 absolute inset-0 z-0"
+                      className="absolute inset-0 z-0 bg-primary/8"
                       transition={
                         reduce
                           ? { duration: 0 }
@@ -192,7 +186,7 @@ export function SettingsPage() {
                       }
                       aria-hidden
                     >
-                      <span className="bg-primary absolute inset-y-0 left-0 w-[2px]" />
+                      <span className="absolute inset-y-0 left-0 w-[2px] bg-primary" />
                     </motion.div>
                   )}
                   <button
@@ -201,12 +195,12 @@ export function SettingsPage() {
                     data-active={isActive ? "1" : undefined}
                     className="zv-settings-nav-item relative z-10 w-full"
                   >
-                    <I size={14} className="text-muted-foreground shrink-0" />
+                    <I size={14} className="shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1 text-left">
-                      <span className="text-foreground block text-[13px] font-medium">
+                      <span className="block text-[13px] font-medium text-foreground">
                         {s.label}
                       </span>
-                      <span className="text-muted-foreground/80 block font-mono text-[10px]">
+                      <span className="block font-mono text-[10px] text-muted-foreground/80">
                         {s.hint}
                       </span>
                     </span>
@@ -261,7 +255,7 @@ export function SettingsPage() {
             >
               <div>
                 <Eyebrow>{activeDef.label}</Eyebrow>
-                <h2 className="font-heading text-foreground mt-1 text-xl font-medium tracking-[-0.01em]">
+                <h2 className="mt-1 font-heading text-xl font-medium tracking-[-0.01em] text-foreground">
                   {activeDef.hint}
                 </h2>
               </div>
@@ -295,7 +289,7 @@ function ChartColorPicker({
   return (
     <div className="flex flex-col gap-3">
       {/* Sample showing how the line renders in charts. */}
-      <div className="border-border/60 bg-muted/15 flex h-9 items-center border px-3">
+      <div className="flex h-9 items-center border border-border/60 bg-muted/15 px-3">
         <span
           className="h-[3px] w-full rounded-full"
           style={{ background: previewColor }}
@@ -303,33 +297,36 @@ function ChartColorPicker({
         />
       </div>
       <div className="flex flex-wrap gap-2">
-      {CHART_PALETTE.map((opt) => {
-        const isActive = opt.value === value
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className={["zv-accent-swatch", isActive && "zv-accent-swatch--on"]
-              .filter(Boolean)
-              .join(" ")}
-            aria-pressed={isActive}
-            aria-label={opt.label}
-            title={opt.label}
-          >
-            <span
-              className="zv-accent-swatch__chip"
-              style={{ background: opt.preview }}
-              aria-hidden
+        {CHART_PALETTE.map((opt) => {
+          const isActive = opt.value === value
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onChange(opt.value)}
+              className={[
+                "zv-accent-swatch",
+                isActive && "zv-accent-swatch--on",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              aria-pressed={isActive}
+              aria-label={opt.label}
+              title={opt.label}
             >
-              {isActive && <IconCheck size={12} strokeWidth={3} />}
-            </span>
-            <span className="text-foreground/90 font-mono text-[11px]">
-              {opt.label}
-            </span>
-          </button>
-        )
-      })}
+              <span
+                className="zv-accent-swatch__chip"
+                style={{ background: opt.preview }}
+                aria-hidden
+              >
+                {isActive && <IconCheck size={12} strokeWidth={3} />}
+              </span>
+              <span className="font-mono text-[11px] text-foreground/90">
+                {opt.label}
+              </span>
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -422,7 +419,7 @@ function ThemeVariantPicker({
             className={[
               "group relative flex flex-col gap-2 border p-3 text-left transition-colors",
               isActive
-                ? "border-primary ring-primary ring-2"
+                ? "border-primary ring-2 ring-primary"
                 : "border-border hover:border-foreground/40",
             ].join(" ")}
             aria-pressed={isActive}
@@ -442,7 +439,7 @@ function ThemeVariantPicker({
                 fontFamily: t.font,
               }}
             >
-              <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.08em] opacity-70">
+              <div className="flex items-center justify-between text-[10px] tracking-[0.08em] uppercase opacity-70">
                 <span>{t.label}</span>
                 <span
                   className="block size-2"
@@ -484,14 +481,14 @@ function ThemeVariantPicker({
               </div>
             </div>
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-foreground font-mono text-xs">
+              <span className="font-mono text-xs text-foreground">
                 {t.label}
               </span>
               {isActive && (
                 <IconCheck size={12} className="text-primary" strokeWidth={3} />
               )}
             </div>
-            <span className="text-muted-foreground font-mono text-[10px] leading-tight">
+            <span className="font-mono text-[10px] leading-tight text-muted-foreground">
               {t.blurb}
             </span>
           </button>
@@ -522,8 +519,7 @@ function AppearanceSection() {
   // PreferencesSection (and the Toaster's variant applier in sonner.tsx)
   // see the new value without a refetch.
   const variantM = useMutation({
-    mutationFn: (next: ThemeVariant) =>
-      setMyPreferences({ theme: next }),
+    mutationFn: (next: ThemeVariant) => setMyPreferences({ theme: next }),
     onSuccess: (data) => {
       qc.setQueryData(["me", "preferences"], data)
     },
@@ -543,10 +539,9 @@ function AppearanceSection() {
         sub="Visual language · colors, fonts, radius, spacing"
       >
         <ThemeVariantPicker value={variant} onChange={pickVariant} />
-        <p className="text-muted-foreground mt-3 font-mono text-[11px]">
+        <p className="mt-3 font-mono text-[11px] text-muted-foreground">
           Saves to your account so the choice follows you across devices.
-          Light/dark mode below stays orthogonal — each variant ships
-          both.
+          Light/dark mode below stays orthogonal — each variant ships both.
         </p>
       </Panel>
 
@@ -560,9 +555,9 @@ function AppearanceSection() {
           ]}
           onChange={setTheme}
         />
-        <p className="text-muted-foreground mt-3 font-mono text-[11px]">
-          Press <span className="zv-kbd">D</span> anywhere outside an input
-          to toggle light/dark instantly.
+        <p className="mt-3 font-mono text-[11px] text-muted-foreground">
+          Press <span className="zv-kbd">D</span> anywhere outside an input to
+          toggle light/dark instantly.
         </p>
       </Panel>
 
@@ -595,16 +590,16 @@ function AppearanceSection() {
                 >
                   {isActive && <IconCheck size={12} strokeWidth={3} />}
                 </span>
-                <span className="text-foreground/90 font-mono text-[11px]">
+                <span className="font-mono text-[11px] text-foreground/90">
                   {opt.label}
                 </span>
               </button>
             )
           })}
         </div>
-        <p className="text-muted-foreground mt-3 font-mono text-[11px]">
-          Stored locally per browser. Switching takes effect immediately
-          without reloading.
+        <p className="mt-3 font-mono text-[11px] text-muted-foreground">
+          Stored locally per browser. Switching takes effect immediately without
+          reloading.
         </p>
       </Panel>
 
@@ -657,15 +652,9 @@ function PreferencesSection() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Panel
-        title="Display"
-        sub="How values are formatted across the app"
-      >
+      <Panel title="Display" sub="How values are formatted across the app">
         <div className="flex flex-col gap-4">
-          <PrefRow
-            label="Throughput units"
-            hint="Bandwidth and live rates"
-          >
+          <PrefRow label="Throughput units" hint="Bandwidth and live rates">
             <div className="flex flex-col items-start gap-1.5 sm:items-end">
               <Seg<UnitsPref>
                 value={p.units}
@@ -675,7 +664,7 @@ function PreferencesSection() {
                 ]}
                 onChange={(v) => m.mutate({ units: v })}
               />
-              <span className="text-muted-foreground font-mono text-[11px]">
+              <span className="font-mono text-[11px] text-muted-foreground">
                 e.g. {formatBpsWith(12_000_000, p.units)}
               </span>
             </div>
@@ -691,7 +680,7 @@ function PreferencesSection() {
                 ]}
                 onChange={(v) => m.mutate({ date_format: v })}
               />
-              <span className="text-muted-foreground font-mono text-[11px]">
+              <span className="font-mono text-[11px] text-muted-foreground">
                 e.g. {formatDateWith(now, p.date_format)}
               </span>
             </div>
@@ -706,7 +695,7 @@ function PreferencesSection() {
                 ]}
                 onChange={(v) => m.mutate({ time_format: v })}
               />
-              <span className="text-muted-foreground font-mono text-[11px]">
+              <span className="font-mono text-[11px] text-muted-foreground">
                 e.g. {formatTimeWith(now, p.time_format)}
               </span>
             </div>
@@ -714,10 +703,7 @@ function PreferencesSection() {
         </div>
       </Panel>
 
-      <Panel
-        title="Behavior"
-        sub="App-wide interaction preferences"
-      >
+      <Panel title="Behavior" sub="App-wide interaction preferences">
         <div className="flex flex-col gap-4">
           <PrefRow
             label="Default landing"
@@ -817,7 +803,7 @@ function NotificationsSection() {
                 }
               } else if (Notification.permission === "denied") {
                 toast.error(
-                  "Notifications are blocked in your browser settings",
+                  "Notifications are blocked in your browser settings"
                 )
                 return
               }
@@ -857,7 +843,10 @@ function NotificationsSection() {
         </div>
       </Panel>
 
-      <Panel title="Test" sub="Fires a sample notification with your current settings">
+      <Panel
+        title="Test"
+        sub="Fires a sample notification with your current settings"
+      >
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
@@ -865,7 +854,8 @@ function NotificationsSection() {
             size="sm"
             onClick={() =>
               notify.info("Test notification", {
-                description: "Position, chime, and browser alert reflect your settings.",
+                description:
+                  "Position, chime, and browser alert reflect your settings.",
                 important: true,
                 id: "settings-test",
               })
@@ -873,7 +863,7 @@ function NotificationsSection() {
           >
             Send test
           </Button>
-          <p className="text-muted-foreground font-mono text-[11px] self-center">
+          <p className="self-center font-mono text-[11px] text-muted-foreground">
             Hide this tab before clicking to see a browser-level alert.
           </p>
         </div>
@@ -911,8 +901,8 @@ function PrefRow({
   return (
     <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
       <div className="min-w-0">
-        <div className="text-foreground text-[13px] font-medium">{label}</div>
-        <div className="text-muted-foreground font-mono text-[11px]">
+        <div className="text-[13px] font-medium text-foreground">{label}</div>
+        <div className="font-mono text-[11px] text-muted-foreground">
           {hint}
         </div>
       </div>
@@ -942,8 +932,8 @@ function PrefToggle({
         onCheckedChange={(v) => onCheckedChange(!!v)}
       />
       <label htmlFor={id} className="min-w-0 flex-1 cursor-pointer">
-        <div className="text-foreground text-[13px] font-medium">{label}</div>
-        <div className="text-muted-foreground mt-0.5 font-mono text-[11px] leading-relaxed">
+        <div className="text-[13px] font-medium text-foreground">{label}</div>
+        <div className="mt-0.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
           {hint}
         </div>
       </label>
@@ -953,4 +943,5 @@ function PrefToggle({
 
 // Suppress unused-warning for the API tokens icon if a future iteration
 // wires it back into the nav. Until then it lives as a reserved export.
+// eslint-disable-next-line react-refresh/only-export-components -- deliberate non-component re-export
 export { IconKey as _IconKey }

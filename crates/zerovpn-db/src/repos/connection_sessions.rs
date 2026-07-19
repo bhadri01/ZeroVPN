@@ -3,17 +3,14 @@
 //! comment and the lifecycle.
 //!
 //! Three call sites in the worker:
-//!   - [`open`]            — wg_poller transition offline → online (or
-//!                            None → online on the first observation
-//!                            after worker boot).
-//!   - [`close`]           — wg_poller transition online → offline.
-//!   - [`close_all_open`]  — worker startup; the in-memory `prev_online`
-//!                            map and the captured WG counters are
-//!                            gone, so any rows still flagged open are
-//!                            stale and get marked closed with
-//!                            `ended_at = NOW()` (the byte_end columns
-//!                            stay NULL — they're meaningless without
-//!                            a new observation to anchor against).
+//!   - [`open`] — wg_poller transition offline → online (or None → online
+//!     on the first observation after worker boot).
+//!   - [`close`] — wg_poller transition online → offline.
+//!   - [`close_all_open`] — worker startup; the in-memory `prev_online`
+//!     map and the captured WG counters are gone, so any rows still
+//!     flagged open are stale and get marked closed with
+//!     `ended_at = NOW()` (the byte_end columns stay NULL — they're
+//!     meaningless without a new observation to anchor against).
 
 use serde::Serialize;
 use time::OffsetDateTime;

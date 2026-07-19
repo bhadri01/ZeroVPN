@@ -59,9 +59,10 @@ pub async fn export(
 
     // All devices owned by user (regardless of status)
     let devs = sqlx::query_as::<_, zerovpn_core::models::Device>(
-        r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
-                  dns_names, allowed_ips_override, dns_override,
-                  last_handshake_at, created_at
+        r#"SELECT id, user_id, server_id, name, os, device_type, public_key, allocated_ip,
+                  status, dns_names, allowed_ips_override, dns_override,
+                  last_handshake_at, created_at,
+                  NULL::bytea AS private_key_encrypted
              FROM devices
             WHERE user_id = $1
             ORDER BY created_at DESC"#,
@@ -436,30 +437,26 @@ pub async fn set_preferences(
     CurrentUser(user): CurrentUser,
     Json(patch): Json<user_prefs::UserPreferencesPatch>,
 ) -> ApiResult<impl IntoResponse> {
-    if let Some(v) = patch.units.as_deref() {
-        if !matches!(v, "bps" | "Bps") {
+    if let Some(v) = patch.units.as_deref()
+        && !matches!(v, "bps" | "Bps") {
             return Err(ApiError::Validation(format!("invalid units: {v}")));
         }
-    }
-    if let Some(v) = patch.date_format.as_deref() {
-        if !matches!(v, "iso" | "us" | "eu") {
+    if let Some(v) = patch.date_format.as_deref()
+        && !matches!(v, "iso" | "us" | "eu") {
             return Err(ApiError::Validation(format!("invalid date_format: {v}")));
         }
-    }
-    if let Some(v) = patch.time_format.as_deref() {
-        if !matches!(v, "h24" | "h12") {
+    if let Some(v) = patch.time_format.as_deref()
+        && !matches!(v, "h24" | "h12") {
             return Err(ApiError::Validation(format!("invalid time_format: {v}")));
         }
-    }
-    if let Some(v) = patch.default_landing.as_deref() {
-        if !matches!(v, "dashboard" | "devices" | "topology") {
+    if let Some(v) = patch.default_landing.as_deref()
+        && !matches!(v, "dashboard" | "devices" | "topology") {
             return Err(ApiError::Validation(format!(
                 "invalid default_landing: {v}"
             )));
         }
-    }
-    if let Some(v) = patch.toast_position.as_deref() {
-        if !matches!(
+    if let Some(v) = patch.toast_position.as_deref()
+        && !matches!(
             v,
             "top-left"
                 | "top-center"
@@ -472,12 +469,10 @@ pub async fn set_preferences(
                 "invalid toast_position: {v}"
             )));
         }
-    }
-    if let Some(v) = patch.theme.as_deref() {
-        if !matches!(v, "swiss" | "brutalist" | "terminal" | "editorial" | "soft") {
+    if let Some(v) = patch.theme.as_deref()
+        && !matches!(v, "swiss" | "brutalist" | "terminal" | "editorial" | "soft") {
             return Err(ApiError::Validation(format!("invalid theme: {v}")));
         }
-    }
     let prefs = user_prefs::upsert(&state.pool, user.id, &patch).await?;
     Ok(Json(prefs))
 }
@@ -650,11 +645,10 @@ pub async fn delete_account(
     // never abort the deletion (DB is already updated).
     if let Ok(user_devices) = devices::list_for_user(&state.pool, user.id).await {
         for d in user_devices {
-            if d.status == zerovpn_core::models::DeviceStatus::Active {
-                if let Err(e) = state.wg.remove_peer(&d.public_key).await {
+            if d.status == zerovpn_core::models::DeviceStatus::Active
+                && let Err(e) = state.wg.remove_peer(&d.public_key).await {
                     tracing::warn!(?e, device_id = %d.id, "delete_account: wg remove_peer failed");
                 }
-            }
             if let Some(alloc) = state.allocators.get(d.server_id) {
                 let _ = alloc.release(d.allocated_ip.ip());
             }

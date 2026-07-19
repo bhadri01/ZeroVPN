@@ -94,7 +94,7 @@ export function UserFinderPage() {
     return parseTokens(committed).map((ip) => {
       if (ipv4ToInt(ip) === null) return { kind: "invalid" as const, ip }
       const match = (devicesQ.data ?? []).find(
-        (d) => bareIp(d.allocated_ip) === ip,
+        (d) => bareIp(d.allocated_ip) === ip
       )
       if (match) return { kind: "mine" as const, ip, device: match }
       if (cidr && ipInCidr(ip, cidr)) {
@@ -104,18 +104,17 @@ export function UserFinderPage() {
     })
   }, [committed, devicesQ.data, cidr])
 
-  const matched = lookups.flatMap((l) => (l.kind === "mine" ? [l] : []))
+  const matched = useMemo(
+    () => lookups.flatMap((l) => (l.kind === "mine" ? [l] : [])),
+    [lookups]
+  )
   const unmatched = lookups.filter((l) => l.kind !== "mine")
 
   // Seed the matched devices' sparklines from history so the cards show
-  // a trace immediately instead of building up frame-by-frame. Key the
-  // memo on the joined-id string so a stable match set keeps a stable
-  // array identity across re-renders.
-  const matchedIdsKey = matched.map((m) => m.device.id).join("|")
-  const matchedIds = useMemo(
-    () => (matchedIdsKey ? matchedIdsKey.split("|") : []),
-    [matchedIdsKey],
-  )
+  // a trace immediately instead of building up frame-by-frame. The
+  // hydration fetches are react-query cache-keyed per id, so array
+  // identity doesn't need any further stabilizing.
+  const matchedIds = useMemo(() => matched.map((m) => m.device.id), [matched])
   useHistoryHydration({ deviceIds: matchedIds })
 
   return (
@@ -131,7 +130,7 @@ export function UserFinderPage() {
       <StaggerItem>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative flex-1">
-            <IconSearch className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+            <IconSearch className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -147,7 +146,7 @@ export function UserFinderPage() {
                   e.preventDefault()
                   const cleaned = text.replace(/[\s,]+/g, " ").trim()
                   setInput((cur) =>
-                    cur.trim() ? `${cur.trim()} ${cleaned}` : cleaned,
+                    cur.trim() ? `${cur.trim()} ${cleaned}` : cleaned
                   )
                 }
               }}
@@ -157,7 +156,7 @@ export function UserFinderPage() {
                   : "e.g. 10.10.0.5, 10.10.0.7"
               }
               autoFocus
-              className="pl-9 pr-9 font-mono"
+              className="pr-9 pl-9 font-mono"
               aria-label="VPN IP addresses"
             />
             {input && (
@@ -165,7 +164,7 @@ export function UserFinderPage() {
                 type="button"
                 onClick={clear}
                 aria-label="Clear"
-                className="text-muted-foreground hover:text-foreground absolute right-2 top-1/2 -translate-y-1/2 rounded-sm p-1"
+                className="absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-1 text-muted-foreground hover:text-foreground"
               >
                 <IconX className="size-4" />
               </button>
@@ -180,12 +179,12 @@ export function UserFinderPage() {
       {!committed && (
         <StaggerItem>
           <Panel title="What this does">
-            <div className="text-muted-foreground space-y-3 text-sm">
+            <div className="space-y-3 text-sm text-muted-foreground">
               <p>
                 Enter one or more VPN IP addresses — separated by commas,
                 spaces, or newlines — and Finder tells you which of your own
-                devices hold them, and whether each address sits inside your
-                VPN subnet.
+                devices hold them, and whether each address sits inside your VPN
+                subnet.
               </p>
               <p className="flex flex-wrap items-center gap-2">
                 <span>Your VPN subnet:</span>
@@ -196,9 +195,8 @@ export function UserFinderPage() {
                 )}
               </p>
               <p className="text-xs opacity-70">
-                Finder only searches your own devices. Looking up who else
-                holds an address across the whole fleet is an admin-only
-                tool.
+                Finder only searches your own devices. Looking up who else holds
+                an address across the whole fleet is an admin-only tool.
               </p>
             </div>
           </Panel>
@@ -221,16 +219,15 @@ export function UserFinderPage() {
       {committed && unmatched.length > 0 && (
         <StaggerItem>
           <Panel title={matched.length > 0 ? "Other addresses" : "No matches"}>
-            <div className="divide-border -m-4 flex flex-col divide-y">
+            <div className="-m-4 flex flex-col divide-y divide-border">
               {unmatched.map((l) => (
                 <div
                   key={l.ip}
                   className="flex items-center justify-between gap-3 px-4 py-2.5 font-mono text-xs"
                 >
-                  <span className="text-foreground shrink-0">{l.ip}</span>
-                  <span className="text-muted-foreground text-right">
-                    {l.kind === "invalid" &&
-                      "not a valid IPv4 address"}
+                  <span className="shrink-0 text-foreground">{l.ip}</span>
+                  <span className="text-right text-muted-foreground">
+                    {l.kind === "invalid" && "not a valid IPv4 address"}
                     {l.kind === "in-subnet" &&
                       `inside your VPN subnet${cidr ? ` (${cidr})` : ""} · not one of your devices`}
                     {l.kind === "outside" &&

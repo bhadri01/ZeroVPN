@@ -69,17 +69,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { WithTooltip } from "@/components/ui/with-tooltip"
 import { useBreadcrumbOverride } from "@/hooks/useBreadcrumbOverride"
 import { useDeviceOnline } from "@/hooks/useDeviceOnline"
 import { useHistoryHydration } from "@/hooks/useHistoryHydration"
 import { useLiveTotal } from "@/hooks/useLiveTotal"
+import { useNow } from "@/hooks/useNow"
 import {
   ApiError,
   type CreatedDevice,
@@ -188,7 +184,7 @@ export function DeviceDetailPage() {
   const { rx: totalRx, tx: totalTx } = useLiveTotal(
     id,
     deviceQ.data?.total_rx_bytes ?? 0,
-    deviceQ.data?.total_tx_bytes ?? 0,
+    deviceQ.data?.total_tx_bytes ?? 0
   )
   // Effective connectivity — handshake window refined by keepalive activity so
   // the pill flips offline in ~90s (like the cards) instead of waiting out the
@@ -223,6 +219,9 @@ export function DeviceDetailPage() {
   const [renameOpen, setRenameOpen] = useState(false)
   // Full activity log — paginated, infinite-scroll side sheet.
   const [activityOpen, setActivityOpen] = useState(false)
+  // Minute-granularity clock for the "added N ago" age label — render-pure
+  // substitute for reading Date.now() during render.
+  const nowMs = useNow(60_000)
 
   const pauseM = useMutation({
     mutationFn: () => pauseDevice(id),
@@ -322,7 +321,7 @@ export function DeviceDetailPage() {
   const isPaused = d.status === "paused"
   const isRevoked = d.status === "revoked"
 
-  const addedMs = Date.now() - new Date(d.created_at).getTime()
+  const addedMs = nowMs - new Date(d.created_at).getTime()
   const ageLabel = fmtRel(addedMs).replace(" ago", "")
 
   const server = serverQ.data
@@ -340,133 +339,135 @@ export function DeviceDetailPage() {
   return (
     <PageStagger>
       <StaggerItem>
-      <PageHead
-        eyebrow={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)} · ${d.id.slice(0, 8).toUpperCase()}`}
-        title={
-          <span className="inline-flex items-center gap-2">
-            <TypeIcon
-              className="text-muted-foreground size-[0.8em] shrink-0"
-              title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
-            />
-            <span className="min-w-0 break-words">{d.name}</span>
-          </span>
-        }
-        sub={
-          <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
-            <span className="font-mono">{d.allocated_ip}</span>
-            <CopyIcon value={d.allocated_ip} title="Copy IP address" />
-            <span className="text-muted-foreground/70">
-              · added {ageLabel} ago
+        <PageHead
+          eyebrow={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)} · ${d.id.slice(0, 8).toUpperCase()}`}
+          title={
+            <span className="inline-flex items-center gap-2">
+              <TypeIcon
+                className="size-[0.8em] shrink-0 text-muted-foreground"
+                title={`${deviceTypeLabel(d.device_type)} · ${osLabel(d.os)}`}
+              />
+              <span className="min-w-0 break-words">{d.name}</span>
             </span>
-          </span>
-        }
-        right={
-          <>
-            <StatusPill
-              status={
-                isRevoked
-                  ? "revoked"
-                  : isPaused
-                    ? "paused"
-                    : isOnline
-                      ? "online"
-                      : "offline"
-              }
-            />
-            {!isRevoked && (
+          }
+          sub={
+            <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <span className="font-mono">{d.allocated_ip}</span>
+              <CopyIcon value={d.allocated_ip} title="Copy IP address" />
+              <span className="text-muted-foreground/70">
+                · added {ageLabel} ago
+              </span>
+            </span>
+          }
+          right={
+            <>
+              <StatusPill
+                status={
+                  isRevoked
+                    ? "revoked"
+                    : isPaused
+                      ? "paused"
+                      : isOnline
+                        ? "online"
+                        : "offline"
+                }
+              />
+              {!isRevoked && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRenameOpen(true)}
+                >
+                  <IconPencil size={14} />
+                  Edit
+                </Button>
+              )}
+              {d.status === "active" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPauseOpen(true)}
+                  disabled={pauseM.isPending}
+                >
+                  <IconPlayerPause size={14} />
+                  Pause
+                </Button>
+              )}
+              {d.status === "paused" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setUnpauseOpen(true)}
+                  disabled={unpauseM.isPending}
+                >
+                  <IconPlayerPlay size={14} />
+                  Resume
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setRenameOpen(true)}
+                onClick={() => setConfigOpen(true)}
+                disabled={isRevoked}
               >
-                <IconPencil size={14} />
-                Edit
+                <IconSettings size={14} />
+                Config
               </Button>
-            )}
-            {d.status === "active" && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setPauseOpen(true)}
-                disabled={pauseM.isPending}
-              >
-                <IconPlayerPause size={14} />
-                Pause
-              </Button>
-            )}
-            {d.status === "paused" && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setUnpauseOpen(true)}
-                disabled={unpauseM.isPending}
-              >
-                <IconPlayerPlay size={14} />
-                Resume
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setConfigOpen(true)}
-              disabled={isRevoked}
-            >
-              <IconSettings size={14} />
-              Config
-            </Button>
-            {!isRevoked && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setRevokeOpen(true)}
-              >
-                <IconTrash size={14} />
-                Revoke
-              </Button>
-            )}
-          </>
-        }
-      />
+              {!isRevoked && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setRevokeOpen(true)}
+                >
+                  <IconTrash size={14} />
+                  Revoke
+                </Button>
+              )}
+            </>
+          }
+        />
       </StaggerItem>
 
       {/* KPI strip — design's 4-up: RX live, TX live, Total (window), Quota */}
       <StaggerItem>
-      <KpiStrip>
-        <Kpi
-          label="RX"
-          value={<span className="tabular-nums">{formatBytes(totalRx)}</span>}
-          spark={isOnline ? rxHistory.slice(-32) : []}
-          sparkColor="var(--chart-1)"
-          footL={isOnline ? formatBps(live?.rxBps ?? 0) : "idle"}
-          footR={isOnline ? "live" : undefined}
-          deltaTone={isOnline ? "up" : undefined}
-        />
-        <Kpi
-          label="TX"
-          value={<span className="tabular-nums">{formatBytes(totalTx)}</span>}
-          spark={isOnline ? txHistory.slice(-32) : []}
-          sparkColor="var(--primary)"
-          footL={isOnline ? formatBps(live?.txBps ?? 0) : "idle"}
-          footR={isOnline ? "live" : undefined}
-          deltaTone={isOnline ? "up" : undefined}
-        />
-        <Kpi
-          label="Total"
-          value={
-            <span className="tabular-nums">{formatBytes(totalRx + totalTx)}</span>
-          }
-          spark={isOnline ? totalHistory.slice(-32) : []}
-          sparkColor="var(--primary)"
-          footL="rx + tx"
-        />
-        <QuotaKpi
-          used={d.current_month_bytes}
-          cap={d.monthly_byte_cap}
-          autoPaused={d.auto_paused}
-          accountUsed={usageQ.data?.current_month_bytes ?? null}
-          accountCap={usageQ.data?.monthly_byte_cap ?? null}
-        />
-      </KpiStrip>
+        <KpiStrip>
+          <Kpi
+            label="RX"
+            value={<span className="tabular-nums">{formatBytes(totalRx)}</span>}
+            spark={isOnline ? rxHistory.slice(-32) : []}
+            sparkColor="var(--chart-1)"
+            footL={isOnline ? formatBps(live?.rxBps ?? 0) : "idle"}
+            footR={isOnline ? "live" : undefined}
+            deltaTone={isOnline ? "up" : undefined}
+          />
+          <Kpi
+            label="TX"
+            value={<span className="tabular-nums">{formatBytes(totalTx)}</span>}
+            spark={isOnline ? txHistory.slice(-32) : []}
+            sparkColor="var(--primary)"
+            footL={isOnline ? formatBps(live?.txBps ?? 0) : "idle"}
+            footR={isOnline ? "live" : undefined}
+            deltaTone={isOnline ? "up" : undefined}
+          />
+          <Kpi
+            label="Total"
+            value={
+              <span className="tabular-nums">
+                {formatBytes(totalRx + totalTx)}
+              </span>
+            }
+            spark={isOnline ? totalHistory.slice(-32) : []}
+            sparkColor="var(--primary)"
+            footL="rx + tx"
+          />
+          <QuotaKpi
+            used={d.current_month_bytes}
+            cap={d.monthly_byte_cap}
+            autoPaused={d.auto_paused}
+            accountUsed={usageQ.data?.current_month_bytes ?? null}
+            accountCap={usageQ.data?.monthly_byte_cap ?? null}
+          />
+        </KpiStrip>
       </StaggerItem>
 
       {/* Bandwidth — full width now that Configuration lives in the header
@@ -487,43 +488,43 @@ export function DeviceDetailPage() {
           section). Replaces the inline "Custom DNS" affordance from the
           previous layout's edit form. */}
       <StaggerItem>
-      <Panel
-        title="DNS names"
-        sub={
-          <>
-            Reach this peer from other peers via{" "}
-            <span className="zv-kbd">name.vpn.local</span>.
-          </>
-        }
-        right={
-          isRevoked ? null : (
-            <Button size="sm" onClick={() => setDnsAddOpen(true)}>
-              <IconPlus size={12} />
-              Add DNS name
-            </Button>
-          )
-        }
-      >
-        {d.dns_names.length === 0 ? (
-          <p className="text-muted-foreground/80 font-mono text-[11px]">
-            No DNS names configured. Add one to give this device a stable
-            hostname.
-          </p>
-        ) : (
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {d.dns_names.map((name) => (
-              <DnsNameChip
-                key={name}
-                value={name}
-                onRemove={() =>
-                  dnsM.mutate(d.dns_names.filter((n) => n !== name))
-                }
-                pending={dnsM.isPending}
-              />
-            ))}
-          </div>
-        )}
-      </Panel>
+        <Panel
+          title="DNS names"
+          sub={
+            <>
+              Reach this peer from other peers via{" "}
+              <span className="zv-kbd">name.vpn.local</span>.
+            </>
+          }
+          right={
+            isRevoked ? null : (
+              <Button size="sm" onClick={() => setDnsAddOpen(true)}>
+                <IconPlus size={12} />
+                Add DNS name
+              </Button>
+            )
+          }
+        >
+          {d.dns_names.length === 0 ? (
+            <p className="font-mono text-[11px] text-muted-foreground/80">
+              No DNS names configured. Add one to give this device a stable
+              hostname.
+            </p>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {d.dns_names.map((name) => (
+                <DnsNameChip
+                  key={name}
+                  value={name}
+                  onRemove={() =>
+                    dnsM.mutate(d.dns_names.filter((n) => n !== name))
+                  }
+                  pending={dnsM.isPending}
+                />
+              ))}
+            </div>
+          )}
+        </Panel>
       </StaggerItem>
 
       {/* Activity timeline — lifecycle, online/offline transitions, and
@@ -531,43 +532,43 @@ export function DeviceDetailPage() {
           Powered by the audit_logs table; updated lazily so an event the
           worker writes mid-session appears within ~30 s. */}
       <StaggerItem>
-      <Panel
-        title="Activity"
-        sub="Lifecycle, connectivity and configuration changes"
-        right={
-          <div className="flex items-center gap-1.5">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => eventsQ.refetch()}
-              disabled={eventsQ.isFetching}
-              title="Refresh"
-            >
-              <IconRefresh
-                size={12}
-                className={eventsQ.isFetching ? "animate-spin" : undefined}
-              />
-              Refresh
-            </Button>
-            {/* Surfaced whenever there's any activity — the sheet is the
+        <Panel
+          title="Activity"
+          sub="Lifecycle, connectivity and configuration changes"
+          right={
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => eventsQ.refetch()}
+                disabled={eventsQ.isFetching}
+                title="Refresh"
+              >
+                <IconRefresh
+                  size={12}
+                  className={eventsQ.isFetching ? "animate-spin" : undefined}
+                />
+                Refresh
+              </Button>
+              {/* Surfaced whenever there's any activity — the sheet is the
                 comfortable, paginated reading view even when the inline
                 preview already shows everything. */}
-            {(eventsQ.data?.length ?? 0) > 0 && (
-              <Button size="sm" onClick={() => setActivityOpen(true)}>
-                <IconListDetails size={12} />
-                Full view
-              </Button>
-            )}
-          </div>
-        }
-      >
-        <DeviceTimeline
-          events={eventsQ.data ?? []}
-          loading={eventsQ.isLoading}
-          error={eventsQ.error}
-          onRetry={() => eventsQ.refetch()}
-        />
-      </Panel>
+              {(eventsQ.data?.length ?? 0) > 0 && (
+                <Button size="sm" onClick={() => setActivityOpen(true)}>
+                  <IconListDetails size={12} />
+                  Full view
+                </Button>
+              )}
+            </div>
+          }
+        >
+          <DeviceTimeline
+            events={eventsQ.data ?? []}
+            loading={eventsQ.isLoading}
+            error={eventsQ.error}
+            onRetry={() => eventsQ.refetch()}
+          />
+        </Panel>
       </StaggerItem>
 
       <ConfirmDialog
@@ -636,10 +637,9 @@ export function DeviceDetailPage() {
           <DialogHeader>
             <DialogTitle>Add DNS name</DialogTitle>
             <DialogDescription>
-              Give this device a hostname other peers can resolve. Type
-              just the prefix — the{" "}
-              <span className="zv-kbd">.vpn.local</span> suffix is fixed
-              by the server.
+              Give this device a hostname other peers can resolve. Type just the
+              prefix — the <span className="zv-kbd">.vpn.local</span> suffix is
+              fixed by the server.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">
@@ -658,11 +658,11 @@ export function DeviceDetailPage() {
                 dnsM.mutate([...d.dns_names, full])
               }}
             />
-            <p className="text-muted-foreground font-mono text-[11px]">
-              1–30 chars · lowercase letters, digits, hyphens · cannot
-              start or end with a hyphen.
+            <p className="font-mono text-[11px] text-muted-foreground">
+              1–30 chars · lowercase letters, digits, hyphens · cannot start or
+              end with a hyphen.
               {dnsInput.length > 0 && !isValidDnsPrefix(dnsInput) && (
-                <span className="text-destructive ml-2">
+                <span className="ml-2 text-destructive">
                   {dnsPrefixError(dnsInput)}
                 </span>
               )}
@@ -738,8 +738,8 @@ export function DeviceDetailPage() {
           </DialogHeader>
           {rotated && (
             <div className="space-y-4">
-              <div className="border-border grid gap-0 border md:grid-cols-[auto_1fr]">
-                <div className="border-border bg-card flex aspect-square shrink-0 items-center justify-center p-3 md:aspect-auto md:w-[300px] md:border-r">
+              <div className="grid gap-0 border border-border md:grid-cols-[auto_1fr]">
+                <div className="flex aspect-square shrink-0 items-center justify-center border-border bg-card p-3 md:aspect-auto md:w-[300px] md:border-r">
                   <span
                     className="block size-[256px] max-w-full [&>svg]:size-full"
                     dangerouslySetInnerHTML={{ __html: rotated.qr_svg }}
@@ -747,7 +747,7 @@ export function DeviceDetailPage() {
                 </div>
                 <div className="flex min-w-0 flex-col gap-3 p-4">
                   <Eyebrow>Scan with WireGuard / mobile</Eyebrow>
-                  <p className="text-muted-foreground font-mono text-[11px]">
+                  <p className="font-mono text-[11px] text-muted-foreground">
                     Allocated IP{" "}
                     <span className="text-foreground">
                       {rotated.device.allocated_ip}
@@ -767,7 +767,8 @@ export function DeviceDetailPage() {
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        if (copyText(rotated.config)) toast.success("Config copied")
+                        if (copyText(rotated.config))
+                          toast.success("Config copied")
                         else toast.error("Failed to copy")
                       }}
                     >
@@ -842,7 +843,7 @@ function ActivitySheet({
       (entries) => {
         if (entries[0]?.isIntersecting) loadMore()
       },
-      { root: scrollRef.current, rootMargin: "200px" },
+      { root: scrollRef.current, rootMargin: "200px" }
     )
     io.observe(el)
     return () => io.disconnect()
@@ -854,7 +855,7 @@ function ActivitySheet({
         side="right"
         className="flex flex-col gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-lg"
       >
-        <SheetHeader className="border-border border-b p-4">
+        <SheetHeader className="border-b border-border p-4">
           <SheetTitle>
             <Eyebrow>Activity log</Eyebrow>
           </SheetTitle>
@@ -875,12 +876,12 @@ function ActivitySheet({
               IntersectionObserver root (the scroll container) sees it. */}
           <div ref={sentinelRef} aria-hidden className="h-px" />
           {isFetchingNextPage && (
-            <p className="text-muted-foreground/70 py-3 text-center font-mono text-[11px]">
+            <p className="py-3 text-center font-mono text-[11px] text-muted-foreground/70">
               Loading more…
             </p>
           )}
           {!hasNextPage && !q.isLoading && events.length > 0 && (
-            <p className="text-muted-foreground/50 py-3 text-center font-mono text-[11px]">
+            <p className="py-3 text-center font-mono text-[11px] text-muted-foreground/50">
               End of activity
             </p>
           )}
@@ -927,7 +928,7 @@ function QuotaKpi({
         />
         {showAccount && (
           <>
-            <div className="border-border/40 border-l" />
+            <div className="border-l border-border/40" />
             <QuotaHalf
               label="Account"
               used={accountUsed ?? 0}
@@ -961,10 +962,10 @@ function QuotaHalf({
     pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <div className="text-muted-foreground font-mono text-[10px] uppercase tracking-[0.08em]">
+      <div className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
         {label}
       </div>
-      <div className="font-heading text-foreground mt-0.5 truncate text-lg tabular-nums leading-tight">
+      <div className="mt-0.5 truncate font-heading text-lg leading-tight text-foreground tabular-nums">
         {formatBytes(used)}
       </div>
       <div className="mt-1 h-1 w-full overflow-hidden bg-muted">
@@ -972,7 +973,7 @@ function QuotaHalf({
           <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />
         )}
       </div>
-      <div className="text-muted-foreground mt-1 flex items-baseline justify-between font-mono text-[10px]">
+      <div className="mt-1 flex items-baseline justify-between font-mono text-[10px] text-muted-foreground">
         <span className="truncate">
           {hasCap ? `/ ${formatBytes(cap)}` : "no cap"}
         </span>
@@ -1007,7 +1008,7 @@ function CopyIcon({ value, title }: { value: string; title?: string }) {
           if (copyText(value)) setCopied(true)
           else toast.error("Failed to copy")
         }}
-        className="text-muted-foreground hover:text-foreground border-border hover:border-foreground/40 flex size-6 shrink-0 items-center justify-center border transition-colors"
+        className="flex size-6 shrink-0 items-center justify-center border border-border text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
         aria-label={title ?? "Copy value"}
       >
         {copied ? (
@@ -1039,7 +1040,7 @@ function DnsHostnameInput({
   return (
     <div
       data-invalid={invalid ? "1" : undefined}
-      className="border-input bg-transparent focus-within:border-ring focus-within:ring-ring/50 data-[invalid=1]:border-destructive data-[invalid=1]:ring-destructive/20 flex h-8 items-stretch overflow-hidden rounded-lg border transition-colors focus-within:ring-3 data-[invalid=1]:ring-3"
+      className="flex h-8 items-stretch overflow-hidden rounded-lg border border-input bg-transparent transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 data-[invalid=1]:border-destructive data-[invalid=1]:ring-3 data-[invalid=1]:ring-destructive/20"
     >
       <input
         id="dns-name"
@@ -1058,9 +1059,9 @@ function DnsHostnameInput({
         autoCorrect="off"
         maxLength={30}
         aria-invalid={invalid}
-        className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm outline-none"
+        className="min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground"
       />
-      <span className="border-input bg-muted/40 text-muted-foreground inline-flex shrink-0 items-center border-l px-2.5 font-mono text-[12px]">
+      <span className="inline-flex shrink-0 items-center border-l border-input bg-muted/40 px-2.5 font-mono text-[12px] text-muted-foreground">
         {DNS_SUFFIX}
       </span>
     </div>
@@ -1079,9 +1080,9 @@ function DnsNameChip({
   pending: boolean
 }) {
   return (
-    <div className="border-border group flex items-center gap-2 border bg-card px-3 py-2">
-      <IconGlobe size={14} className="text-muted-foreground shrink-0" />
-      <span className="text-foreground min-w-0 flex-1 truncate font-mono text-[12px]">
+    <div className="group flex items-center gap-2 border border-border bg-card px-3 py-2">
+      <IconGlobe size={14} className="shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground">
         {value}
       </span>
       <CopyIcon value={value} />
@@ -1090,7 +1091,7 @@ function DnsNameChip({
           type="button"
           onClick={onRemove}
           disabled={pending}
-          className="text-muted-foreground hover:text-destructive hover:border-destructive border-border flex size-6 shrink-0 items-center justify-center border transition-colors"
+          className="flex size-6 shrink-0 items-center justify-center border border-border text-muted-foreground transition-colors hover:border-destructive hover:text-destructive"
           aria-label={`Remove ${value}`}
         >
           <IconX size={12} />
@@ -1255,10 +1256,10 @@ function DeviceTimeline({
           {status ? `${status} · ${message}` : message}
         </p>
         {status === 404 && (
-          <p className="text-muted-foreground/80 text-[11px]">
-            The /devices/{`{id}`}/events endpoint isn't available on
-            this API build — rebuild and restart the api binary
-            (cargo run -p zerovpn-api) to pick it up.
+          <p className="text-[11px] text-muted-foreground/80">
+            The /devices/{`{id}`}/events endpoint isn't available on this API
+            build — rebuild and restart the api binary (cargo run -p
+            zerovpn-api) to pick it up.
           </p>
         )}
         {onRetry && (
@@ -1277,9 +1278,9 @@ function DeviceTimeline({
   }
   if (events.length === 0) {
     return (
-      <p className="text-muted-foreground/80 font-mono text-[11px]">
-        No activity recorded yet. Events will appear here as the device
-        is used and updated.
+      <p className="font-mono text-[11px] text-muted-foreground/80">
+        No activity recorded yet. Events will appear here as the device is used
+        and updated.
       </p>
     )
   }
@@ -1292,31 +1293,27 @@ function DeviceTimeline({
   // the next index in the desc-sorted list).
   const durations = computeTransitionDurations(events)
 
-  // Group consecutive same-day events for the date heading rail. Just
-  // a flat list — we render the date label above the first event of a
-  // new YYYY-MM-DD.
-  let lastDay: string | null = null
-
   return (
     <ol className="relative flex flex-col">
       {/* The vertical rail spans the full timeline. Each row positions
           its dot precisely on top so the line passes through. */}
       <span
         aria-hidden
-        className="border-border absolute bottom-2 left-3 top-2 border-l"
+        className="absolute top-2 bottom-2 left-3 border-l border-border"
       />
       {events.map((ev, i) => {
         const spec = actionSpec(ev.action)
         const Icon = spec.icon
+        // Date label above the first event of a new YYYY-MM-DD (list is
+        // desc-sorted, so compare against the previous row).
         const day = ev.created_at.slice(0, 10)
-        const showDay = day !== lastDay
-        lastDay = day
+        const showDay = i === 0 || day !== events[i - 1].created_at.slice(0, 10)
         const dur = durations[i]
         return (
           <li key={ev.id} className="flex flex-col">
             {showDay && (
-              <div className="ml-9 mb-1 mt-3 first:mt-0">
-                <span className="text-muted-foreground/70 font-mono text-[10px] uppercase tracking-[0.08em]">
+              <div className="mt-3 mb-1 ml-9 first:mt-0">
+                <span className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground/70 uppercase">
                   {formatDayLabel(day)}
                 </span>
               </div>
@@ -1326,14 +1323,14 @@ function DeviceTimeline({
                 className={cn(
                   "relative mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full ring-4",
                   TONE_RING[spec.tone],
-                  "bg-background",
+                  "bg-background"
                 )}
               >
                 <span
                   className={cn(
                     "absolute inset-1 rounded-full",
                     TONE_DOT[spec.tone],
-                    "opacity-15",
+                    "opacity-15"
                   )}
                 />
                 <Icon
@@ -1343,14 +1340,14 @@ function DeviceTimeline({
               </span>
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                  <span className="text-foreground text-[13px] font-medium">
+                  <span className="text-[13px] font-medium text-foreground">
                     {spec.label}
                   </span>
-                  <span className="text-muted-foreground font-mono text-[11px] tabular-nums">
+                  <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
                     <RelativeTime value={ev.created_at} />
                   </span>
                 </div>
-                <div className="text-muted-foreground/80 flex flex-wrap items-center gap-x-2 font-mono text-[11px]">
+                <div className="flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-muted-foreground/80">
                   {dur && (
                     <span>
                       after {formatDuration(dur.seconds)} {dur.state}
@@ -1405,17 +1402,13 @@ function EventMetadata({
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          className="hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
+          className="inline-flex items-center gap-1 underline-offset-2 hover:text-foreground hover:underline"
         >
-          {open ? (
-            <IconChevronUp size={11} />
-          ) : (
-            <IconChevronDown size={11} />
-          )}
+          {open ? <IconChevronUp size={11} /> : <IconChevronDown size={11} />}
           details
         </button>
         {open && (
-          <pre className="border-border bg-muted/30 mt-1 max-h-40 w-full overflow-auto whitespace-pre-wrap border p-2 font-mono text-[10px] leading-relaxed">
+          <pre className="mt-1 max-h-40 w-full overflow-auto border border-border bg-muted/30 p-2 font-mono text-[10px] leading-relaxed whitespace-pre-wrap">
             {JSON.stringify(metadata, null, 2)}
           </pre>
         )}
@@ -1431,7 +1424,7 @@ function EventMetadata({
  *  where `state` is the value of the *previous* state — i.e. how long
  *  the device was online before going offline, or vice versa. */
 function computeTransitionDurations(
-  events: DeviceEvent[],
+  events: DeviceEvent[]
 ): ({ seconds: number; state: "online" | "offline" } | null)[] {
   const out: ({ seconds: number; state: "online" | "offline" } | null)[] = []
   for (let i = 0; i < events.length; i++) {
@@ -1558,7 +1551,7 @@ function PeerConfigDialog({
         side="right"
         className="flex flex-col gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl"
       >
-        <SheetHeader className="border-border border-b p-4 pr-12">
+        <SheetHeader className="border-b border-border p-4 pr-12">
           <SheetTitle>
             <Eyebrow>
               Peer configuration ·{" "}
@@ -1567,8 +1560,8 @@ function PeerConfigDialog({
           </SheetTitle>
           <SheetDescription>
             Per-OS install steps below. The same wg-conf works for every
-            platform — pick whichever has the smoothest hand-off for the
-            device you're setting up.
+            platform — pick whichever has the smoothest hand-off for the device
+            you're setting up.
           </SheetDescription>
         </SheetHeader>
 
@@ -1581,147 +1574,157 @@ function PeerConfigDialog({
               single "re-issue to get a working config" prompt instead of
               offering a placeholder file that wouldn't actually connect. */}
           {hasWorkingConfig ? null : loadingReal ? (
-            <div className="border-border bg-muted/40 text-muted-foreground border px-3 py-2 font-mono text-[11px]">
+            <div className="border border-border bg-muted/40 px-3 py-2 font-mono text-[11px] text-muted-foreground">
               Loading config…
             </div>
           ) : confQ.isError ? (
-            <div className="border-destructive/40 bg-destructive/5 text-destructive border px-3 py-2 font-mono text-[11px]">
+            <div className="border border-destructive/40 bg-destructive/5 px-3 py-2 font-mono text-[11px] text-destructive">
               Couldn't fetch the config. Re-issue keys for a fresh one.
             </div>
           ) : null}
 
           {hasWorkingConfig && (
-          <Tabs defaultValue={initialTab} className="flex min-h-0 flex-1 flex-col">
-          <TabsList className="grid !h-auto grid-cols-3 gap-1 sm:!h-8 sm:grid-cols-5 sm:gap-0">
-            {/* `!h-auto` overrides the TabsList variant's `h-8` (which
+            <Tabs
+              defaultValue={initialTab}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <TabsList className="grid !h-auto grid-cols-3 gap-1 sm:!h-8 sm:grid-cols-5 sm:gap-0">
+                {/* `!h-auto` overrides the TabsList variant's `h-8` (which
                 pins the list to one row, squashing both rows on mobile)
                 while keeping the single-row 32px height on sm+. Row gap
                 gives the wrapped (Android / iOS) row breathing room. */}
-            <TabsTrigger value="linux">
-              <IconTerminal2 size={14} className="mr-1.5" />
-              Linux
-            </TabsTrigger>
-            <TabsTrigger value="windows">
-              <IconBrandWindows size={14} className="mr-1.5" />
-              Win
-            </TabsTrigger>
-            <TabsTrigger value="macos">
-              <IconBrandApple size={14} className="mr-1.5" />
-              macOS
-            </TabsTrigger>
-            <TabsTrigger value="android">
-              <IconBrandAndroid size={14} className="mr-1.5" />
-              Android
-            </TabsTrigger>
-            <TabsTrigger value="ios">
-              <IconDeviceMobile size={14} className="mr-1.5" />
-              iOS
-            </TabsTrigger>
-          </TabsList>
+                <TabsTrigger value="linux">
+                  <IconTerminal2 size={14} className="mr-1.5" />
+                  Linux
+                </TabsTrigger>
+                <TabsTrigger value="windows">
+                  <IconBrandWindows size={14} className="mr-1.5" />
+                  Win
+                </TabsTrigger>
+                <TabsTrigger value="macos">
+                  <IconBrandApple size={14} className="mr-1.5" />
+                  macOS
+                </TabsTrigger>
+                <TabsTrigger value="android">
+                  <IconBrandAndroid size={14} className="mr-1.5" />
+                  Android
+                </TabsTrigger>
+                <TabsTrigger value="ios">
+                  <IconDeviceMobile size={14} className="mr-1.5" />
+                  iOS
+                </TabsTrigger>
+              </TabsList>
 
-          {/* Linux / Windows: ConfigBlock sits between Step rows, so we
+              {/* Linux / Windows: ConfigBlock sits between Step rows, so we
               can't flex-grow it (it would push later steps off-screen).
               Use space-y-3 + overflow-y-auto on the panel itself so the
               tab content scrolls vertically when there are more steps
               than viewport. */}
-          <TabsContent
-            value="linux"
-            className="mt-3 min-h-0 space-y-3 overflow-y-auto"
-          >
-            <Step
-              n={1}
-              text="Create the configuration file"
-              command={`sudo touch /etc/wireguard/${peerName}.conf`}
-            />
-            <Step
-              n={2}
-              text="Open the file and paste the config below"
-              command={`sudo nano /etc/wireguard/${peerName}.conf`}
-            />
-            <ConfigBlock value={effectiveConfig} />
-            <Step n={3} text="Bring the tunnel up" command={`sudo wg-quick up ${peerName}`} />
-            <Step
-              n={4}
-              text="Enable on boot (optional)"
-              command={`sudo systemctl enable wg-quick@${peerName}`}
-            />
-          </TabsContent>
+              <TabsContent
+                value="linux"
+                className="mt-3 min-h-0 space-y-3 overflow-y-auto"
+              >
+                <Step
+                  n={1}
+                  text="Create the configuration file"
+                  command={`sudo touch /etc/wireguard/${peerName}.conf`}
+                />
+                <Step
+                  n={2}
+                  text="Open the file and paste the config below"
+                  command={`sudo nano /etc/wireguard/${peerName}.conf`}
+                />
+                <ConfigBlock value={effectiveConfig} />
+                <Step
+                  n={3}
+                  text="Bring the tunnel up"
+                  command={`sudo wg-quick up ${peerName}`}
+                />
+                <Step
+                  n={4}
+                  text="Enable on boot (optional)"
+                  command={`sudo systemctl enable wg-quick@${peerName}`}
+                />
+              </TabsContent>
 
-          <TabsContent
-            value="windows"
-            className="mt-3 min-h-0 space-y-3 overflow-y-auto"
-          >
-            <Step n={1} text={`Save the config below as ${peerName}.conf`} />
-            <ConfigBlock value={effectiveConfig} />
-            <p className="text-muted-foreground font-mono text-[11px] leading-relaxed">
-              Step 2: open the WireGuard application → "Import tunnel(s)
-              from file" → select <strong>{peerName}.conf</strong>.
-            </p>
-          </TabsContent>
+              <TabsContent
+                value="windows"
+                className="mt-3 min-h-0 space-y-3 overflow-y-auto"
+              >
+                <Step
+                  n={1}
+                  text={`Save the config below as ${peerName}.conf`}
+                />
+                <ConfigBlock value={effectiveConfig} />
+                <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  Step 2: open the WireGuard application → "Import tunnel(s)
+                  from file" → select <strong>{peerName}.conf</strong>.
+                </p>
+              </TabsContent>
 
-          {/* macOS / Android / iOS: ConfigBlock is the last child, so we
+              {/* macOS / Android / iOS: ConfigBlock is the last child, so we
               flex-grow it via the `grow` prop. The TabsContent becomes a
               flex column so flex-1 on the block propagates. */}
-          <TabsContent
-            value="macos"
-            className="mt-3 flex min-h-0 flex-1 flex-col gap-3"
-          >
-            <p className="text-muted-foreground font-mono text-[11px] leading-relaxed">
-              For the GUI app from the App Store, save the config and use
-              "Import tunnel(s) from file". For the CLI (Homebrew
-              wireguard-tools):
-            </p>
-            <Step
-              n={1}
-              text="Create the file"
-              command={`touch /etc/wireguard/${peerName}.conf`}
-            />
-            <Step
-              n={2}
-              text="Paste the config and bring it up"
-              command={`sudo wg-quick up ${peerName}`}
-            />
-            <ConfigBlock value={effectiveConfig} grow />
-          </TabsContent>
+              <TabsContent
+                value="macos"
+                className="mt-3 flex min-h-0 flex-1 flex-col gap-3"
+              >
+                <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  For the GUI app from the App Store, save the config and use
+                  "Import tunnel(s) from file". For the CLI (Homebrew
+                  wireguard-tools):
+                </p>
+                <Step
+                  n={1}
+                  text="Create the file"
+                  command={`touch /etc/wireguard/${peerName}.conf`}
+                />
+                <Step
+                  n={2}
+                  text="Paste the config and bring it up"
+                  command={`sudo wg-quick up ${peerName}`}
+                />
+                <ConfigBlock value={effectiveConfig} grow />
+              </TabsContent>
 
-          <TabsContent
-            value="android"
-            className="mt-3 flex min-h-0 flex-1 flex-col gap-3"
-          >
-            <MobileQrSlot
-              qrSvg={realQrSvg}
-              loading={loadingReal}
-              onReissue={onReissue}
-            />
-            <p className="text-muted-foreground font-mono text-[11px] leading-relaxed">
-              Install the WireGuard app, tap the <strong>+</strong> button
-              → "Scan from QR code" and point it at the QR above. Or use
-              "Create from file or archive" with the .conf below.
-            </p>
-            <ConfigBlock value={effectiveConfig} grow />
-          </TabsContent>
+              <TabsContent
+                value="android"
+                className="mt-3 flex min-h-0 flex-1 flex-col gap-3"
+              >
+                <MobileQrSlot
+                  qrSvg={realQrSvg}
+                  loading={loadingReal}
+                  onReissue={onReissue}
+                />
+                <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  Install the WireGuard app, tap the <strong>+</strong> button →
+                  "Scan from QR code" and point it at the QR above. Or use
+                  "Create from file or archive" with the .conf below.
+                </p>
+                <ConfigBlock value={effectiveConfig} grow />
+              </TabsContent>
 
-          <TabsContent
-            value="ios"
-            className="mt-3 flex min-h-0 flex-1 flex-col gap-3"
-          >
-            <MobileQrSlot
-              qrSvg={realQrSvg}
-              loading={loadingReal}
-              onReissue={onReissue}
-            />
-            <p className="text-muted-foreground font-mono text-[11px] leading-relaxed">
-              Install the WireGuard app from the App Store, tap{" "}
-              <strong>+</strong> → "Create from QR code" and point the
-              camera at the QR above.
-            </p>
-            <ConfigBlock value={effectiveConfig} grow />
-          </TabsContent>
-          </Tabs>
+              <TabsContent
+                value="ios"
+                className="mt-3 flex min-h-0 flex-1 flex-col gap-3"
+              >
+                <MobileQrSlot
+                  qrSvg={realQrSvg}
+                  loading={loadingReal}
+                  onReissue={onReissue}
+                />
+                <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  Install the WireGuard app from the App Store, tap{" "}
+                  <strong>+</strong> → "Create from QR code" and point the
+                  camera at the QR above.
+                </p>
+                <ConfigBlock value={effectiveConfig} grow />
+              </TabsContent>
+            </Tabs>
           )}
         </div>
 
-        <SheetFooter className="border-border mt-0 flex flex-row flex-wrap justify-end gap-2 border-t p-4">
+        <SheetFooter className="mt-0 flex flex-row flex-wrap justify-end gap-2 border-t border-border p-4">
           {/* Download is only meaningful once we have a real config. */}
           {hasWorkingConfig && (
             <Button
@@ -1760,14 +1763,14 @@ function Step({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <span className="bg-muted text-foreground border-border flex size-5 shrink-0 items-center justify-center border font-mono text-[11px]">
+      <span className="flex size-5 shrink-0 items-center justify-center border border-border bg-muted font-mono text-[11px] text-foreground">
         {n}
       </span>
       <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-foreground/90 text-[13px] leading-snug">{text}</p>
+        <p className="text-[13px] leading-snug text-foreground/90">{text}</p>
         {command && (
-          <div className="border-border bg-muted/40 flex items-center justify-between gap-2 border px-2 py-1.5">
-            <code className="text-foreground/90 break-all font-mono text-[11px]">
+          <div className="flex items-center justify-between gap-2 border border-border bg-muted/40 px-2 py-1.5">
+            <code className="font-mono text-[11px] break-all text-foreground/90">
               {command}
             </code>
             <CopyIcon value={command} />
@@ -1795,7 +1798,7 @@ function ConfigBlock({
     <div
       className={cn(
         "overflow-y-auto",
-        grow ? "min-h-[160px] flex-1" : "max-h-[160px] sm:max-h-[220px]",
+        grow ? "min-h-[160px] flex-1" : "max-h-[160px] sm:max-h-[220px]"
       )}
     >
       <CopyableCode value={value} multiline />
@@ -1818,7 +1821,7 @@ function MobileQrSlot({
 }) {
   return (
     <div className="flex flex-col items-center gap-2">
-      <div className="border-border bg-card text-muted-foreground flex size-[280px] max-w-full items-center justify-center border p-3 text-center font-mono text-[10px] leading-tight">
+      <div className="flex size-[280px] max-w-full items-center justify-center border border-border bg-card p-3 text-center font-mono text-[10px] leading-tight text-muted-foreground">
         {loading ? (
           <span>loading QR…</span>
         ) : qrSvg ? (
@@ -1900,4 +1903,3 @@ function formatBytes(n: number): string {
   if (n < 1024 ** 4) return `${(n / 1024 ** 3).toFixed(2)} GB`
   return `${(n / 1024 ** 4).toFixed(2)} TB`
 }
-

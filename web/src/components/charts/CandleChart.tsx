@@ -1,4 +1,11 @@
-import { type ReactNode, memo, useEffect, useMemo, useRef, useState } from "react"
+import {
+  type ReactNode,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import * as echarts from "echarts/core"
 import { CustomChart, LineChart } from "echarts/charts"
 import {
@@ -117,12 +124,14 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
         c.rx_avg,
         c.tx_avg,
       ]),
-    [candles],
+    [candles]
   )
 
   // Live mirrors so the (once-bound) dataZoom listener reads fresh values.
   const stateRef = useRef({ rows, hasMore, isLoadingOlder, loadOlder })
-  stateRef.current = { rows, hasMore, isLoadingOlder, loadOlder }
+  useEffect(() => {
+    stateRef.current = { rows, hasMore, isLoadingOlder, loadOlder }
+  })
 
   const n = rows.length
   const ready = !isError && !(isLoading && n === 0) && n > 0
@@ -275,7 +284,9 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
     // it (zoom out), anchored at the grab point. Recomputed from the grab state
     // each move so there's no drift.
     const convY = (px: number, py: number) => {
-      const v = chart.convertFromPixel({ gridIndex: 0 }, [px, py]) as number[] | null
+      const v = chart.convertFromPixel({ gridIndex: 0 }, [px, py]) as
+        | number[]
+        | null
       return Array.isArray(v) ? v[1] : NaN
     }
     const drag = { active: false, startY: 0, span0: 0, anchor: 0, frac: 0 }
@@ -324,7 +335,8 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
     const onHover = (e: MouseEvent) => {
       if (drag.active) return
       const rect = el.getBoundingClientRect()
-      el.style.cursor = e.clientX - rect.left >= rect.width - 72 ? "ns-resize" : ""
+      el.style.cursor =
+        e.clientX - rect.left >= rect.width - 72 ? "ns-resize" : ""
     }
     el.addEventListener("mousemove", onHover)
 
@@ -354,12 +366,18 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
     const latest = rows[n - 1][0]
     if (zoomRef.current == null) {
       zoomRef.current = defaultWindow(rows, tf)
-    } else if (lastLatestRef.current != null && latest > lastLatestRef.current) {
+    } else if (
+      lastLatestRef.current != null &&
+      latest > lastLatestRef.current
+    ) {
       // New candle(s) arrived — if the view was pinned to the previous latest,
       // slide the window forward to keep tracking live.
       const w = zoomRef.current
       if (w.endValue >= lastLatestRef.current - CANDLE_MS[tf]) {
-        zoomRef.current = { startValue: w.startValue + (latest - w.endValue), endValue: latest }
+        zoomRef.current = {
+          startValue: w.startValue + (latest - w.endValue),
+          endValue: latest,
+        }
       }
     }
     lastLatestRef.current = latest
@@ -388,7 +406,11 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
     const chart = chartRef.current
     if (chart) {
       if (zoomRef.current) {
-        chart.dispatchAction({ type: "dataZoom", dataZoomId: "dzX", ...zoomRef.current })
+        chart.dispatchAction({
+          type: "dataZoom",
+          dataZoomId: "dzX",
+          ...zoomRef.current,
+        })
       }
       // Refit the value axis to the data (clears any manual scale).
       chart.setOption({ yAxis: { min: 0, max: null } })
@@ -401,7 +423,7 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
       <button
         type="button"
         onClick={onLatest}
-        className="border-border text-muted-foreground hover:text-foreground h-7 border px-2 font-mono text-[11px]"
+        className="h-7 border border-border px-2 font-mono text-[11px] text-muted-foreground hover:text-foreground"
       >
         Latest →
       </button>
@@ -427,7 +449,11 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
         </SelectTrigger>
         <SelectContent>
           {TIMEFRAMES.map((t) => (
-            <SelectItem key={t.value} value={t.value} className="font-mono text-xs">
+            <SelectItem
+              key={t.value}
+              value={t.value}
+              className="font-mono text-xs"
+            >
               {t.label}
             </SelectItem>
           ))}
@@ -442,7 +468,7 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
   } else if (isError) {
     body = (
       <div
-        className="text-destructive border-border flex items-center justify-center border font-mono text-xs"
+        className="flex items-center justify-center border border-border font-mono text-xs text-destructive"
         style={{ height }}
       >
         Failed to load bandwidth candles.
@@ -451,7 +477,7 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
   } else if (n === 0) {
     body = (
       <div
-        className="text-muted-foreground border-border flex items-center justify-center border font-mono text-xs"
+        className="flex items-center justify-center border border-border font-mono text-xs text-muted-foreground"
         style={{ height }}
       >
         No candles yet — bandwidth fills in as the worker rolls up each minute.
@@ -460,12 +486,12 @@ function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
   } else {
     body = (
       <div
-        className="border-border relative cursor-grab touch-none select-none border active:cursor-grabbing"
+        className="relative cursor-grab touch-none border border-border select-none active:cursor-grabbing"
         style={{ height, background: "var(--card)" }}
       >
         <div ref={elRef} className="h-full w-full" />
         {isLoadingOlder && (
-          <span className="text-muted-foreground absolute left-2 top-1 z-10 font-mono text-[10px]">
+          <span className="absolute top-1 left-2 z-10 font-mono text-[10px] text-muted-foreground">
             loading history…
           </span>
         )}

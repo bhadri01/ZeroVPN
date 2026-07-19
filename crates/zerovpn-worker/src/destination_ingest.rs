@@ -73,7 +73,7 @@ async fn handle_conn(
         }
         match serde_json::from_str::<FlowEvent>(&line) {
             Ok(ev) => {
-                let started_at = ev.started_at.unwrap_or_else(|| OffsetDateTime::now_utc());
+                let started_at = ev.started_at.unwrap_or_else(OffsetDateTime::now_utc);
                 // Try to resolve device/user by src_ip.
                 let mapping = resolve_device_by_ip(&pool, &ev.src_ip).await;
                 let (device_id, user_id) = match mapping {
@@ -101,21 +101,23 @@ async fn handle_conn(
 
                 if let Err(e) = zerovpn_db::repos::destination_ips::insert(
                     &pool,
-                    device_id,
-                    user_id,
-                    &ev.src_ip,
-                    ev.src_port,
-                    &ev.dst_ip,
-                    ev.dst_port,
-                    ev.proto.as_deref(),
-                    ev.bytes_in,
-                    ev.bytes_out,
-                    started_at,
-                    latitude,
-                    longitude,
-                    country_code,
-                    country_name,
-                    city_name,
+                    zerovpn_db::repos::destination_ips::NewDestinationIp {
+                        device_id,
+                        user_id,
+                        src_ip: &ev.src_ip,
+                        src_port: ev.src_port,
+                        dst_ip: &ev.dst_ip,
+                        dst_port: ev.dst_port,
+                        proto: ev.proto.as_deref(),
+                        bytes_in: ev.bytes_in,
+                        bytes_out: ev.bytes_out,
+                        started_at,
+                        latitude,
+                        longitude,
+                        country_code,
+                        country_name,
+                        city_name,
+                    },
                 )
                 .await
                 {

@@ -150,6 +150,7 @@ pub struct Device {
     /// None for devices created with the default zero-knowledge behaviour.
     /// Never exposed by list/get endpoints — the field is `serde(skip)` at
     /// the API boundary; included here for completeness of the domain shape.
+    #[serde(skip)]
     #[schema(value_type = Option<String>, format = Byte)]
     pub private_key_encrypted: Option<Vec<u8>>,
 }

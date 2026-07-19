@@ -82,6 +82,12 @@ function getSystemTheme(): ResolvedTheme {
   return "light"
 }
 
+function subscribeSystemTheme(onChange: () => void) {
+  const mediaQuery = window.matchMedia(COLOR_SCHEME_QUERY)
+  mediaQuery.addEventListener("change", onChange)
+  return () => mediaQuery.removeEventListener("change", onChange)
+}
+
 function disableTransitionsTemporarily() {
   const style = document.createElement("style")
   style.appendChild(
@@ -131,8 +137,12 @@ export function ThemeProvider({
   disableTransitionOnChange = true,
   ...props
 }: ThemeProviderProps) {
-  const [resolvedTheme, setResolvedTheme] =
-    React.useState<ResolvedTheme>("light")
+  // The OS color scheme is external state — subscribe rather than mirror it
+  // into useState from an effect.
+  const systemTheme = React.useSyncExternalStore(
+    subscribeSystemTheme,
+    getSystemTheme
+  )
 
   const [theme, setThemeState] = React.useState<Theme>(() => {
     const storedTheme = localStorage.getItem(storageKey)
@@ -186,7 +196,7 @@ export function ThemeProvider({
       localStorage.setItem(variantStorageKey, next)
       setVariantState(next)
     },
-    [variantStorageKey],
+    [variantStorageKey]
   )
   React.useEffect(() => {
     document.documentElement.setAttribute("data-theme", variant)
@@ -228,45 +238,24 @@ export function ThemeProvider({
     )
   }, [txColor])
 
-  const applyTheme = React.useCallback(
-    (nextTheme: Theme) => {
-      const root = document.documentElement
-      const resolvedTheme =
-        nextTheme === "system" ? getSystemTheme() : nextTheme
-      const restoreTransitions = disableTransitionOnChange
-        ? disableTransitionsTemporarily()
-        : null
+  const resolvedTheme: ResolvedTheme = theme === "system" ? systemTheme : theme
 
-      root.classList.remove("light", "dark")
-      root.classList.add(resolvedTheme)
-      root.style.colorScheme = resolvedTheme
-      setResolvedTheme(resolvedTheme)
-
-      if (restoreTransitions) {
-        restoreTransitions()
-      }
-    },
-    [disableTransitionOnChange]
-  )
-
+  // Mirror the resolved theme onto <html> (class + color-scheme). System
+  // changes flow through useSyncExternalStore, so this re-runs for those too.
   React.useEffect(() => {
-    applyTheme(theme)
+    const root = document.documentElement
+    const restoreTransitions = disableTransitionOnChange
+      ? disableTransitionsTemporarily()
+      : null
 
-    if (theme !== "system") {
-      return undefined
+    root.classList.remove("light", "dark")
+    root.classList.add(resolvedTheme)
+    root.style.colorScheme = resolvedTheme
+
+    if (restoreTransitions) {
+      restoreTransitions()
     }
-
-    const mediaQuery = window.matchMedia(COLOR_SCHEME_QUERY)
-    const handleChange = () => {
-      applyTheme("system")
-    }
-
-    mediaQuery.addEventListener("change", handleChange)
-
-    return () => {
-      mediaQuery.removeEventListener("change", handleChange)
-    }
-  }, [theme, applyTheme])
+  }, [resolvedTheme, disableTransitionOnChange])
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

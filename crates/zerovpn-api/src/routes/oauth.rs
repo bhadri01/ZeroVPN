@@ -12,15 +12,15 @@
 //!      redirect URL (a SPA route under the frontend dev server),
 //!      `POST /auth/google/callback` is called by the SPA with the
 //!      `{code, state}` query params it just received. The server:
-//!         a. consumes the state row (one-shot — replay can't reuse it),
-//!         b. exchanges the code at Google's token endpoint using the
-//!            stored PKCE verifier,
-//!         c. fetches userinfo, refuses if `email_verified == false`,
-//!         d. looks up the user by google_id, then by email (auto-link),
-//!            or creates a fresh row (auto-provision),
-//!         e. mints a session exactly like `/auth/login` and returns the
-//!            `LoginResponse` shape so the SPA's auth store hydrates the
-//!            same way.
+//!      - consumes the state row (one-shot — replay can't reuse it),
+//!      - exchanges the code at Google's token endpoint using the stored
+//!        PKCE verifier,
+//!      - fetches userinfo, refuses if `email_verified == false`,
+//!      - looks up the user by google_id, then by email (auto-link), or
+//!        creates a fresh row (auto-provision),
+//!      - mints a session exactly like `/auth/login` and returns the
+//!        `LoginResponse` shape so the SPA's auth store hydrates the
+//!        same way.
 //!
 //! TOTP is intentionally NOT re-prompted: the Google sign-in is treated as
 //! a complete authentication on its own (standard SSO behavior). A user

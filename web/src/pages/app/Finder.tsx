@@ -9,7 +9,7 @@ import {
   IconUserSearch,
   IconX,
 } from "@tabler/icons-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { Link } from "react-router"
 
 import {
@@ -79,8 +79,8 @@ export function FinderPage() {
   // user hasn't already done it themselves, so they can type a literal
   // pattern like `10\.10\.0\..*` (or even the looser `10.10.0.*`) and
   // hit Enter. If the value is already slash-wrapped we leave it.
-  const wrap = (v: string): string => {
-    if (!regex) return v
+  const wrap = (v: string, useRegex: boolean = regex): string => {
+    if (!useRegex) return v
     if (v.length >= 3 && v.startsWith("/") && v.endsWith("/")) return v
     return `/${v}/`
   }
@@ -103,31 +103,15 @@ export function FinderPage() {
     setCommitted("")
   }
 
-  // Keep input synced with committed when the URL changes externally —
-  // not used yet, but cheap to wire so future "shareable result URLs"
-  // (?q=…) just need the search-params plumbing.
-  useEffect(() => {
-    if (!committed) return
-    // Unwrap `/.../` for display purposes so the input shows what the
-    // user typed, not what we sent.
-    const display =
-      committed.length >= 3 &&
-      committed.startsWith("/") &&
-      committed.endsWith("/")
-        ? committed.slice(1, -1)
-        : committed
-    if (display !== input) setInput(display)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committed])
-
-  // Re-run the search when the regex toggle flips and there's a live
-  // query — otherwise toggling looks broken (the button changes but
-  // results don't update until you press Enter again).
-  useEffect(() => {
-    if (input.trim().length === 0) return
-    setCommitted(wrap(input.trim()))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [regex])
+  // Flip regex mode and re-run any live query in the new mode — otherwise
+  // toggling looks broken (the button changes but results don't update
+  // until you press Enter again).
+  const toggleRegex = () => {
+    const next = !regex
+    setRegex(next)
+    const v = input.trim()
+    if (v.length > 0) setCommitted(wrap(v, next))
+  }
 
   return (
     <PageStagger>
@@ -141,9 +125,9 @@ export function FinderPage() {
 
       <StaggerItem>
         <Panel flush>
-          <div className="border-border flex items-center gap-2 border-b p-2">
+          <div className="flex items-center gap-2 border-b border-border p-2">
             <div className="relative flex-1">
-              <IconSearch className="text-muted-foreground absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+              <IconSearch className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -161,7 +145,7 @@ export function FinderPage() {
                     e.preventDefault()
                     const cleaned = text.replace(/[\s,]+/g, " ").trim()
                     setInput((cur) =>
-                      cur.trim() ? `${cur.trim()} ${cleaned}` : cleaned,
+                      cur.trim() ? `${cur.trim()} ${cleaned}` : cleaned
                     )
                   }
                 }}
@@ -177,7 +161,7 @@ export function FinderPage() {
                 <Pill
                   tone="info"
                   dot={false}
-                  className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2"
+                  className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2"
                 >
                   regex
                 </Pill>
@@ -185,7 +169,7 @@ export function FinderPage() {
             </div>
             <button
               type="button"
-              onClick={() => setRegex((r) => !r)}
+              onClick={toggleRegex}
               aria-pressed={regex}
               aria-label="Toggle regex mode"
               title={
@@ -194,7 +178,7 @@ export function FinderPage() {
                   : "Plain mode — click to enable regex (matches against IP, user-agent, endpoint, etc.)"
               }
               className={
-                "border-border focus-visible:ring-ring inline-flex h-9 w-9 shrink-0 items-center justify-center border font-mono text-[12px] transition-colors focus-visible:outline-none focus-visible:ring-1 " +
+                "inline-flex h-9 w-9 shrink-0 items-center justify-center border border-border font-mono text-[12px] transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none " +
                 (regex
                   ? "border-primary bg-primary/10 text-primary"
                   : "text-muted-foreground hover:border-foreground hover:text-foreground")
@@ -232,7 +216,7 @@ export function FinderPage() {
             </div>
           )}
           {committed !== "" && !anyLoading && firstError != null && (
-            <div className="text-destructive p-6 font-mono text-sm">
+            <div className="p-6 font-mono text-sm text-destructive">
               Search failed:{" "}
               {firstError instanceof Error
                 ? firstError.message
@@ -258,7 +242,7 @@ export function FinderPage() {
 
 function FinderHelp() {
   return (
-    <div className="text-muted-foreground space-y-2 p-6 font-mono text-[12px] leading-relaxed">
+    <div className="space-y-2 p-6 font-mono text-[12px] leading-relaxed text-muted-foreground">
       <p className="text-foreground">Examples:</p>
       <ul className="space-y-1.5">
         <li>
@@ -271,32 +255,30 @@ function FinderHelp() {
           the peer endpoint history.
         </li>
         <li>
-          <Kbd>10.10.0.5, 10.10.0.7 10.10.0.9</Kbd> — several values at
-          once (comma / space / newline separated). Each runs its own
-          lookup; results merge into one owner-grouped view.
+          <Kbd>10.10.0.5, 10.10.0.7 10.10.0.9</Kbd> — several values at once
+          (comma / space / newline separated). Each runs its own lookup; results
+          merge into one owner-grouped view.
         </li>
         <li>
-          <Kbd>alice@example.com</Kbd> — substring email match. Returns up to
-          10 users.
+          <Kbd>alice@example.com</Kbd> — substring email match. Returns up to 10
+          users.
         </li>
         <li>
           <Kbd>laptop-pro</Kbd> — substring device name match.
         </li>
         <li>
-          <Kbd>curl/8</Kbd> · <Kbd>python-requests</Kbd> — User-Agent
-          substring across audit / failed-login / session / access-log
-          tables.
+          <Kbd>curl/8</Kbd> · <Kbd>python-requests</Kbd> — User-Agent substring
+          across audit / failed-login / session / access-log tables.
         </li>
         <li>
-          <Kbd>.*</Kbd> button (right of the input) — flip to regex mode.
-          POSIX regex, case-insensitive, matched against user-agent /
-          action / path / email / device name / IP / WG endpoint. With
-          regex on, just type the pattern — no slashes needed: e.g.{" "}
-          <Kbd>10\.10\.0\..*</Kbd> (every IP in 10.10.0.0/24),{" "}
-          <Kbd>curl|wget|python</Kbd>,{" "}
-          <Kbd>^api/v1/(login|register)$</Kbd>. Max 200 chars; invalid
-          regex returns a 422. You can also type the slashed form
-          directly without toggling: <Kbd>{"/pattern/"}</Kbd>.
+          <Kbd>.*</Kbd> button (right of the input) — flip to regex mode. POSIX
+          regex, case-insensitive, matched against user-agent / action / path /
+          email / device name / IP / WG endpoint. With regex on, just type the
+          pattern — no slashes needed: e.g. <Kbd>10\.10\.0\..*</Kbd> (every IP
+          in 10.10.0.0/24), <Kbd>curl|wget|python</Kbd>,{" "}
+          <Kbd>^api/v1/(login|register)$</Kbd>. Max 200 chars; invalid regex
+          returns a 422. You can also type the slashed form directly without
+          toggling: <Kbd>{"/pattern/"}</Kbd>.
         </li>
       </ul>
     </div>
@@ -326,10 +308,9 @@ function FinderResults({ data }: { data: FinderResponse }) {
       </div>
 
       {!anyCount && !anyMatch && (
-        <div className="text-muted-foreground py-8 text-center font-mono text-sm">
-          Nothing matched. Try a partial value (email substring, UA
-          fragment) or a different shape (full <code>host:port</code> vs.
-          bare IP).
+        <div className="py-8 text-center font-mono text-sm text-muted-foreground">
+          Nothing matched. Try a partial value (email substring, UA fragment) or
+          a different shape (full <code>host:port</code> vs. bare IP).
         </div>
       )}
 
@@ -380,7 +361,7 @@ function FinderResults({ data }: { data: FinderResponse }) {
       {users.length > 0 && (
         <div>
           <h3 className="zv-eyebrow mb-2">User matches</h3>
-          <div className="border-border divide-border flex flex-col divide-y border">
+          <div className="flex flex-col divide-y divide-border border border-border">
             {users.map((u) => (
               <UserMatchRow key={u.id} u={u} />
             ))}
@@ -403,7 +384,10 @@ function FinderResults({ data }: { data: FinderResponse }) {
  *  This is the "who does this IP belong to" answer: the owner's email is
  *  the section header, the device holding the address sits inside. */
 function DeviceOwnerGroups({ devices }: { devices: FinderDeviceMatch[] }) {
-  const groups = new Map<string, { email: string; devices: FinderDeviceMatch[] }>()
+  const groups = new Map<
+    string,
+    { email: string; devices: FinderDeviceMatch[] }
+  >()
   for (const d of devices) {
     const g = groups.get(d.user_id)
     if (g) g.devices.push(d)
@@ -484,7 +468,7 @@ function MultiFinderResults({
 
       <div>
         <h3 className="zv-eyebrow mb-2">Ownership</h3>
-        <div className="border-border divide-border flex flex-col divide-y border">
+        <div className="flex flex-col divide-y divide-border border border-border">
           {tokens.map((t, i) => (
             <TokenOwnershipRow key={t} token={t} result={results[i]} />
           ))}
@@ -501,7 +485,7 @@ function MultiFinderResults({
       {users.length > 0 && (
         <div>
           <h3 className="zv-eyebrow mb-2">User matches</h3>
-          <div className="border-border divide-border flex flex-col divide-y border">
+          <div className="flex flex-col divide-y divide-border border border-border">
             {users.map((u) => (
               <UserMatchRow key={u.id} u={u} />
             ))}
@@ -510,7 +494,7 @@ function MultiFinderResults({
       )}
 
       {!anyMatch && (
-        <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+        <div className="py-8 text-center font-mono text-sm text-muted-foreground">
           None of the values matched a user or device.
         </div>
       )}
@@ -535,11 +519,11 @@ function TokenOwnershipRow({
       false)
   return (
     <div className="flex items-center justify-between gap-3 px-3 py-2 font-mono text-xs">
-      <span className="text-foreground shrink-0">{token}</span>
+      <span className="shrink-0 text-foreground">{token}</span>
       {holder ? (
         <Link
           to={`/admin/users/${holder.user_id}`}
-          className="text-muted-foreground hover:text-foreground min-w-0 truncate text-right"
+          className="min-w-0 truncate text-right text-muted-foreground hover:text-foreground"
         >
           <span className="text-foreground">{holder.user_email}</span>
           <span className="px-1 opacity-60">·</span>
@@ -568,17 +552,17 @@ function CountCard({
   link: string | null
 }) {
   const inner = (
-    <div className="border-border bg-card hover:border-foreground/40 group flex h-full flex-col gap-1 border p-3 transition">
-      <div className="text-muted-foreground flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em]">
+    <div className="group flex h-full flex-col gap-1 border border-border bg-card p-3 transition hover:border-foreground/40">
+      <div className="flex items-center justify-between font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
         <span className="flex items-center gap-1.5">
           <Icon className="size-3.5" />
           {label}
         </span>
         {link && (
-          <IconChevronRight className="text-muted-foreground group-hover:text-foreground size-3.5" />
+          <IconChevronRight className="size-3.5 text-muted-foreground group-hover:text-foreground" />
         )}
       </div>
-      <div className="text-foreground font-heading text-2xl tabular-nums">
+      <div className="font-heading text-2xl text-foreground tabular-nums">
         {count.toLocaleString()}
       </div>
     </div>
@@ -597,15 +581,15 @@ function UserMatchRow({ u }: { u: FinderUserMatch }) {
   return (
     <Link
       to={`/admin/users/${u.id}`}
-      className="hover:bg-muted/40 flex items-center justify-between gap-3 px-3 py-2 transition"
+      className="flex items-center justify-between gap-3 px-3 py-2 transition hover:bg-muted/40"
     >
       <div className="flex flex-col gap-0.5">
         <span className="font-mono text-sm">{u.email}</span>
-        <span className="text-muted-foreground font-mono text-[10px]">
+        <span className="font-mono text-[10px] text-muted-foreground">
           {u.id.slice(0, 8)} · matched on {u.matched_on}
         </span>
       </div>
-      <IconChevronRight className="text-muted-foreground size-4" />
+      <IconChevronRight className="size-4 text-muted-foreground" />
     </Link>
   )
 }

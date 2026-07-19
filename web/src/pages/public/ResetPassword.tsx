@@ -39,9 +39,19 @@ const MAX_PW = 128
 export function ResetPasswordPage() {
   const [params] = useSearchParams()
   const token = params.get("token") ?? ""
-  const [phase, setPhase] = useState<Phase>(() =>
-    token.length === 0 ? { kind: "missing" } : { kind: "checking" },
+  // Phase derives from the URL token + the stored result for *that* token:
+  // no token → missing; result not in yet (or for an older token after the
+  // user navigated here with a new link) → checking.
+  const [result, setResult] = useState<{ token: string; phase: Phase } | null>(
+    null
   )
+  const phase: Phase =
+    result?.token === token
+      ? result.phase
+      : token.length === 0
+        ? { kind: "missing" }
+        : { kind: "checking" }
+  const setPhase = (phase: Phase) => setResult({ token, phase })
   const [pw, setPw] = useState("")
   const [confirm, setConfirm] = useState("")
   const [showPw, setShowPw] = useState(false)
@@ -51,23 +61,20 @@ export function ResetPasswordPage() {
   // state without making the user type a new password first. Re-runs
   // if the user navigates back here with a different token in the URL.
   useEffect(() => {
-    if (token.length === 0) {
-      setPhase({ kind: "missing" })
-      return
-    }
+    if (token.length === 0) return
     let cancelled = false
-    setPhase({ kind: "checking" })
     verifyResetToken(token)
       .then((res) => {
         if (cancelled) return
-        if (res.valid) setPhase({ kind: "ready" })
-        else setPhase({ kind: "expired", reason: res.reason })
+        if (res.valid) setResult({ token, phase: { kind: "ready" } })
+        else
+          setResult({ token, phase: { kind: "expired", reason: res.reason } })
       })
       .catch(() => {
         if (cancelled) return
         // Network / 5xx fall back to "expired" with a generic reason —
         // the user can still retry by reloading.
-        setPhase({ kind: "expired", reason: undefined })
+        setResult({ token, phase: { kind: "expired", reason: undefined } })
       })
     return () => {
       cancelled = true
@@ -128,13 +135,13 @@ export function ResetPasswordPage() {
 
         {(phase.kind === "missing" || phase.kind === "expired") && (
           <>
-            <div className="border-destructive/40 bg-destructive/5 flex items-start gap-3 border p-3">
+            <div className="flex items-start gap-3 border border-destructive/40 bg-destructive/5 p-3">
               <IconAlertTriangle
-                className="text-destructive mt-0.5 size-4 shrink-0"
+                className="mt-0.5 size-4 shrink-0 text-destructive"
                 aria-hidden
               />
               <div className="flex flex-col gap-1 text-[13px] leading-relaxed">
-                <p className="text-foreground font-medium">
+                <p className="font-medium text-foreground">
                   {phase.kind === "missing"
                     ? "Missing token in URL."
                     : reasonCopy(phase.reason).title}
@@ -151,7 +158,7 @@ export function ResetPasswordPage() {
             </Button>
             <Link
               to="/login"
-              className="text-muted-foreground hover:text-foreground text-xs"
+              className="text-xs text-muted-foreground hover:text-foreground"
             >
               ← Back to sign in
             </Link>
@@ -176,14 +183,12 @@ export function ResetPasswordPage() {
                   className="pr-9"
                   aria-invalid={pwTooShort || pwTooLong}
                 />
-                <WithTooltip
-                  label={showPw ? "Hide password" : "Show password"}
-                >
+                <WithTooltip label={showPw ? "Hide password" : "Show password"}>
                   <button
                     type="button"
                     onClick={() => setShowPw((v) => !v)}
                     aria-label={showPw ? "Hide password" : "Show password"}
-                    className="text-muted-foreground hover:text-foreground absolute right-2 top-1/2 -translate-y-1/2 transition-colors"
+                    className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
                     tabIndex={-1}
                   >
                     {showPw ? <IconEyeOff size={14} /> : <IconEye size={14} />}
@@ -213,7 +218,7 @@ export function ResetPasswordPage() {
                 aria-invalid={pwMismatch}
               />
               {pwMismatch && (
-                <p className="text-destructive font-mono text-[11px]">
+                <p className="font-mono text-[11px] text-destructive">
                   Passwords don't match.
                 </p>
               )}
@@ -225,7 +230,7 @@ export function ResetPasswordPage() {
 
             <Link
               to="/login"
-              className="text-muted-foreground hover:text-foreground text-xs"
+              className="text-xs text-muted-foreground hover:text-foreground"
             >
               ← Back to sign in
             </Link>
@@ -234,18 +239,18 @@ export function ResetPasswordPage() {
 
         {phase.kind === "done" && (
           <>
-            <div className="border-status-online/40 bg-status-online/5 flex items-start gap-3 border p-3">
+            <div className="flex items-start gap-3 border border-status-online/40 bg-status-online/5 p-3">
               <IconCircleCheck
-                className="text-status-online mt-0.5 size-4 shrink-0"
+                className="mt-0.5 size-4 shrink-0 text-status-online"
                 aria-hidden
               />
               <div className="flex flex-col gap-1 text-[13px] leading-relaxed">
-                <p className="text-foreground font-medium">
+                <p className="font-medium text-foreground">
                   Your password is updated.
                 </p>
                 <p className="text-muted-foreground">
-                  Every other signed-in browser was also signed out.
-                  Use the new password to sign back in.
+                  Every other signed-in browser was also signed out. Use the new
+                  password to sign back in.
                 </p>
               </div>
             </div>

@@ -15,7 +15,9 @@ import {
   IconUserX,
   IconX,
 } from "@tabler/icons-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
+
+import { useResettingPage } from "@/hooks/useResettingPage"
 import { Link, useNavigate } from "react-router"
 import { toast } from "sonner"
 
@@ -102,7 +104,9 @@ export function UsersPage() {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all")
   const [totpFilter, setTotpFilter] = useState<TotpFilter>("all")
   const [suspendTarget, setSuspendTarget] = useState<AdminUser | null>(null)
-  const [impersonateTarget, setImpersonateTarget] = useState<AdminUser | null>(null)
+  const [impersonateTarget, setImpersonateTarget] = useState<AdminUser | null>(
+    null
+  )
   // Row-kebab actions that need a confirm step (security-sensitive or
   // destructive). Reversible actions (reset email, force-logout) fire directly.
   const [confirmAction, setConfirmAction] = useState<{
@@ -111,29 +115,27 @@ export function UsersPage() {
   } | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [pageSize, setPageSize] = useState(50)
-  const [page, setPage] = useState(0)
+  // Page 0 whenever the search term, filters, or page size change —
+  // a narrower filter (or wider page) can leave us pointing past the end of
+  // the result set.
+  const [page, setPage] = useResettingPage(
+    JSON.stringify([search, statusFilter, roleFilter, totpFilter, pageSize])
+  )
   // Bulk-selection state. Keeps ids only — re-derives the displayed
   // checkbox state from the current page's items, so navigating pages
   // preserves selection across visits.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkSuspendOpen, setBulkSuspendOpen] = useState(false)
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
-  // Reset to page 0 whenever the search term, filters, or page size change —
-  // a narrower filter (or wider page) can leave us pointing past the end of
-  // the result set.
-  useEffect(() => {
-    setPage(0)
-  }, [search, statusFilter, roleFilter, totpFilter, pageSize])
 
   const filters = useMemo<AdminUserListFilters>(
     () => ({
       q: search || undefined,
       status: statusFilter === "all" ? undefined : statusFilter,
       role: roleFilter === "all" ? undefined : roleFilter,
-      totp_enabled:
-        totpFilter === "all" ? undefined : totpFilter === "on",
+      totp_enabled: totpFilter === "all" ? undefined : totpFilter === "on",
     }),
-    [search, statusFilter, roleFilter, totpFilter],
+    [search, statusFilter, roleFilter, totpFilter]
   )
 
   const usersQ = useQuery({
@@ -219,7 +221,7 @@ export function UsersPage() {
     onError: onActionError,
   })
 
-  const items = usersQ.data?.items ?? []
+  const items = useMemo(() => usersQ.data?.items ?? [], [usersQ.data])
   const filtersActive =
     statusFilter !== "all" ||
     roleFilter !== "all" ||
@@ -232,11 +234,10 @@ export function UsersPage() {
   // toasts).
   const selectableIds = useMemo(
     () => items.filter((u) => u.id !== self?.id).map((u) => u.id),
-    [items, self?.id],
+    [items, self?.id]
   )
   const allOnPageSelected =
-    selectableIds.length > 0 &&
-    selectableIds.every((id) => selectedIds.has(id))
+    selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id))
   const someOnPageSelected =
     selectableIds.some((id) => selectedIds.has(id)) && !allOnPageSelected
   const togglePageSelection = (on: boolean) => {
@@ -264,7 +265,7 @@ export function UsersPage() {
   const bulkSuspendM = useMutation({
     mutationFn: async (ids: string[]) => {
       const results = await Promise.allSettled(
-        ids.map((id) => adminSetUserStatus(id, "suspended")),
+        ids.map((id) => adminSetUserStatus(id, "suspended"))
       )
       return results
     },
@@ -277,14 +278,16 @@ export function UsersPage() {
         toast.success(`Suspended ${ok} user${ok === 1 ? "" : "s"}`)
       } else {
         toast.warning(
-          `Suspended ${ok} of ${ids.length} — the rest failed (likely already non-active or admin-protected)`,
+          `Suspended ${ok} of ${ids.length} — the rest failed (likely already non-active or admin-protected)`
         )
       }
     },
   })
   const bulkDeleteM = useMutation({
     mutationFn: async (ids: string[]) => {
-      const results = await Promise.allSettled(ids.map((id) => adminDeleteUser(id)))
+      const results = await Promise.allSettled(
+        ids.map((id) => adminDeleteUser(id))
+      )
       return results
     },
     onSuccess: (results, ids) => {
@@ -296,7 +299,7 @@ export function UsersPage() {
         toast.success(`Deleted ${ok} user${ok === 1 ? "" : "s"}`)
       } else {
         toast.warning(
-          `Deleted ${ok} of ${ids.length} — the rest failed (likely the last admin or self)`,
+          `Deleted ${ok} of ${ids.length} — the rest failed (likely the last admin or self)`
         )
       }
     },
@@ -332,8 +335,8 @@ export function UsersPage() {
             // When at least one row is selected, the toolbar swaps to a
             // bulk-action bar. Tinted background makes it obvious the
             // primary actions in this view are batch operations now.
-            <div className="border-border bg-amber-500/5 flex flex-wrap items-center gap-2 border-b p-2">
-              <span className="text-foreground font-mono text-xs">
+            <div className="flex flex-wrap items-center gap-2 border-b border-border bg-amber-500/5 p-2">
+              <span className="font-mono text-xs text-foreground">
                 {selectedIds.size} selected
               </span>
               <Button
@@ -362,9 +365,9 @@ export function UsersPage() {
               </Button>
             </div>
           ) : null}
-          <div className="border-border flex flex-wrap items-center gap-2 border-b p-2">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border p-2">
             <div className="relative w-64">
-              <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
+              <IconSearch className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -383,7 +386,9 @@ export function UsersPage() {
                 <SelectItem value="all">All statuses</SelectItem>
                 <SelectItem value="active">Active</SelectItem>
                 <SelectItem value="suspended">Suspended</SelectItem>
-                <SelectItem value="pending_verification">Pending verify</SelectItem>
+                <SelectItem value="pending_verification">
+                  Pending verify
+                </SelectItem>
                 <SelectItem value="deleted">Deleted</SelectItem>
               </SelectContent>
             </Select>
@@ -489,9 +494,9 @@ export function UsersPage() {
                         <td>
                           <Link
                             to={`/admin/users/${u.id}`}
-                            className="hover:text-primary inline-flex items-center gap-2 transition-colors"
+                            className="inline-flex items-center gap-2 transition-colors hover:text-primary"
                           >
-                            <span className="border-border bg-card flex size-6 shrink-0 items-center justify-center border p-0.5">
+                            <span className="flex size-6 shrink-0 items-center justify-center border border-border bg-card p-0.5">
                               <Identicon seed={u.email} size={20} cells={5} />
                             </span>
                             <span className="font-medium underline-offset-2 hover:underline">
@@ -499,7 +504,7 @@ export function UsersPage() {
                             </span>
                           </Link>
                           {isSelf && (
-                            <span className="text-muted-foreground/60 ml-2 font-mono text-[10px] uppercase">
+                            <span className="ml-2 font-mono text-[10px] text-muted-foreground/60 uppercase">
                               you
                             </span>
                           )}
@@ -530,9 +535,14 @@ export function UsersPage() {
                             </Pill>
                           )}
                         </td>
-                        <td className="zv-num hidden md:table-cell">{u.device_count}</td>
-                        <td className="text-muted-foreground hidden font-mono text-xs lg:table-cell">
-                          <RelativeTime value={u.last_login_at} fallback="Never" />
+                        <td className="zv-num hidden md:table-cell">
+                          {u.device_count}
+                        </td>
+                        <td className="hidden font-mono text-xs text-muted-foreground lg:table-cell">
+                          <RelativeTime
+                            value={u.last_login_at}
+                            fallback="Never"
+                          />
                         </td>
                         <td className="zv-actions">
                           <RowActions
@@ -566,7 +576,7 @@ export function UsersPage() {
                     <tr>
                       <td
                         colSpan={8}
-                        className="text-muted-foreground py-8 text-center font-mono text-sm"
+                        className="py-8 text-center font-mono text-sm text-muted-foreground"
                       >
                         No users match.
                       </td>
@@ -740,13 +750,13 @@ function UserPolicyPanel() {
     >
       <div className="flex items-center justify-between gap-4 py-1">
         <div className="flex flex-col">
-          <span className="text-foreground font-mono text-sm font-medium">
+          <span className="font-mono text-sm font-medium text-foreground">
             Hide device detail page
           </span>
-          <span className="text-muted-foreground font-mono text-[11px]">
-            Users still see their device list but can't open
-            /app/devices/{"{id}"} — useful when the per-device charts and
-            activity log should stay admin-only.
+          <span className="font-mono text-[11px] text-muted-foreground">
+            Users still see their device list but can't open /app/devices/
+            {"{id}"} — useful when the per-device charts and activity log should
+            stay admin-only.
           </span>
         </div>
         <Switch
@@ -880,23 +890,31 @@ function InviteUserDialog({
   onOpenChange: (o: boolean) => void
   onCreated: () => void
 }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Keyed on `open` so each open mounts a clean slate (the credentials
+          view takes priority while `created` is set) — no reset effect. */}
+      <InviteUserDialogBody
+        key={String(open)}
+        onOpenChange={onOpenChange}
+        onCreated={onCreated}
+      />
+    </Dialog>
+  )
+}
+
+function InviteUserDialogBody({
+  onOpenChange,
+  onCreated,
+}: {
+  onOpenChange: (o: boolean) => void
+  onCreated: () => void
+}) {
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<UserRole>("user")
   const [skipVerify, setSkipVerify] = useState(false)
   const [emailLink, setEmailLink] = useState(true)
   const [created, setCreated] = useState<AdminCreatedUser | null>(null)
-
-  // Reset on close so re-opening is a clean slate (the credentials view
-  // takes priority while `created` is set).
-  useEffect(() => {
-    if (!open) {
-      setEmail("")
-      setRole("user")
-      setSkipVerify(false)
-      setEmailLink(true)
-      setCreated(null)
-    }
-  }, [open])
 
   const m = useMutation({
     mutationFn: (body: AdminCreateUserBody) => adminCreateUser(body),
@@ -906,7 +924,9 @@ function InviteUserDialog({
         // Switch to the credentials view — the admin must be able to
         // see + copy the plaintext exactly once.
         setCreated(resp)
-        toast.success("User created. Copy the password — it won't be shown again.")
+        toast.success(
+          "User created. Copy the password — it won't be shown again."
+        )
       } else {
         toast.success("User created. A setup email was sent.")
         onOpenChange(false)
@@ -938,133 +958,127 @@ function InviteUserDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        {created ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>User created</DialogTitle>
-              <DialogDescription>
-                {emailLink
-                  ? "A setup link was emailed to the user."
-                  : "Hand this password off to the user out-of-band. It won't be shown again."}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex flex-col gap-3">
+    <DialogContent className="sm:max-w-md">
+      {created ? (
+        <>
+          <DialogHeader>
+            <DialogTitle>User created</DialogTitle>
+            <DialogDescription>
+              {emailLink
+                ? "A setup link was emailed to the user."
+                : "Hand this password off to the user out-of-band. It won't be shown again."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <Label className="text-xs text-muted-foreground">Email</Label>
+              <code className="border border-border bg-muted/40 px-2 py-1.5 font-mono text-xs">
+                {created.email}
+              </code>
+            </div>
+            {created.generated_password && (
               <div className="flex flex-col gap-1">
-                <Label className="text-muted-foreground text-xs">Email</Label>
-                <code className="border-border bg-muted/40 border px-2 py-1.5 font-mono text-xs">
-                  {created.email}
-                </code>
-              </div>
-              {created.generated_password && (
-                <div className="flex flex-col gap-1">
-                  <Label className="text-muted-foreground text-xs">
-                    Generated password
-                  </Label>
-                  <div className="flex items-center gap-2">
-                    <code className="border-border bg-muted/40 flex-1 select-all border px-2 py-1.5 font-mono text-xs">
-                      {created.generated_password}
-                    </code>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={copyPassword}
-                    >
-                      <IconCopy className="size-3.5" />
-                      Copy
-                    </Button>
-                  </div>
-                  <p className="text-muted-foreground text-[11px]">
-                    The user is forced to change this on first sign-in.
-                  </p>
+                <Label className="text-xs text-muted-foreground">
+                  Generated password
+                </Label>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 border border-border bg-muted/40 px-2 py-1.5 font-mono text-xs select-all">
+                    {created.generated_password}
+                  </code>
+                  <Button size="sm" variant="outline" onClick={copyPassword}>
+                    <IconCopy className="size-3.5" />
+                    Copy
+                  </Button>
                 </div>
-              )}
-            </div>
-            <DialogFooter>
-              <Button onClick={() => onOpenChange(false)}>Done</Button>
-            </DialogFooter>
-          </>
-        ) : (
-          <>
-            <DialogHeader>
-              <DialogTitle>Invite user</DialogTitle>
-              <DialogDescription>
-                We'll generate a random password and email a setup link by
-                default. Uncheck "Email setup link" to instead show the
-                password here once for out-of-band delivery.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1">
-                <Label htmlFor="invite-email">Email</Label>
-                <Input
-                  id="invite-email"
-                  type="email"
-                  inputMode="email"
-                  autoComplete="off"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="user@example.com"
-                />
+                <p className="text-[11px] text-muted-foreground">
+                  The user is forced to change this on first sign-in.
+                </p>
               </div>
-              <div className="flex flex-col gap-1">
-                <Label>Role</Label>
-                <Select
-                  value={role}
-                  onValueChange={(v) => setRole(v as UserRole)}
-                >
-                  <SelectTrigger className="text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="user">User</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <label className="flex items-start gap-2 text-xs">
-                <Checkbox
-                  checked={skipVerify}
-                  onCheckedChange={(c) => setSkipVerify(c === true)}
-                />
-                <span>
-                  <span className="text-foreground block font-medium">
-                    Skip email verification
-                  </span>
-                  <span className="text-muted-foreground">
-                    Account becomes active immediately. Useful for offline
-                    onboarding.
-                  </span>
-                </span>
-              </label>
-              <label className="flex items-start gap-2 text-xs">
-                <Checkbox
-                  checked={emailLink}
-                  onCheckedChange={(c) => setEmailLink(c === true)}
-                />
-                <span>
-                  <span className="text-foreground block font-medium">
-                    Email setup link
-                  </span>
-                  <span className="text-muted-foreground">
-                    Sends a password-reset link instead of revealing the
-                    generated password here.
-                  </span>
-                </span>
-              </label>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => onOpenChange(false)}>Done</Button>
+          </DialogFooter>
+        </>
+      ) : (
+        <>
+          <DialogHeader>
+            <DialogTitle>Invite user</DialogTitle>
+            <DialogDescription>
+              We'll generate a random password and email a setup link by
+              default. Uncheck "Email setup link" to instead show the password
+              here once for out-of-band delivery.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="invite-email">Email</Label>
+              <Input
+                id="invite-email"
+                type="email"
+                inputMode="email"
+                autoComplete="off"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="user@example.com"
+              />
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button disabled={m.isPending} onClick={submit}>
-                {m.isPending ? "Creating…" : "Create user"}
-              </Button>
-            </DialogFooter>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+            <div className="flex flex-col gap-1">
+              <Label>Role</Label>
+              <Select
+                value={role}
+                onValueChange={(v) => setRole(v as UserRole)}
+              >
+                <SelectTrigger className="text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">User</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-start gap-2 text-xs">
+              <Checkbox
+                checked={skipVerify}
+                onCheckedChange={(c) => setSkipVerify(c === true)}
+              />
+              <span>
+                <span className="block font-medium text-foreground">
+                  Skip email verification
+                </span>
+                <span className="text-muted-foreground">
+                  Account becomes active immediately. Useful for offline
+                  onboarding.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-xs">
+              <Checkbox
+                checked={emailLink}
+                onCheckedChange={(c) => setEmailLink(c === true)}
+              />
+              <span>
+                <span className="block font-medium text-foreground">
+                  Email setup link
+                </span>
+                <span className="text-muted-foreground">
+                  Sends a password-reset link instead of revealing the generated
+                  password here.
+                </span>
+              </span>
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button disabled={m.isPending} onClick={submit}>
+              {m.isPending ? "Creating…" : "Create user"}
+            </Button>
+          </DialogFooter>
+        </>
+      )}
+    </DialogContent>
   )
 }

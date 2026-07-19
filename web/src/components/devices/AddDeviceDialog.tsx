@@ -76,10 +76,8 @@ export function AddDeviceDialog({
   const accountCapBytes = usageQ.data?.monthly_byte_cap ?? null
   const existingNames = useMemo(
     () =>
-      new Set(
-        (devicesQ.data ?? []).map((d) => d.name.trim().toLowerCase()),
-      ),
-    [devicesQ.data],
+      new Set((devicesQ.data ?? []).map((d) => d.name.trim().toLowerCase())),
+    [devicesQ.data]
   )
 
   const [step, setStep] = useState<1 | 2>(1)
@@ -91,35 +89,32 @@ export function AddDeviceDialog({
   const [deviceType, setDeviceType] = useState<DeviceType | "">("")
   const [ipMode, setIpMode] = useState<IpMode>("auto")
   const [ipInput, setIpInput] = useState("")
-  const [dnsPrefix, setDnsPrefix] = useState("")
-  const [dnsTouched, setDnsTouched] = useState(false)
+  // DNS prefix derives from the device/user name until the user edits the
+  // field (`dnsOverride` set) — so name edits keep updating the suggestion
+  // without an effect clobbering anything.
+  const [dnsOverride, setDnsOverride] = useState<string | null>(null)
   // Per-device monthly cap. A toggle decides whether the device is capped
   // at all: off = unlimited (no per-device cap), on = a required GB value.
-  // `capGbInput` holds the GB string while the toggle is on. `capTouched`
-  // gates the auto-seed from the account cap so we don't clobber the user's
-  // choice when `usageQ` refetches.
-  const [capEnabled, setCapEnabled] = useState(false)
-  const [capGbInput, setCapGbInput] = useState("")
-  const [capTouched, setCapTouched] = useState(false)
+  // Until the user touches either control (`capOverride` set), the toggle
+  // stays off and the GB field mirrors the account cap (when there is one)
+  // so enabling the toggle offers a sensible starting value to adjust — and
+  // a `usageQ` refetch never clobbers the user's choice.
+  const [capOverride, setCapOverride] = useState<{
+    enabled: boolean
+    gb: string
+  } | null>(null)
   const [result, setResult] = useState<CreatedDevice | null>(null)
 
-  // Default to NO per-device cap (unlimited) — the toggle always starts off,
-  // regardless of the account cap, and the user opts in when they want a
-  // limit. We still pre-seed the GB field with the account cap (when there is
-  // one) so enabling the toggle offers a sensible starting value to adjust.
-  // Stops once the user touches the control so a refetch never clobbers their
-  // choice.
-  useEffect(() => {
-    if (capTouched) return
-    setCapEnabled(false)
-    setCapGbInput(
-      accountCapBytes && accountCapBytes > 0 ? formatCapGb(accountCapBytes) : "",
-    )
-  }, [accountCapBytes, capTouched])
+  const capEnabled = capOverride?.enabled ?? false
+  const capGbInput = capOverride
+    ? capOverride.gb
+    : accountCapBytes && accountCapBytes > 0
+      ? formatCapGb(accountCapBytes)
+      : ""
 
   const userSlug = useMemo(
     () => dnsLabelSlug(user?.email?.split("@")[0] ?? ""),
-    [user?.email],
+    [user?.email]
   )
   const nameSlug = useMemo(() => dnsLabelSlug(name), [name])
 
@@ -128,20 +123,16 @@ export function AddDeviceDialog({
     return nameSlug || userSlug
   }, [nameSlug, userSlug])
 
-  useEffect(() => {
-    if (!dnsTouched) setDnsPrefix(defaultDnsPrefix)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultDnsPrefix])
+  const dnsPrefix = dnsOverride ?? defaultDnsPrefix
+  const dnsTouched = dnsOverride !== null
 
   const dnsFqdn = dnsPrefix ? `${dnsPrefix}.vpn.local` : ""
 
   const [debouncedFqdn, setDebouncedFqdn] = useState("")
   useEffect(() => {
-    if (!dnsFqdn) {
-      setDebouncedFqdn("")
-      return
-    }
-    const t = setTimeout(() => setDebouncedFqdn(dnsFqdn), 350)
+    // An empty value propagates on the next tick (no debounce needed), but
+    // still via the timer so the effect never sets state synchronously.
+    const t = setTimeout(() => setDebouncedFqdn(dnsFqdn), dnsFqdn ? 350 : 0)
     return () => clearTimeout(t)
   }, [dnsFqdn])
 
@@ -170,7 +161,7 @@ export function AddDeviceDialog({
     if (!v) return { ok: false, error: null }
     if (
       !/^(?:(?:25[0-5]|2[0-4]\d|1?\d{1,2})\.){3}(?:25[0-5]|2[0-4]\d|1?\d{1,2})$/.test(
-        v,
+        v
       )
     ) {
       return { ok: false, error: "that doesn't look like a valid IPv4 address" }
@@ -199,7 +190,11 @@ export function AddDeviceDialog({
     }
     const n = Number(raw)
     if (!Number.isFinite(n) || n <= 0) {
-      return { ok: false, bytes: null, error: "must be a positive number of GB" }
+      return {
+        ok: false,
+        bytes: null,
+        error: "must be a positive number of GB",
+      }
     }
     const bytes = Math.round(n * 1024 ** 3)
     if (accountCapBytes && bytes > accountCapBytes) {
@@ -230,9 +225,7 @@ export function AddDeviceDialog({
           await setDeviceDns(created.device.id, [dnsFqdn])
         } catch (e) {
           const msg =
-            e instanceof ApiError
-              ? e.message
-              : "DNS name could not be saved"
+            e instanceof ApiError ? e.message : "DNS name could not be saved"
           toast.warning(`Device created — ${msg}`)
         }
       }
@@ -270,11 +263,8 @@ export function AddDeviceDialog({
     setIpMode("auto")
     setIpInput("")
     setResult(null)
-    setDnsPrefix("")
-    setDnsTouched(false)
-    setCapEnabled(false)
-    setCapGbInput("")
-    setCapTouched(false)
+    setDnsOverride(null)
+    setCapOverride(null)
   }
 
   return (
@@ -283,7 +273,7 @@ export function AddDeviceDialog({
       showCloseButton={false}
       className="flex flex-col gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-[820px]"
     >
-      <SheetHeader className="border-border border-b">
+      <SheetHeader className="border-b border-border">
         <SheetTitle>
           <Eyebrow num={`0${step}/02`}>Add device</Eyebrow>
         </SheetTitle>
@@ -295,261 +285,256 @@ export function AddDeviceDialog({
 
       {step === 1 && (
         <div className="flex min-h-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="dev-name" className="zv-eyebrow">
-              Device name
-            </Label>
-            <Input
-              id="dev-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="macbook-pro · pixel-8 · home-server"
-              className="font-mono"
-              autoFocus
-              maxLength={64}
-              aria-invalid={nameTaken}
-            />
-            <p className="text-muted-foreground font-mono text-[11px]">
-              1–64 chars. Used as the WireGuard interface name on the device.
-              {nameTaken && (
-                <span className="text-destructive ml-2">
-                  you already have a device with this name
-                </span>
-              )}
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label className="zv-eyebrow">Operating system</Label>
-            <OptionTiles
-              ariaLabel="Operating system"
-              options={OS_OPTIONS}
-              value={osChoice}
-              onChange={setOsChoice}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label className="zv-eyebrow">Device type</Label>
-            <OptionTiles
-              ariaLabel="Device type"
-              options={DEVICE_TYPE_OPTIONS}
-              value={deviceType}
-              onChange={setDeviceType}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="dev-dns-name" className="zv-eyebrow">
-              DNS name
-            </Label>
-            <div
-              data-invalid={
-                (dnsPrefix.length > 0 && !dnsPrefixLocallyValid) ||
-                dnsNameTaken
-                  ? "1"
-                  : undefined
-              }
-              className="border-input bg-transparent focus-within:border-ring focus-within:ring-ring/50 data-[invalid=1]:border-destructive data-[invalid=1]:ring-destructive/20 flex h-8 items-stretch overflow-hidden rounded-lg border transition-colors focus-within:ring-3 data-[invalid=1]:ring-3"
-            >
-              <input
-                id="dev-dns-name"
-                value={dnsPrefix}
-                onChange={(e) => {
-                  setDnsTouched(true)
-                  setDnsPrefix(e.target.value.toLowerCase())
-                }}
-                placeholder={defaultDnsPrefix || "macbook-pro.bhadri"}
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm outline-none"
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="dev-name" className="zv-eyebrow">
+                Device name
+              </Label>
+              <Input
+                id="dev-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="macbook-pro · pixel-8 · home-server"
+                className="font-mono"
+                autoFocus
+                maxLength={64}
+                aria-invalid={nameTaken}
               />
-              <span className="border-input bg-muted/40 text-muted-foreground inline-flex shrink-0 items-center border-l px-2.5 font-mono text-[12px]">
-                .vpn.local
-              </span>
-            </div>
-            <DnsNameStatus
-              prefix={dnsPrefix}
-              locallyValid={dnsPrefixLocallyValid}
-              checking={
-                dnsCheckQ.isFetching && debouncedFqdn === dnsFqdn
-              }
-              taken={dnsNameTaken}
-              available={dnsNameAvailable}
-              defaultPrefix={defaultDnsPrefix}
-              touched={dnsTouched}
-              onReset={() => {
-                setDnsTouched(false)
-                setDnsPrefix(defaultDnsPrefix)
-              }}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label className="zv-eyebrow">
-              IP allocation
-              {serverCidr && (
-                <span className="text-muted-foreground/70 normal-case">
-                  {" "}· subnet{" "}
-                  <span className="text-foreground font-mono">
-                    {serverCidr}
+              <p className="font-mono text-[11px] text-muted-foreground">
+                1–64 chars. Used as the WireGuard interface name on the device.
+                {nameTaken && (
+                  <span className="ml-2 text-destructive">
+                    you already have a device with this name
                   </span>
-                </span>
-              )}
-            </Label>
-            <div className="grid grid-cols-2 gap-2">
-              <IpModeOption
-                selected={ipMode === "auto"}
-                onClick={() => setIpMode("auto")}
-                title="Auto-assign"
-                sub={
-                  serverCidr
-                    ? `Server picks the next free address in ${serverCidr}.`
-                    : "Server picks the next free address in the subnet."
-                }
-              />
-              <IpModeOption
-                selected={ipMode === "custom"}
-                onClick={() => setIpMode("custom")}
-                title="Choose IP"
-                sub={
-                  serverCidr
-                    ? `Reserve a specific address inside ${serverCidr}.`
-                    : "Reserve a specific address inside the server's CIDR."
-                }
+                )}
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="zv-eyebrow">Operating system</Label>
+              <OptionTiles
+                ariaLabel="Operating system"
+                options={OS_OPTIONS}
+                value={osChoice}
+                onChange={setOsChoice}
               />
             </div>
-            {ipMode === "custom" && (
-              <div className="mt-1 flex flex-col gap-2">
-                {serverCidr && (() => {
-                  const range = ipRangeFromCidr(serverCidr)
-                  if (!range) return null
-                  return (
-                    <div className="border-border bg-muted/30 flex items-center justify-between gap-3 border px-3 py-2 font-mono text-[11px]">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-muted-foreground uppercase tracking-[0.08em] text-[10px]">
-                          Usable range
-                        </span>
-                        <span className="text-foreground tabular-nums">
-                          {range.first}
-                          <span className="text-muted-foreground"> → </span>
-                          {range.last}
-                        </span>
-                      </div>
-                      <div className="text-muted-foreground/80 text-right">
-                        <div className="tabular-nums">
-                          {range.total.toLocaleString()}
-                        </div>
-                        <div className="text-[10px] uppercase tracking-[0.08em]">
-                          addresses
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })()}
-                <Input
-                  value={ipInput}
-                  onChange={(e) => setIpInput(e.target.value)}
-                  placeholder={
-                    serverCidr ? ipPlaceholderFor(serverCidr) : "10.42.0.42"
-                  }
-                  className="font-mono"
-                  aria-invalid={!ipLooksValid}
-                  autoFocus
-                />
-                <p className="text-muted-foreground font-mono text-[11px]">
-                  IPv4 only. Must be inside{" "}
-                  <span className="text-foreground font-mono">
-                    {serverCidr ?? "the server's subnet"}
-                  </span>{" "}
-                  and not already taken. Network / broadcast / gateway are
-                  reserved.
-                  {ipValidation.error && (
-                    <span className="text-destructive ml-2">
-                      {ipValidation.error}
-                    </span>
-                  )}
-                </p>
-              </div>
-            )}
-          </div>
 
-          {/* Per-device monthly cap. A toggle chooses whether the device is
-              capped at all: off = unlimited (no per-device cap), on = a
-              required GB value. Defaults OFF (unlimited) — the user opts in
-              when they want a limit; the account cap is still enforced
-              server-side regardless. */}
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="dev-cap" className="zv-eyebrow">
-                Monthly cap
-                {accountCapBytes && accountCapBytes > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <Label className="zv-eyebrow">Device type</Label>
+              <OptionTiles
+                ariaLabel="Device type"
+                options={DEVICE_TYPE_OPTIONS}
+                value={deviceType}
+                onChange={setDeviceType}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="dev-dns-name" className="zv-eyebrow">
+                DNS name
+              </Label>
+              <div
+                data-invalid={
+                  (dnsPrefix.length > 0 && !dnsPrefixLocallyValid) ||
+                  dnsNameTaken
+                    ? "1"
+                    : undefined
+                }
+                className="flex h-8 items-stretch overflow-hidden rounded-lg border border-input bg-transparent transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 data-[invalid=1]:border-destructive data-[invalid=1]:ring-3 data-[invalid=1]:ring-destructive/20"
+              >
+                <input
+                  id="dev-dns-name"
+                  value={dnsPrefix}
+                  onChange={(e) => setDnsOverride(e.target.value.toLowerCase())}
+                  placeholder={defaultDnsPrefix || "macbook-pro.bhadri"}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  className="min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                />
+                <span className="inline-flex shrink-0 items-center border-l border-input bg-muted/40 px-2.5 font-mono text-[12px] text-muted-foreground">
+                  .vpn.local
+                </span>
+              </div>
+              <DnsNameStatus
+                prefix={dnsPrefix}
+                locallyValid={dnsPrefixLocallyValid}
+                checking={dnsCheckQ.isFetching && debouncedFqdn === dnsFqdn}
+                taken={dnsNameTaken}
+                available={dnsNameAvailable}
+                defaultPrefix={defaultDnsPrefix}
+                touched={dnsTouched}
+                onReset={() => setDnsOverride(null)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label className="zv-eyebrow">
+                IP allocation
+                {serverCidr && (
                   <span className="text-muted-foreground/70 normal-case">
-                    {" "}· account cap{" "}
-                    <span className="text-foreground font-mono">
-                      {formatBytes(accountCapBytes)}
+                    {" "}
+                    · subnet{" "}
+                    <span className="font-mono text-foreground">
+                      {serverCidr}
                     </span>
                   </span>
                 )}
               </Label>
-              <Switch
-                checked={capEnabled}
-                onCheckedChange={(v) => {
-                  setCapTouched(true)
-                  setCapEnabled(v)
-                }}
-                aria-label="Enable a monthly data cap for this device"
-              />
-            </div>
-            {capEnabled ? (
-              <>
-                <div
-                  data-invalid={!capValidation.ok ? "1" : undefined}
-                  className="border-input bg-transparent focus-within:border-ring focus-within:ring-ring/50 data-[invalid=1]:border-destructive data-[invalid=1]:ring-destructive/20 flex h-8 items-stretch overflow-hidden rounded-lg border transition-colors focus-within:ring-3 data-[invalid=1]:ring-3"
-                >
-                  <input
-                    id="dev-cap"
-                    type="number"
-                    min={0}
-                    step="0.1"
-                    value={capGbInput}
-                    onChange={(e) => {
-                      setCapTouched(true)
-                      setCapGbInput(e.target.value)
-                    }}
+              <div className="grid grid-cols-2 gap-2">
+                <IpModeOption
+                  selected={ipMode === "auto"}
+                  onClick={() => setIpMode("auto")}
+                  title="Auto-assign"
+                  sub={
+                    serverCidr
+                      ? `Server picks the next free address in ${serverCidr}.`
+                      : "Server picks the next free address in the subnet."
+                  }
+                />
+                <IpModeOption
+                  selected={ipMode === "custom"}
+                  onClick={() => setIpMode("custom")}
+                  title="Choose IP"
+                  sub={
+                    serverCidr
+                      ? `Reserve a specific address inside ${serverCidr}.`
+                      : "Reserve a specific address inside the server's CIDR."
+                  }
+                />
+              </div>
+              {ipMode === "custom" && (
+                <div className="mt-1 flex flex-col gap-2">
+                  {serverCidr &&
+                    (() => {
+                      const range = ipRangeFromCidr(serverCidr)
+                      if (!range) return null
+                      return (
+                        <div className="flex items-center justify-between gap-3 border border-border bg-muted/30 px-3 py-2 font-mono text-[11px]">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
+                              Usable range
+                            </span>
+                            <span className="text-foreground tabular-nums">
+                              {range.first}
+                              <span className="text-muted-foreground"> → </span>
+                              {range.last}
+                            </span>
+                          </div>
+                          <div className="text-right text-muted-foreground/80">
+                            <div className="tabular-nums">
+                              {range.total.toLocaleString()}
+                            </div>
+                            <div className="text-[10px] tracking-[0.08em] uppercase">
+                              addresses
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  <Input
+                    value={ipInput}
+                    onChange={(e) => setIpInput(e.target.value)}
                     placeholder={
-                      accountCapBytes && accountCapBytes > 0
-                        ? formatCapGb(accountCapBytes)
-                        : "e.g. 100"
+                      serverCidr ? ipPlaceholderFor(serverCidr) : "10.42.0.42"
                     }
-                    className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm outline-none"
+                    className="font-mono"
+                    aria-invalid={!ipLooksValid}
+                    autoFocus
                   />
-                  <span className="border-input bg-muted/40 text-muted-foreground inline-flex shrink-0 items-center border-l px-2.5 font-mono text-[12px]">
-                    GB / month
-                  </span>
+                  <p className="font-mono text-[11px] text-muted-foreground">
+                    IPv4 only. Must be inside{" "}
+                    <span className="font-mono text-foreground">
+                      {serverCidr ?? "the server's subnet"}
+                    </span>{" "}
+                    and not already taken. Network / broadcast / gateway are
+                    reserved.
+                    {ipValidation.error && (
+                      <span className="ml-2 text-destructive">
+                        {ipValidation.error}
+                      </span>
+                    )}
+                  </p>
                 </div>
-                <p className="text-muted-foreground font-mono text-[11px]">
-                  This device auto-pauses when it reaches the cap this cycle.
-                  {capValidation.error && (
-                    <span className="text-destructive ml-2">
-                      {capValidation.error}
+              )}
+            </div>
+
+            {/* Per-device monthly cap. A toggle chooses whether the device is
+              capped at all: off = unlimited (no per-device cap), on = a
+              required GB value. Defaults OFF (unlimited) — the user opts in
+              when they want a limit; the account cap is still enforced
+              server-side regardless. */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="dev-cap" className="zv-eyebrow">
+                  Monthly cap
+                  {accountCapBytes && accountCapBytes > 0 && (
+                    <span className="text-muted-foreground/70 normal-case">
+                      {" "}
+                      · account cap{" "}
+                      <span className="font-mono text-foreground">
+                        {formatBytes(accountCapBytes)}
+                      </span>
                     </span>
                   )}
+                </Label>
+                <Switch
+                  checked={capEnabled}
+                  onCheckedChange={(v) =>
+                    setCapOverride({ enabled: v, gb: capGbInput })
+                  }
+                  aria-label="Enable a monthly data cap for this device"
+                />
+              </div>
+              {capEnabled ? (
+                <>
+                  <div
+                    data-invalid={!capValidation.ok ? "1" : undefined}
+                    className="flex h-8 items-stretch overflow-hidden rounded-lg border border-input bg-transparent transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 data-[invalid=1]:border-destructive data-[invalid=1]:ring-3 data-[invalid=1]:ring-destructive/20"
+                  >
+                    <input
+                      id="dev-cap"
+                      type="number"
+                      min={0}
+                      step="0.1"
+                      value={capGbInput}
+                      onChange={(e) =>
+                        setCapOverride({
+                          enabled: capEnabled,
+                          gb: e.target.value,
+                        })
+                      }
+                      placeholder={
+                        accountCapBytes && accountCapBytes > 0
+                          ? formatCapGb(accountCapBytes)
+                          : "e.g. 100"
+                      }
+                      className="min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                    />
+                    <span className="inline-flex shrink-0 items-center border-l border-input bg-muted/40 px-2.5 font-mono text-[12px] text-muted-foreground">
+                      GB / month
+                    </span>
+                  </div>
+                  <p className="font-mono text-[11px] text-muted-foreground">
+                    This device auto-pauses when it reaches the cap this cycle.
+                    {capValidation.error && (
+                      <span className="ml-2 text-destructive">
+                        {capValidation.error}
+                      </span>
+                    )}
+                  </p>
+                </>
+              ) : (
+                <p className="font-mono text-[11px] text-muted-foreground">
+                  {accountCapBytes && accountCapBytes > 0
+                    ? "Unlimited for this device — your account cap still applies."
+                    : "Unlimited — this device has no monthly data cap."}
                 </p>
-              </>
-            ) : (
-              <p className="text-muted-foreground font-mono text-[11px]">
-                {accountCapBytes && accountCapBytes > 0
-                  ? "Unlimited for this device — your account cap still applies."
-                  : "Unlimited — this device has no monthly data cap."}
-              </p>
-            )}
+              )}
+            </div>
           </div>
-
-        </div>
-          <SheetFooter className="border-border flex-row justify-end gap-2 border-t">
+          <SheetFooter className="flex-row justify-end gap-2 border-t border-border">
             <SheetClose asChild>
               <Button variant="ghost" disabled={addM.isPending}>
                 Cancel
@@ -595,16 +580,16 @@ function Step2Result({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-        <p className="text-muted-foreground text-[13px] leading-relaxed">
-          The keypair was generated server-side for this peer; the private
-          key is in the config below and{" "}
-          <strong className="text-foreground">isn't stored</strong> after
-          you dismiss this dialog.{" "}
+        <p className="text-[13px] leading-relaxed text-muted-foreground">
+          The keypair was generated server-side for this peer; the private key
+          is in the config below and{" "}
+          <strong className="text-foreground">isn't stored</strong> after you
+          dismiss this dialog.{" "}
           <span className="text-foreground">Save it now.</span>
         </p>
 
-        <div className="border-border grid gap-0 border md:grid-cols-[auto_1fr]">
-          <div className="border-border bg-card flex aspect-square shrink-0 items-center justify-center p-3 md:aspect-auto md:w-[300px] md:border-r">
+        <div className="grid gap-0 border border-border md:grid-cols-[auto_1fr]">
+          <div className="flex aspect-square shrink-0 items-center justify-center border-border bg-card p-3 md:aspect-auto md:w-[300px] md:border-r">
             <span
               className="block size-[256px] max-w-full [&>svg]:size-full"
               dangerouslySetInnerHTML={{ __html: result.qr_svg }}
@@ -613,7 +598,7 @@ function Step2Result({
           <div className="flex min-w-0 flex-col gap-3 p-4">
             <div className="flex flex-col gap-1">
               <Eyebrow>Scan with WireGuard / mobile</Eyebrow>
-              <p className="text-muted-foreground font-mono text-[11px]">
+              <p className="font-mono text-[11px] text-muted-foreground">
                 Allocated IP{" "}
                 <span className="text-foreground">
                   {result.device.allocated_ip}
@@ -654,14 +639,26 @@ function Step2Result({
             <ConfigRow label="DNS" value={parsed.interface.dns} mono />
             <ConfigRow label="MTU" value={parsed.interface.mtu} mono />
             {parsed.interface.privateKey && (
-              <SecretRow label="Private key" value={parsed.interface.privateKey} />
+              <SecretRow
+                label="Private key"
+                value={parsed.interface.privateKey}
+              />
             )}
           </ConfigSection>
 
           <ConfigSection title="Peer" eyebrow="Remote server">
-            <ConfigRow label="Public key" value={parsed.peer.publicKey} mono truncate />
+            <ConfigRow
+              label="Public key"
+              value={parsed.peer.publicKey}
+              mono
+              truncate
+            />
             <ConfigRow label="Endpoint" value={parsed.peer.endpoint} mono />
-            <ConfigRow label="Allowed IPs" value={parsed.peer.allowedIps} mono />
+            <ConfigRow
+              label="Allowed IPs"
+              value={parsed.peer.allowedIps}
+              mono
+            />
             <ConfigRow label="Keepalive" value={parsed.peer.keepalive} mono />
           </ConfigSection>
         </div>
@@ -669,21 +666,21 @@ function Step2Result({
         <details
           open={showRaw}
           onToggle={(e) => setShowRaw((e.target as HTMLDetailsElement).open)}
-          className="border-border border"
+          className="border border-border"
         >
-          <summary className="text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-2 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.08em] transition-colors">
+          <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 font-mono text-[11px] tracking-[0.08em] text-muted-foreground uppercase transition-colors hover:text-foreground">
             <IconChevronDown
               className={`size-3.5 transition-transform ${showRaw ? "rotate-0" : "-rotate-90"}`}
             />
             View raw .conf
           </summary>
-          <div className="border-border max-h-[260px] overflow-y-auto border-t">
+          <div className="max-h-[260px] overflow-y-auto border-t border-border">
             <CopyableCode value={result.config} multiline />
           </div>
         </details>
       </div>
 
-      <SheetFooter className="border-border flex-row justify-end gap-2 border-t">
+      <SheetFooter className="flex-row justify-end gap-2 border-t border-border">
         <Button onClick={onDone}>Done</Button>
       </SheetFooter>
     </div>
@@ -702,12 +699,12 @@ function ConfigSection({
   children: React.ReactNode
 }) {
   return (
-    <div className="border-border flex flex-col border">
-      <div className="border-border border-b px-3 py-2">
-        <div className="text-muted-foreground font-mono text-[10px] uppercase tracking-[0.08em]">
+    <div className="flex flex-col border border-border">
+      <div className="border-b border-border px-3 py-2">
+        <div className="font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
           {eyebrow}
         </div>
-        <div className="text-foreground text-sm font-medium">{title}</div>
+        <div className="text-sm font-medium text-foreground">{title}</div>
       </div>
       <dl className="flex flex-col">{children}</dl>
     </div>
@@ -728,13 +725,13 @@ function ConfigRow({
   truncate?: boolean
 }) {
   return (
-    <div className="border-border [&:not(:first-child)]:border-t flex items-baseline justify-between gap-3 px-3 py-2">
-      <dt className="text-muted-foreground shrink-0 font-mono text-[10px] uppercase tracking-[0.08em]">
+    <div className="flex items-baseline justify-between gap-3 border-border px-3 py-2 [&:not(:first-child)]:border-t">
+      <dt className="shrink-0 font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
         {label}
       </dt>
       <dd
         className={[
-          "text-foreground min-w-0 text-right text-[12px]",
+          "min-w-0 text-right text-[12px] text-foreground",
           mono ? "font-mono" : "",
           truncate ? "truncate" : "break-all",
         ].join(" ")}
@@ -756,14 +753,14 @@ function SecretRow({ label, value }: { label: string; value: string }) {
     else toast.error("Clipboard blocked — copy from the raw .conf instead")
   }
   return (
-    <div className="border-border [&:not(:first-child)]:border-t flex items-center justify-between gap-3 px-3 py-2">
-      <dt className="text-muted-foreground shrink-0 font-mono text-[10px] uppercase tracking-[0.08em]">
+    <div className="flex items-center justify-between gap-3 border-border px-3 py-2 [&:not(:first-child)]:border-t">
+      <dt className="shrink-0 font-mono text-[10px] tracking-[0.08em] text-muted-foreground uppercase">
         {label}
       </dt>
       <dd className="flex min-w-0 items-center gap-1.5">
         <span
           className={[
-            "text-foreground max-w-[180px] truncate font-mono text-[12px] sm:max-w-[260px]",
+            "max-w-[180px] truncate font-mono text-[12px] text-foreground sm:max-w-[260px]",
             revealed ? "" : "tracking-[0.15em]",
           ].join(" ")}
         >
@@ -772,7 +769,7 @@ function SecretRow({ label, value }: { label: string; value: string }) {
         <button
           type="button"
           onClick={() => setRevealed((v) => !v)}
-          className="text-muted-foreground hover:text-foreground border-border hover:border-foreground inline-flex size-6 shrink-0 items-center justify-center border transition-colors"
+          className="inline-flex size-6 shrink-0 items-center justify-center border border-border text-muted-foreground transition-colors hover:border-foreground hover:text-foreground"
           aria-label={revealed ? "Hide private key" : "Reveal private key"}
         >
           {revealed ? (
@@ -784,7 +781,7 @@ function SecretRow({ label, value }: { label: string; value: string }) {
         <button
           type="button"
           onClick={copy}
-          className="text-muted-foreground hover:text-foreground border-border hover:border-foreground inline-flex size-6 shrink-0 items-center justify-center border transition-colors"
+          className="inline-flex size-6 shrink-0 items-center justify-center border border-border text-muted-foreground transition-colors hover:border-foreground hover:text-foreground"
           aria-label={`Copy ${label}`}
         >
           <IconCopy className="size-3.5" />
@@ -872,8 +869,8 @@ function DnsNameStatus({
   } else if (!locallyValid) {
     body = (
       <span className="text-destructive">
-        invalid hostname — labels are 1–30 lowercase chars (letters,
-        digits, hyphens), separated by dots, no leading/trailing hyphen
+        invalid hostname — labels are 1–30 lowercase chars (letters, digits,
+        hyphens), separated by dots, no leading/trailing hyphen
       </span>
     )
   } else if (checking) {
@@ -895,13 +892,13 @@ function DnsNameStatus({
   }
   const canReset = touched && defaultPrefix && prefix !== defaultPrefix
   return (
-    <p className="text-muted-foreground flex items-center justify-between gap-2 font-mono text-[11px]">
+    <p className="flex items-center justify-between gap-2 font-mono text-[11px] text-muted-foreground">
       <span className="min-w-0 truncate">{body}</span>
       {canReset && (
         <button
           type="button"
           onClick={onReset}
-          className="hover:text-foreground shrink-0 underline-offset-2 hover:underline"
+          className="shrink-0 underline-offset-2 hover:text-foreground hover:underline"
         >
           reset to default
         </button>
@@ -944,10 +941,8 @@ function IpModeOption({
       onClick={onClick}
       aria-pressed={selected}
       className={[
-        "border-border flex flex-col items-start gap-1 border p-3 text-left transition",
-        selected
-          ? "border-primary bg-primary/5"
-          : "hover:border-foreground/40",
+        "flex flex-col items-start gap-1 border border-border p-3 text-left transition",
+        selected ? "border-primary bg-primary/5" : "hover:border-foreground/40",
       ].join(" ")}
     >
       <span className="flex items-center gap-2 text-sm font-medium">
@@ -958,11 +953,13 @@ function IpModeOption({
           ].join(" ")}
           aria-hidden
         >
-          {selected && <span className="bg-primary block size-1.5 rounded-full" />}
+          {selected && (
+            <span className="block size-1.5 rounded-full bg-primary" />
+          )}
         </span>
         {title}
       </span>
-      <span className="text-muted-foreground font-mono text-[11px] leading-snug">
+      <span className="font-mono text-[11px] leading-snug text-muted-foreground">
         {sub}
       </span>
     </button>
@@ -1013,11 +1010,19 @@ function ipOutsideCidrReason(ip: string, cidr: string): string | null {
   const ipParts = ip.split(".").map(Number)
   if (netParts.length !== 4 || ipParts.length !== 4) return null
   const netU32 =
-    ((netParts[0] << 24) | (netParts[1] << 16) | (netParts[2] << 8) | netParts[3]) >>> 0
+    ((netParts[0] << 24) |
+      (netParts[1] << 16) |
+      (netParts[2] << 8) |
+      netParts[3]) >>>
+    0
   const ipU32 =
-    ((ipParts[0] << 24) | (ipParts[1] << 16) | (ipParts[2] << 8) | ipParts[3]) >>> 0
+    ((ipParts[0] << 24) |
+      (ipParts[1] << 16) |
+      (ipParts[2] << 8) |
+      ipParts[3]) >>>
+    0
   const total = 2 ** (32 - prefix)
-  const mask = prefix === 0 ? 0 : (~((1 << (32 - prefix)) - 1)) >>> 0
+  const mask = prefix === 0 ? 0 : ~((1 << (32 - prefix)) - 1) >>> 0
   const baseU32 = (netU32 & mask) >>> 0
   const broadcastU32 = (baseU32 + total - 1) >>> 0
   if (ipU32 < baseU32 || ipU32 > broadcastU32) {
@@ -1026,7 +1031,7 @@ function ipOutsideCidrReason(ip: string, cidr: string): string | null {
   if (total >= 4) {
     if (ipU32 === baseU32) return "network address (reserved)"
     if (ipU32 === broadcastU32) return "broadcast address (reserved)"
-    if (ipU32 === ((baseU32 + 1) >>> 0)) return "gateway address (reserved)"
+    if (ipU32 === (baseU32 + 1) >>> 0) return "gateway address (reserved)"
   }
   return null
 }

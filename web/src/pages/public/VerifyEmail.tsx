@@ -21,21 +21,27 @@ export function VerifyEmailPage() {
   const navigate = useNavigate()
   const setUser = useAuth((s) => s.setUser)
   const token = params.get("token")
-  const [status, setStatus] = useState<Status>("pending")
-  const [message, setMessage] = useState<string>("")
+  // A missing token is derivable straight from the URL; only the async
+  // verification result needs state.
+  const [result, setResult] = useState<{
+    status: Status
+    message: string
+  } | null>(null)
+  const status: Status = token ? (result?.status ?? "pending") : "fail"
+  const message = token
+    ? (result?.message ?? "")
+    : "Missing verification token."
 
   useEffect(() => {
-    if (!token) {
-      setStatus("fail")
-      setMessage("Missing verification token.")
-      return
-    }
+    if (!token) return
     let alive = true
     verifyEmail(token)
       .then((res) => {
         if (!alive) return
-        setStatus("ok")
-        setMessage("Your email is verified — signing you in…")
+        setResult({
+          status: "ok",
+          message: "Your email is verified — signing you in…",
+        })
         setUser(res.user)
         toast.success(`Welcome, ${res.user.email}`)
         // Small delay so the user briefly sees the success state before
@@ -47,8 +53,10 @@ export function VerifyEmailPage() {
       })
       .catch((e) => {
         if (alive) {
-          setStatus("fail")
-          setMessage(e instanceof ApiError ? e.message : "Verification failed")
+          setResult({
+            status: "fail",
+            message: e instanceof ApiError ? e.message : "Verification failed",
+          })
         }
       })
     return () => {
@@ -69,9 +77,7 @@ export function VerifyEmailPage() {
 
         <div className="flex items-center gap-3">
           <Pill
-            tone={
-              status === "ok" ? "ok" : status === "fail" ? "err" : "warn"
-            }
+            tone={status === "ok" ? "ok" : status === "fail" ? "err" : "warn"}
           >
             {status === "ok"
               ? "verified"
@@ -85,9 +91,9 @@ export function VerifyEmailPage() {
         </div>
 
         {!token ? (
-          <p className="text-muted-foreground text-sm leading-relaxed">
-            We sent a token-link to your inbox. Click it to finish creating
-            your account.
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            We sent a token-link to your inbox. Click it to finish creating your
+            account.
           </p>
         ) : (
           <p className="text-sm leading-relaxed">{message}</p>

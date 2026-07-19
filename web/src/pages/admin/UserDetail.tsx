@@ -10,7 +10,7 @@ import {
   IconUserShield,
   IconUserX,
 } from "@tabler/icons-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 
@@ -150,14 +150,14 @@ export function UserDetailPage() {
   // share the same list.
   const timeline = useMemo(
     () => (detailQ.data ? buildTimeline(detailQ.data) : []),
-    [detailQ.data],
+    [detailQ.data]
   )
   const deviceNameById = useMemo(
     () =>
       new Map(
-        (detailQ.data?.devices ?? []).map((d) => [d.id, d.name] as const),
+        (detailQ.data?.devices ?? []).map((d) => [d.id, d.name] as const)
       ),
-    [detailQ.data],
+    [detailQ.data]
   )
 
   const invalidateUser = () => {
@@ -274,7 +274,7 @@ export function UserDetailPage() {
           title={
             u ? (
               <span className="inline-flex items-center gap-3">
-                <span className="border-border bg-card flex size-9 shrink-0 items-center justify-center border p-0.5">
+                <span className="flex size-9 shrink-0 items-center justify-center border border-border bg-card p-0.5">
                   <Identicon seed={u.email} size={32} cells={5} />
                 </span>
                 <span className="truncate">{u.email}</span>
@@ -313,7 +313,7 @@ export function UserDetailPage() {
                   </Pill>
                 )}
                 {isSelf && (
-                  <span className="text-muted-foreground/70 font-mono text-[10px] uppercase">
+                  <span className="font-mono text-[10px] text-muted-foreground/70 uppercase">
                     you
                   </span>
                 )}
@@ -418,14 +418,27 @@ export function UserDetailPage() {
               <Panel title="Account">
                 <KvList
                   items={[
-                    ["ID", <code key="id" className="font-mono text-[11px]">{u.id}</code>],
+                    [
+                      "ID",
+                      <code key="id" className="font-mono text-[11px]">
+                        {u.id}
+                      </code>,
+                    ],
                     [
                       "Created",
-                      <RelativeTime key="c" value={u.created_at} fallback="—" />,
+                      <RelativeTime
+                        key="c"
+                        value={u.created_at}
+                        fallback="—"
+                      />,
                     ],
                     [
                       "Last login",
-                      <RelativeTime key="l" value={u.last_login_at} fallback="Never" />,
+                      <RelativeTime
+                        key="l"
+                        value={u.last_login_at}
+                        fallback="Never"
+                      />,
                     ],
                     [
                       "Email verified",
@@ -515,21 +528,25 @@ export function UserDetailPage() {
                           <td>
                             <Link
                               to={`/admin/devices/${d.id}`}
-                              className="hover:text-foreground inline-flex items-center gap-2 underline-offset-2 hover:underline"
+                              className="inline-flex items-center gap-2 underline-offset-2 hover:text-foreground hover:underline"
                               title="Open admin device detail"
                             >
-                              <IconDeviceDesktop className="text-muted-foreground size-4" />
+                              <IconDeviceDesktop className="size-4 text-muted-foreground" />
                               <span className="font-medium">{d.name}</span>
                             </Link>
                           </td>
                           <td className="text-muted-foreground capitalize">
                             {d.os}
                           </td>
-                          <td className="font-mono text-xs">{d.allocated_ip}</td>
+                          <td className="font-mono text-xs">
+                            {d.allocated_ip}
+                          </td>
                           <td>
                             <div className="flex flex-col gap-0.5">
                               <StatusPill
-                                status={DEVICE_STATUS_TO_PILL[d.status] ?? "offline"}
+                                status={
+                                  DEVICE_STATUS_TO_PILL[d.status] ?? "offline"
+                                }
                                 label={d.status}
                               />
                               {d.auto_paused && (
@@ -555,7 +572,7 @@ export function UserDetailPage() {
                               }
                             />
                           </td>
-                          <td className="text-muted-foreground font-mono text-xs">
+                          <td className="font-mono text-xs text-muted-foreground">
                             <RelativeTime
                               value={d.last_handshake_at}
                               fallback="Never"
@@ -568,7 +585,7 @@ export function UserDetailPage() {
                                 onClick={() =>
                                   setEndpointDevice({ id: d.id, name: d.name })
                                 }
-                                className="hover:text-foreground text-muted-foreground underline-offset-2 hover:underline"
+                                className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                                 title="View full endpoint history"
                               >
                                 {d.last_peer_endpoint}
@@ -577,19 +594,19 @@ export function UserDetailPage() {
                               <span className="text-muted-foreground">—</span>
                             )}
                           </td>
-                          <td className="text-muted-foreground font-mono text-xs">
+                          <td className="font-mono text-xs text-muted-foreground">
                             <button
                               type="button"
                               onClick={() =>
                                 setConnectionDevice({ id: d.id, name: d.name })
                               }
-                              className="hover:text-foreground underline-offset-2 hover:underline"
+                              className="underline-offset-2 hover:text-foreground hover:underline"
                               title="View connection-session history"
                             >
                               history
                             </button>
                           </td>
-                          <td className="text-muted-foreground font-mono text-xs">
+                          <td className="font-mono text-xs text-muted-foreground">
                             <RelativeTime value={d.created_at} fallback="—" />
                           </td>
                         </tr>
@@ -598,7 +615,7 @@ export function UserDetailPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                <div className="py-8 text-center font-mono text-sm text-muted-foreground">
                   No devices.
                 </div>
               )}
@@ -627,7 +644,7 @@ export function UserDetailPage() {
               }
             >
               {timeline.length === 0 ? (
-                <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                <div className="py-8 text-center font-mono text-sm text-muted-foreground">
                   No activity yet.
                 </div>
               ) : (
@@ -647,7 +664,7 @@ export function UserDetailPage() {
           side="right"
           className="flex flex-col gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-3xl"
         >
-          <SheetHeader className="border-border border-b p-4">
+          <SheetHeader className="border-b border-border p-4">
             <SheetTitle>Activity timeline</SheetTitle>
             <SheetDescription>
               Audit + session events + connection sessions, merged
@@ -656,7 +673,7 @@ export function UserDetailPage() {
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-auto">
             {timeline.length === 0 ? (
-              <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+              <div className="py-8 text-center font-mono text-sm text-muted-foreground">
                 No activity yet.
               </div>
             ) : (
@@ -673,7 +690,7 @@ export function UserDetailPage() {
       {detailQ.isError && (
         <StaggerItem>
           <Panel title="Failed to load">
-            <p className="text-muted-foreground text-sm">
+            <p className="text-sm text-muted-foreground">
               {detailQ.error instanceof ApiError
                 ? detailQ.error.message
                 : "Could not fetch user."}
@@ -822,10 +839,10 @@ function KvList({ items }: { items: [string, React.ReactNode][] }) {
     <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
       {items.map(([k, v]) => (
         <div key={k} className="contents">
-          <dt className="text-muted-foreground font-mono text-xs uppercase tracking-wide">
+          <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">
             {k}
           </dt>
-          <dd className="text-foreground min-w-0 truncate">{v}</dd>
+          <dd className="min-w-0 truncate text-foreground">{v}</dd>
         </div>
       ))}
     </dl>
@@ -845,11 +862,11 @@ function QuotaSummary({
     return (
       <div className="flex flex-col gap-2">
         <div className="font-mono text-2xl">{formatBytes(used)}</div>
-        <div className="text-muted-foreground text-xs">
+        <div className="text-xs text-muted-foreground">
           No cap — unlimited usage this month
         </div>
         {resetsAt && (
-          <div className="text-muted-foreground/70 font-mono text-[11px]">
+          <div className="font-mono text-[11px] text-muted-foreground/70">
             Counter resets <RelativeTime value={resetsAt} fallback="—" />
           </div>
         )}
@@ -863,15 +880,15 @@ function QuotaSummary({
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between">
         <span className="font-mono text-2xl">{formatBytes(used)}</span>
-        <span className="text-muted-foreground font-mono text-xs">
+        <span className="font-mono text-xs text-muted-foreground">
           / {formatBytes(cap)} ({pct}%)
         </span>
       </div>
-      <div className="bg-muted h-1.5 w-full overflow-hidden">
+      <div className="h-1.5 w-full overflow-hidden bg-muted">
         <div className={`h-full ${tone}`} style={{ width: `${pct}%` }} />
       </div>
       {resetsAt && (
-        <div className="text-muted-foreground/70 font-mono text-[11px]">
+        <div className="font-mono text-[11px] text-muted-foreground/70">
           Counter resets <RelativeTime value={resetsAt} fallback="—" />
         </div>
       )}
@@ -925,7 +942,7 @@ function QuotaCapForm({
   // on = a required positive GiB value (same model as the device dialogs).
   const [capEnabled, setCapEnabled] = useState(!!currentCap && currentCap > 0)
   const [gibStr, setGibStr] = useState(
-    currentCap ? (currentCap / GIB).toFixed(2) : "",
+    currentCap ? (currentCap / GIB).toFixed(2) : ""
   )
 
   const m = useMutation({
@@ -941,8 +958,7 @@ function QuotaCapForm({
   })
 
   const gib = Number(gibStr.trim())
-  const capValid =
-    gibStr.trim().length > 0 && Number.isFinite(gib) && gib > 0
+  const capValid = gibStr.trim().length > 0 && Number.isFinite(gib) && gib > 0
   const canSave = !m.isPending && (!capEnabled || capValid)
 
   const submit = () => {
@@ -978,17 +994,17 @@ function QuotaCapForm({
               onChange={(e) => setGibStr(e.target.value)}
               placeholder="e.g. 100"
             />
-            <p className="text-muted-foreground text-xs">
+            <p className="text-xs text-muted-foreground">
               All of the user's devices pause when the account hits this cap.
               {!capValid && (
-                <span className="text-destructive ml-1">
+                <span className="ml-1 text-destructive">
                   Enter a positive number of GiB.
                 </span>
               )}
             </p>
           </>
         ) : (
-          <p className="text-muted-foreground text-xs">
+          <p className="text-xs text-muted-foreground">
             Unlimited — this account has no monthly bandwidth cap.
           </p>
         )}
@@ -1022,7 +1038,7 @@ function DeviceQuotaCell({
       <button
         type="button"
         onClick={onEdit}
-        className="text-muted-foreground hover:text-foreground font-mono text-[11px] underline-offset-2 hover:underline"
+        className="font-mono text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         title="Set a per-device monthly cap"
       >
         {formatBytes(used)} · set cap
@@ -1039,10 +1055,10 @@ function DeviceQuotaCell({
       className="group flex w-[120px] flex-col gap-1 text-left"
       title="Edit per-device monthly cap"
     >
-      <span className="text-muted-foreground group-hover:text-foreground font-mono text-[11px]">
+      <span className="font-mono text-[11px] text-muted-foreground group-hover:text-foreground">
         {formatBytes(used)} / {formatBytes(cap)} ({pct}%)
       </span>
-      <span className="bg-muted block h-1 w-full overflow-hidden">
+      <span className="block h-1 w-full overflow-hidden bg-muted">
         <span className={`block h-full ${tone}`} style={{ width: `${pct}%` }} />
       </span>
     </button>
@@ -1091,7 +1107,7 @@ function DeviceCapForm({
   // on = a required positive GiB value.
   const [capEnabled, setCapEnabled] = useState(!!device.cap && device.cap > 0)
   const [gibStr, setGibStr] = useState(
-    device.cap ? (device.cap / GIB).toFixed(2) : "",
+    device.cap ? (device.cap / GIB).toFixed(2) : ""
   )
 
   const m = useMutation({
@@ -1107,8 +1123,7 @@ function DeviceCapForm({
   })
 
   const gib = Number(gibStr.trim())
-  const capValid =
-    gibStr.trim().length > 0 && Number.isFinite(gib) && gib > 0
+  const capValid = gibStr.trim().length > 0 && Number.isFinite(gib) && gib > 0
   const canSave = !m.isPending && (!capEnabled || capValid)
 
   const submit = () => {
@@ -1122,8 +1137,8 @@ function DeviceCapForm({
         <DialogDescription>
           Cap for <span className="font-medium">{device.name}</span>, enforced
           per calendar month. The device pauses when it hits this cap or the
-          account cap — whichever comes first. Toggle off to remove the
-          device cap.
+          account cap — whichever comes first. Toggle off to remove the device
+          cap.
         </DialogDescription>
       </DialogHeader>
       <div className="flex flex-col gap-2">
@@ -1147,17 +1162,17 @@ function DeviceCapForm({
               onChange={(e) => setGibStr(e.target.value)}
               placeholder="e.g. 100"
             />
-            <p className="text-muted-foreground text-xs">
+            <p className="text-xs text-muted-foreground">
               The device auto-pauses when it reaches this cap.
               {!capValid && (
-                <span className="text-destructive ml-1">
+                <span className="ml-1 text-destructive">
                   Enter a positive number of GiB.
                 </span>
               )}
             </p>
           </>
         ) : (
-          <p className="text-muted-foreground text-xs">
+          <p className="text-xs text-muted-foreground">
             No device cap — the account cap still applies.
           </p>
         )}
@@ -1203,10 +1218,33 @@ function EditEmailDialog({
   pending: boolean
   onSubmit: (email: string) => void
 }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Keyed on `open` so each open mounts a fresh body seeded from the
+          current email — no effect-driven state syncing. */}
+      <EditEmailDialogBody
+        key={String(open)}
+        onOpenChange={onOpenChange}
+        currentEmail={currentEmail}
+        pending={pending}
+        onSubmit={onSubmit}
+      />
+    </Dialog>
+  )
+}
+
+function EditEmailDialogBody({
+  onOpenChange,
+  currentEmail,
+  pending,
+  onSubmit,
+}: {
+  onOpenChange: (o: boolean) => void
+  currentEmail: string
+  pending: boolean
+  onSubmit: (email: string) => void
+}) {
   const [value, setValue] = useState(currentEmail)
-  useEffect(() => {
-    if (open) setValue(currentEmail)
-  }, [open, currentEmail])
 
   const trimmed = value.trim().toLowerCase()
   const sameAsCurrent = trimmed === currentEmail.toLowerCase()
@@ -1214,44 +1252,43 @@ function EditEmailDialog({
   const canSubmit = !pending && looksValid && !sameAsCurrent
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit email</DialogTitle>
-          <DialogDescription>
-            Updates the address of record for <code className="font-mono">{currentEmail}</code>.
-            The user keeps their devices, role, password, and 2FA. Their
-            existing sessions are not invalidated automatically — use
-            "Force-logout all sessions" if you want that.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="edit-email">New email</Label>
-          <Input
-            id="edit-email"
-            type="email"
-            inputMode="email"
-            autoComplete="off"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="user@example.com"
-          />
-          {sameAsCurrent && trimmed.length > 0 && (
-            <p className="text-muted-foreground text-[11px]">
-              Same as current — nothing to change.
-            </p>
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!canSubmit} onClick={() => onSubmit(trimmed)}>
-            {pending ? "Saving…" : "Save"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>Edit email</DialogTitle>
+        <DialogDescription>
+          Updates the address of record for{" "}
+          <code className="font-mono">{currentEmail}</code>. The user keeps
+          their devices, role, password, and 2FA. Their existing sessions are
+          not invalidated automatically — use "Force-logout all sessions" if you
+          want that.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="edit-email">New email</Label>
+        <Input
+          id="edit-email"
+          type="email"
+          inputMode="email"
+          autoComplete="off"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="user@example.com"
+        />
+        {sameAsCurrent && trimmed.length > 0 && (
+          <p className="text-[11px] text-muted-foreground">
+            Same as current — nothing to change.
+          </p>
+        )}
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={() => onOpenChange(false)}>
+          Cancel
+        </Button>
+        <Button disabled={!canSubmit} onClick={() => onSubmit(trimmed)}>
+          {pending ? "Saving…" : "Save"}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
   )
 }
 
@@ -1401,7 +1438,7 @@ function TimelineTable({
     </table>
   )
   if (full) return table
-  return <div className="zv-table-scroll min-w-0 max-w-full">{table}</div>
+  return <div className="zv-table-scroll max-w-full min-w-0">{table}</div>
 }
 
 function TimelineRow({
@@ -1417,7 +1454,7 @@ function TimelineRow({
       : null
     return (
       <tr>
-        <td className="text-muted-foreground font-mono text-xs">
+        <td className="font-mono text-xs text-muted-foreground">
           <RelativeTime value={item.ts} fallback="—" />
         </td>
         <td>
@@ -1437,10 +1474,13 @@ function TimelineRow({
             <span className="text-muted-foreground">—</span>
           )}
         </td>
-        <td className="min-w-0 text-muted-foreground font-mono text-[11px]">
-          <span className="block max-w-[440px] truncate" title={summarizeMetadata(item.metadata)}>
+        <td className="min-w-0 font-mono text-[11px] text-muted-foreground">
+          <span
+            className="block max-w-[440px] truncate"
+            title={summarizeMetadata(item.metadata)}
+          >
             {targetLabel && (
-              <span className="text-foreground mr-2">→ {targetLabel}</span>
+              <span className="mr-2 text-foreground">→ {targetLabel}</span>
             )}
             {summarizeMetadata(item.metadata)}
           </span>
@@ -1451,7 +1491,7 @@ function TimelineRow({
   if (item.kind === "session") {
     return (
       <tr>
-        <td className="text-muted-foreground font-mono text-xs">
+        <td className="font-mono text-xs text-muted-foreground">
           <RelativeTime value={item.ts} fallback="—" />
         </td>
         <td>
@@ -1469,7 +1509,10 @@ function TimelineRow({
             <span className="text-muted-foreground">—</span>
           )}
         </td>
-        <td className="min-w-0 text-muted-foreground font-mono text-[11px]" title={item.user_agent ?? undefined}>
+        <td
+          className="min-w-0 font-mono text-[11px] text-muted-foreground"
+          title={item.user_agent ?? undefined}
+        >
           <span className="block max-w-[440px] truncate">
             {summarizeMetadata(item.metadata)}
             {item.user_agent && (
@@ -1486,7 +1529,9 @@ function TimelineRow({
   const open = item.ended_at == null
   const deviceName =
     deviceNameById.get(item.device_id) ?? item.device_id.slice(0, 8)
-  const duration = open ? "active" : connectionDuration(item.started_at, item.ended_at!)
+  const duration = open
+    ? "active"
+    : connectionDuration(item.started_at, item.ended_at!)
   const endpoint = item.endpoint_start
     ? item.endpoint_start +
       (item.endpoint_end && item.endpoint_end !== item.endpoint_start
@@ -1495,7 +1540,7 @@ function TimelineRow({
     : null
   return (
     <tr>
-      <td className="text-muted-foreground font-mono text-xs">
+      <td className="font-mono text-xs text-muted-foreground">
         <RelativeTime value={item.ts} fallback="—" />
       </td>
       <td>
@@ -1520,7 +1565,7 @@ function TimelineRow({
           <span className="text-muted-foreground">—</span>
         )}
       </td>
-      <td className="text-muted-foreground font-mono text-[11px] tabular-nums">
+      <td className="font-mono text-[11px] text-muted-foreground tabular-nums">
         {item.rx != null && item.tx != null
           ? `↓ ${formatBytes(item.rx)} · ↑ ${formatBytes(item.tx)}`
           : open
@@ -1571,27 +1616,27 @@ function EndpointHistoryDialog({
             Endpoint history{device ? ` · ${device.name}` : ""}
           </DialogTitle>
           <DialogDescription>
-            Every distinct WireGuard peer endpoint observed for this
-            device, newest first. Each row is the moment the endpoint
-            changed against the previous observation — repeated polls of
-            the same endpoint don't duplicate.
+            Every distinct WireGuard peer endpoint observed for this device,
+            newest first. Each row is the moment the endpoint changed against
+            the previous observation — repeated polls of the same endpoint don't
+            duplicate.
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[420px] overflow-y-auto">
           {q.isLoading && (
-            <div className="text-muted-foreground py-8 text-center font-mono text-xs">
+            <div className="py-8 text-center font-mono text-xs text-muted-foreground">
               Loading…
             </div>
           )}
           {q.isError && (
-            <div className="text-destructive py-8 text-center font-mono text-xs">
+            <div className="py-8 text-center font-mono text-xs text-destructive">
               Failed to load history.
             </div>
           )}
           {q.data && rows.length === 0 && (
-            <div className="text-muted-foreground py-8 text-center font-mono text-sm">
-              No endpoints captured yet. The device hasn't completed a
-              handshake since this feature shipped.
+            <div className="py-8 text-center font-mono text-sm text-muted-foreground">
+              No endpoints captured yet. The device hasn't completed a handshake
+              since this feature shipped.
             </div>
           )}
           {q.data && rows.length > 0 && (
@@ -1607,7 +1652,7 @@ function EndpointHistoryDialog({
                   {rows.map((r) => (
                     <tr key={r.id}>
                       <td className="font-mono text-xs">{r.endpoint}</td>
-                      <td className="text-muted-foreground font-mono text-xs">
+                      <td className="font-mono text-xs text-muted-foreground">
                         <RelativeTime value={r.observed_at} />
                       </td>
                     </tr>
@@ -1618,9 +1663,9 @@ function EndpointHistoryDialog({
           )}
         </div>
         {rows.length === 200 && (
-          <p className="text-muted-foreground font-mono text-[11px]">
-            Showing the 200 most recent observations. Older entries exist
-            but aren't surfaced here yet.
+          <p className="font-mono text-[11px] text-muted-foreground">
+            Showing the 200 most recent observations. Older entries exist but
+            aren't surfaced here yet.
           </p>
         )}
       </DialogContent>
@@ -1660,26 +1705,26 @@ function ConnectionHistoryDialog({
           </DialogTitle>
           <DialogDescription>
             One row per WireGuard connection. `RX` / `TX` are the bytes
-            delivered during that session (snapshot end − snapshot
-            start). Open sessions show a `—` for end-state columns until
-            the peer disconnects.
+            delivered during that session (snapshot end − snapshot start). Open
+            sessions show a `—` for end-state columns until the peer
+            disconnects.
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[420px] overflow-y-auto">
           {q.isLoading && (
-            <div className="text-muted-foreground py-8 text-center font-mono text-xs">
+            <div className="py-8 text-center font-mono text-xs text-muted-foreground">
               Loading…
             </div>
           )}
           {q.isError && (
-            <div className="text-destructive py-8 text-center font-mono text-xs">
+            <div className="py-8 text-center font-mono text-xs text-destructive">
               Failed to load history.
             </div>
           )}
           {q.data && rows.length === 0 && (
-            <div className="text-muted-foreground py-8 text-center font-mono text-sm">
-              No connection sessions yet. The device hasn't transitioned
-              online since this feature shipped.
+            <div className="py-8 text-center font-mono text-sm text-muted-foreground">
+              No connection sessions yet. The device hasn't transitioned online
+              since this feature shipped.
             </div>
           )}
           {q.data && rows.length > 0 && (
@@ -1714,7 +1759,7 @@ function ConnectionHistoryDialog({
                       s.peer_endpoint_at_end !== s.peer_endpoint_at_start
                     return (
                       <tr key={s.id}>
-                        <td className="text-muted-foreground font-mono text-xs">
+                        <td className="font-mono text-xs text-muted-foreground">
                           <RelativeTime value={s.started_at} />
                         </td>
                         <td className="font-mono text-xs tabular-nums">
@@ -1740,14 +1785,14 @@ function ConnectionHistoryDialog({
                             </span>
                           )}
                         </td>
-                        <td className="text-muted-foreground text-right font-mono text-xs tabular-nums">
+                        <td className="text-right font-mono text-xs text-muted-foreground tabular-nums">
                           {rx != null ? (
                             formatBytes(rx)
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
                         </td>
-                        <td className="text-muted-foreground text-right font-mono text-xs tabular-nums">
+                        <td className="text-right font-mono text-xs text-muted-foreground tabular-nums">
                           {tx != null ? (
                             formatBytes(tx)
                           ) : (
@@ -1763,9 +1808,9 @@ function ConnectionHistoryDialog({
           )}
         </div>
         {rows.length === 200 && (
-          <p className="text-muted-foreground font-mono text-[11px]">
-            Showing the 200 most recent sessions. Older entries exist
-            but aren't surfaced here yet.
+          <p className="font-mono text-[11px] text-muted-foreground">
+            Showing the 200 most recent sessions. Older entries exist but aren't
+            surfaced here yet.
           </p>
         )}
       </DialogContent>

@@ -35,27 +35,48 @@ pub struct DestinationIpRow {
     pub created_at: OffsetDateTime,
 }
 
-/// Insert a new destination record. `device_id` / `user_id` may be
+/// A destination record to insert. `device_id` / `user_id` may be
 /// `None` if the mapping couldn't be resolved at write time.
 /// Geo fields are optional; they are populated by the GeoIP enrichment
 /// pipeline at ingest time.
+#[derive(Debug)]
+pub struct NewDestinationIp<'a> {
+    pub device_id: Option<Uuid>,
+    pub user_id: Option<Uuid>,
+    pub src_ip: &'a str,
+    pub src_port: Option<i32>,
+    pub dst_ip: &'a str,
+    pub dst_port: Option<i32>,
+    pub proto: Option<&'a str>,
+    pub bytes_in: i64,
+    pub bytes_out: i64,
+    pub started_at: OffsetDateTime,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub country_code: Option<String>,
+    pub country_name: Option<String>,
+    pub city_name: Option<String>,
+}
+
 pub async fn insert(
     pool: &PgPool,
-    device_id: Option<Uuid>,
-    user_id: Option<Uuid>,
-    src_ip: &str,
-    src_port: Option<i32>,
-    dst_ip: &str,
-    dst_port: Option<i32>,
-    proto: Option<&str>,
-    bytes_in: i64,
-    bytes_out: i64,
-    started_at: OffsetDateTime,
-    latitude: Option<f64>,
-    longitude: Option<f64>,
-    country_code: Option<String>,
-    country_name: Option<String>,
-    city_name: Option<String>,
+    NewDestinationIp {
+        device_id,
+        user_id,
+        src_ip,
+        src_port,
+        dst_ip,
+        dst_port,
+        proto,
+        bytes_in,
+        bytes_out,
+        started_at,
+        latitude,
+        longitude,
+        country_code,
+        country_name,
+        city_name,
+    }: NewDestinationIp<'_>,
 ) -> sqlx::Result<i64> {
     let row: (i64,) = sqlx::query_as(
         r#"INSERT INTO destination_ips

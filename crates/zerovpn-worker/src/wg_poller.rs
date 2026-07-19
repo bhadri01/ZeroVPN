@@ -267,16 +267,14 @@ async fn poll_once(
     // start filling the new minute below. Best-effort — a flush error must
     // not stop live stats.
     if let Some((dev_rows, srv_rows)) = candle_acc.roll_to(floor_minute(now)) {
-        if !dev_rows.is_empty() {
-            if let Err(e) = candles::insert_device_candles_1m(pool, &dev_rows).await {
+        if !dev_rows.is_empty()
+            && let Err(e) = candles::insert_device_candles_1m(pool, &dev_rows).await {
                 warn!(?e, n = dev_rows.len(), "device candle flush failed");
             }
-        }
-        if !srv_rows.is_empty() {
-            if let Err(e) = candles::insert_server_candles_1m(pool, &srv_rows).await {
+        if !srv_rows.is_empty()
+            && let Err(e) = candles::insert_server_candles_1m(pool, &srv_rows).await {
                 warn!(?e, n = srv_rows.len(), "server candle flush failed");
             }
-        }
     }
 
     // Build a quick lookup of pubkey → (device_id, user_id) so we can
@@ -361,8 +359,8 @@ async fn poll_once(
         // (so admins can review every distinct endpoint the device has
         // ever connected from). Both are best-effort — a transient DB
         // error here must not stop the live stats broadcast below.
-        if endpoint_changed {
-            if let Some(ref ep) = endpoint_now {
+        if endpoint_changed
+            && let Some(ref ep) = endpoint_now {
                 if let Err(e) =
                     devices::set_last_peer_endpoint(pool, device_id, ep, now).await
                 {
@@ -374,7 +372,6 @@ async fn poll_once(
                     warn!(?e, %device_id, "peer_endpoint_history insert failed");
                 }
             }
-        }
 
         // Update last_handshake_at if it changed. Also counts toward the
         // server's per-tick handshake delta (entries that handshook
@@ -442,8 +439,8 @@ async fn poll_once(
         // restarts. We don't suppress this on counter resets — those
         // are real reconnects worth surfacing.
         let prev = prev_online.get(&device_id).copied();
-        if let Some(was_online) = prev {
-            if was_online != online {
+        if let Some(was_online) = prev
+            && was_online != online {
                 let action = if online {
                     "device.online"
                 } else {
@@ -498,7 +495,6 @@ async fn poll_once(
                     ))
                     .await;
             }
-        }
 
         // Phase 2 / Stage B — connection_sessions transitions. Unlike
         // the audit row above we DO record the first observation if
@@ -580,8 +576,8 @@ async fn poll_once(
         // error doesn't stop the live broadcast below. Skipped for peers
         // that haven't handshook yet so initiator-handshake bytes don't
         // pollute the history.
-        if report_rates && (drx > 0 || dtx > 0) {
-            if let Err(e) = bandwidth::insert_sample(
+        if report_rates && (drx > 0 || dtx > 0)
+            && let Err(e) = bandwidth::insert_sample(
                 pool,
                 device_id,
                 now,
@@ -592,7 +588,6 @@ async fn poll_once(
             {
                 warn!(?e, %device_id, "bandwidth sample insert failed");
             }
-        }
 
         // Maintain the device's authoritative lifetime totals (the "Total
         // RX/TX" the UI shows). On first sight reconcile against the live WG
@@ -742,13 +737,15 @@ async fn poll_once(
             .observe(srv_rate_rx, srv_rate_tx);
         if let Err(e) = server_samples::insert(
             pool,
-            s.id,
-            now,
-            srv_rx as i64,
-            srv_tx as i64,
-            peers as i32,
-            online as i32,
-            handshakes as i32,
+            &server_samples::ServerSample {
+                server_id: s.id,
+                sampled_at: now,
+                total_rx_bytes: srv_rx as i64,
+                total_tx_bytes: srv_tx as i64,
+                peer_count: peers as i32,
+                online_count: online as i32,
+                handshake_count: handshakes as i32,
+            },
         )
         .await
         {

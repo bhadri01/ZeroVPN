@@ -141,13 +141,12 @@ pub async fn register(
         // Re-trigger the verification email when an unverified account
         // signs up again with the same address. Active/suspended accounts
         // get no email — same response shape keeps enumeration closed.
-        if u.status == UserStatus::PendingVerification {
-            if let Err(e) =
+        if u.status == UserStatus::PendingVerification
+            && let Err(e) =
                 crate::routes::email_auth::issue_verify_email(&state, u.id, &u.email).await
             {
                 warn!(?e, user_id = %u.id, "failed to re-issue verify-email on register");
             }
-        }
     }
 
     Ok(Json(RegisterAck { status: "ok" }))
@@ -564,8 +563,8 @@ pub async fn logout(
         .flush()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if let Some(uid) = user_id {
-        if let Err(e) = session_events::record(
+    if let Some(uid) = user_id
+        && let Err(e) = session_events::record(
             &state.pool,
             uid,
             session_events::SessionEvent::Logout,
@@ -577,7 +576,6 @@ pub async fn logout(
         {
             warn!(?e, user_id = %uid, "session_events logout record failed");
         }
-    }
     Ok(Json(json!({ "status": "ok" })))
 }
 

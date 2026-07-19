@@ -5,9 +5,11 @@ SHELL := /bin/bash
 # SMTP host, WG backend, logging) live in `.env`; optional service groups
 # are gated by compose profiles.
 COMPOSE     := docker compose
-# MailHog lives in docker-compose.mail.yml (dev-only), layered into the dev
-# targets below but never into `make up-prod` — so the base compose is pure prod.
-COMPOSE_DEV := $(COMPOSE) -f docker-compose.yml -f docker-compose.mail.yml --profile dev
+# Dev sends real mail through the relay configured in `.env`
+# (ZEROVPN_SMTP__*), same as prod. To catch mail locally instead, layer
+# `-f docker-compose.mail.yml` (MailHog) back into the dev targets and point
+# ZEROVPN_SMTP__HOST=mailhog / PORT=1025.
+COMPOSE_DEV := $(COMPOSE) -f docker-compose.yml --profile dev
 # App images (api/worker/frontend) are pre-built + pushed to a
 # registry; the base compose references them by tag (image:). This overlay
 # re-adds `build:` so they can be built/pushed locally or in CI. A *deploy* host
@@ -17,7 +19,7 @@ COMPOSE_BUILD := $(COMPOSE) -f docker-compose.yml -f docker-compose.build.yml
 # Dev *containers*: run api/worker/web in Linux with hot-reload + a real
 # (userspace) WireGuard tunnel. The overlay gates the prod api/worker/frontend/
 # traefik behind the `prod` profile so only the *-dev services run.
-COMPOSE_DEVCTR := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.mail.yml --profile dev
+COMPOSE_DEVCTR := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml --profile dev
 
 .PHONY: help
 help: ## Show this help
@@ -42,8 +44,8 @@ setup: ## One-time: copy .env template + generate secrets (build/pull happens in
 	@echo "ZEROVPN_REGISTRY/ZEROVPN_IMAGE_TAG in .env, then 'make up-prod' (pulls)."
 
 .PHONY: up
-up: ## Start the dev stack locally (core + MailHog); builds images if missing
-	$(COMPOSE_BUILD) -f docker-compose.mail.yml up -d
+up: ## Start the dev stack locally; builds images if missing
+	$(COMPOSE_BUILD) up -d
 
 .PHONY: up-prod
 up-prod: ## Deploy the prod stack from PRE-BUILT images (pull, never build)
@@ -87,7 +89,7 @@ logs-dev: ## Tail dev-container logs
 # natively for fast iteration (cargo incremental, Vite HMR). The api +
 # worker container slots are kept stopped so they don't fight for ports.
 
-DEV_INFRA := db dnsmasq mailhog
+DEV_INFRA := db dnsmasq
 
 .PHONY: dev
 dev: ## Native dev: start infra in docker, leave api/worker/frontend for cargo + pnpm

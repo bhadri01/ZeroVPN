@@ -10,7 +10,11 @@ import {
 } from "@/components/layout/AuthShell"
 import { Kbd } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+} from "@/components/ui/input-otp"
 import { Label } from "@/components/ui/label"
 import {
   ApiError,
@@ -45,7 +49,16 @@ export function GoogleCallbackPage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const setUser = useAuth((s) => s.setUser)
-  const [error, setError] = useState<string | null>(null)
+  // Bad callback params are derivable straight from the URL; only errors
+  // from the async exchange/verify need state.
+  const googleError = params.get("error")
+  const paramError = googleError
+    ? `Google returned: ${googleError}`
+    : !params.get("code") || !params.get("state")
+      ? "Missing code or state in callback URL"
+      : null
+  const [asyncError, setAsyncError] = useState<string | null>(null)
+  const error = asyncError ?? paramError
   const [needsTotp, setNeedsTotp] = useState(false)
   const [totpCode, setTotpCode] = useState("")
   const [verifying, setVerifying] = useState(false)
@@ -64,27 +77,18 @@ export function GoogleCallbackPage() {
         replace: true,
       })
     },
-    [navigate, setUser],
+    [navigate, setUser]
   )
 
   useEffect(() => {
     const code = params.get("code")
     const state = params.get("state")
-    const googleError = params.get("error")
-
-    if (googleError) {
-      setError(`Google returned: ${googleError}`)
-      return
-    }
-    if (!code || !state) {
-      setError("Missing code or state in callback URL")
-      return
-    }
+    if (!code || !state || params.get("error")) return
 
     let cancelled = false
     const fail = (msg: string) => {
       if (cancelled) return
-      setError(msg)
+      setAsyncError(msg)
       toast.error(msg)
     }
 
@@ -126,7 +130,7 @@ export function GoogleCallbackPage() {
       } catch (e) {
         inflight.delete(state)
         fail(
-          e instanceof ApiError ? e.message : "Couldn't complete Google sign-in",
+          e instanceof ApiError ? e.message : "Couldn't complete Google sign-in"
         )
       }
     })()
@@ -140,14 +144,16 @@ export function GoogleCallbackPage() {
     const code = totpCode.trim()
     if (code.length < 6 || verifying) return
     setVerifying(true)
-    setError(null)
+    setAsyncError(null)
     try {
       const res = await googleVerifyTotp(code)
       const state = params.get("state")
       if (state) sessionStorage.removeItem(TOTP_KEY_PREFIX + state)
       await finishSignIn(res.user, res.must_change_password)
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Couldn't verify the code")
+      setAsyncError(
+        e instanceof ApiError ? e.message : "Couldn't verify the code"
+      )
       setVerifying(false)
     }
   }
@@ -182,12 +188,14 @@ export function GoogleCallbackPage() {
                 <InputOTPSlot index={5} />
               </InputOTPGroup>
             </InputOTP>
-            <p className="text-muted-foreground font-mono text-[11px]">
+            <p className="font-mono text-[11px] text-muted-foreground">
               From your authenticator app or recovery code
             </p>
           </div>
 
-          {error && <p className="text-destructive font-mono text-xs">{error}</p>}
+          {error && (
+            <p className="font-mono text-xs text-destructive">{error}</p>
+          )}
 
           <Button
             type="submit"
@@ -214,9 +222,9 @@ export function GoogleCallbackPage() {
             {error ? "Sign-in failed." : "Finishing up…"}
           </AuthHeading>
           {error ? (
-            <p className="text-destructive font-mono text-xs">{error}</p>
+            <p className="font-mono text-xs text-destructive">{error}</p>
           ) : (
-            <p className="text-muted-foreground font-mono text-xs">
+            <p className="font-mono text-xs text-muted-foreground">
               Completing Google authentication.
             </p>
           )}

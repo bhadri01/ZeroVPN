@@ -1,3 +1,6 @@
+/* eslint-disable react-refresh/only-export-components -- guard components +
+   the bootstrap hook form one auth boundary consumed by the route table; a
+   full reload on edit is correct here, not a fast-refresh regression. */
 import { useEffect } from "react"
 import { Navigate } from "react-router"
 
@@ -95,11 +98,7 @@ export function AdminRoute({ children }: { children: React.ReactNode }) {
  *  verify-email, so this works from first paint without an extra fetch. */
 export function DeviceDetailRoute({ children }: { children: React.ReactNode }) {
   const user = useAuth((s) => s.user)
-  if (
-    user &&
-    user.role !== "admin" &&
-    user.user_policy?.hide_device_detail
-  ) {
+  if (user && user.role !== "admin" && user.user_policy?.hide_device_detail) {
     return <Navigate to="/app/devices" replace />
   }
   return <>{children}</>

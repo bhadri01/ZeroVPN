@@ -822,6 +822,13 @@ pub async fn delete(
     if let Err(e) = state.wg.remove_peer(&device.public_key).await {
         tracing::warn!(?e, "wg remove_peer failed (non-fatal)");
     }
+    // Drop the device's names from the resolver — the hosts file only lists
+    // active devices, so a revoked peer must not keep resolving (its IP is
+    // released above and may be reallocated).
+    if !device.dns_names.is_empty()
+        && let Err(e) = crate::routes::dns::sync_dnsmasq(&state.pool).await {
+            tracing::warn!(?e, "dnsmasq sync failed");
+        }
 
     info!(user_id = %user.id, device_id = %id, "device revoked");
     metrics::counter!("zerovpn_devices_revoked").increment(1);
@@ -1034,18 +1041,32 @@ fn default_device_name(os: DeviceOs, dt: DeviceType) -> String {
     }
 }
 
+/// Already-resolved connection parameters for [`render_profile`].
+struct ProfileParams<'a> {
+    private_key: &'a str,
+    address: &'a str,
+    dns: &'a [String],
+    server_public_key: &'a str,
+    endpoint: &'a str,
+    allowed_ips: &'a [String],
+    mtu: u16,
+    keepalive: u16,
+}
+
 /// Build the structured profile + rendered `.conf` + QR from already-resolved
 /// connection parameters. Shared by the connect handler's provision and
 /// reconnect branches so the WG-render path lives in exactly one place.
 fn render_profile(
-    private_key: &str,
-    address: &str,
-    dns: &[String],
-    server_public_key: &str,
-    endpoint: &str,
-    allowed_ips: &[String],
-    mtu: u16,
-    keepalive: u16,
+    ProfileParams {
+        private_key,
+        address,
+        dns,
+        server_public_key,
+        endpoint,
+        allowed_ips,
+        mtu,
+        keepalive,
+    }: ProfileParams<'_>,
 ) -> ApiResult<(WgProfile, String, String)> {
     let dns_joined = dns.join(", ");
     let allowed_joined = allowed_ips.join(", ");
@@ -1143,16 +1164,16 @@ pub async fn connect(
         let allowed_ips = default_allowed_ips();
         let endpoint = format!("{}:{}", server.endpoint_host, server.endpoint_port);
         let keepalive = server.persistent_keepalive as u16;
-        let (profile, config, qr_svg) = render_profile(
-            &private_key,
-            &address,
-            &dns,
-            &server.public_key,
-            &endpoint,
-            &allowed_ips,
-            server.mtu as u16,
+        let (profile, config, qr_svg) = render_profile(ProfileParams {
+            private_key: &private_key,
+            address: &address,
+            dns: &dns,
+            server_public_key: &server.public_key,
+            endpoint: &endpoint,
+            allowed_ips: &allowed_ips,
+            mtu: server.mtu as u16,
             keepalive,
-        )?;
+        })?;
 
         // Re-assert the peer on the live interface (idempotent) so the tunnel
         // works even if the interface/worker restarted since provisioning.
@@ -1296,16 +1317,16 @@ pub async fn connect(
     let allowed_ips = default_allowed_ips();
     let endpoint = format!("{}:{}", server.endpoint_host, server.endpoint_port);
     let keepalive = server.persistent_keepalive as u16;
-    let (profile, config, qr_svg) = render_profile(
-        &private_key,
-        &address,
-        &dns,
-        &server.public_key,
-        &endpoint,
-        &allowed_ips,
-        server.mtu as u16,
+    let (profile, config, qr_svg) = render_profile(ProfileParams {
+        private_key: &private_key,
+        address: &address,
+        dns: &dns,
+        server_public_key: &server.public_key,
+        endpoint: &endpoint,
+        allowed_ips: &allowed_ips,
+        mtu: server.mtu as u16,
         keepalive,
-    )?;
+    })?;
 
     let stored = devices::find_for_user(&state.pool, user.id, device_id)
         .await?
@@ -1357,11 +1378,10 @@ pub async fn patch(
     devices::find_for_user(&state.pool, user.id, id)
         .await?
         .ok_or(ApiError::NotFound)?;
-    if let Some(ref name) = body.name {
-        if name.trim().is_empty() || name.len() > 64 {
+    if let Some(ref name) = body.name
+        && (name.trim().is_empty() || name.len() > 64) {
             return Err(ApiError::Validation("name must be 1–64 chars".into()));
         }
-    }
     let dns_override_inet: Option<Vec<IpNetwork>> = if let Some(ref dns) = body.dns_override {
         let mut out = Vec::with_capacity(dns.len());
         for s in dns {
@@ -1580,6 +1600,13 @@ async fn set_pause_state(
         }
         _ => {}
     }
+
+    // The resolver only lists *active* devices, so pause/unpause must
+    // regenerate the hosts file just like a DNS-name edit does.
+    if !device.dns_names.is_empty()
+        && let Err(e) = crate::routes::dns::sync_dnsmasq(&state.pool).await {
+            tracing::warn!(?e, "dnsmasq sync failed");
+        }
 
     audit::record(
         &state.pool,

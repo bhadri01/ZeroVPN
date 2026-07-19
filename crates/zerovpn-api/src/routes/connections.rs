@@ -288,11 +288,10 @@ where
                 if sport.is_none() {
                     sport = rest.parse::<i32>().ok();
                 }
-            } else if let Some(rest) = part.strip_prefix("dport=") {
-                if dport.is_none() {
+            } else if let Some(rest) = part.strip_prefix("dport=")
+                && dport.is_none() {
                     dport = rest.parse::<i32>().ok();
                 }
-            }
         }
 
         let (Some(src_ip), Some(dst_ip)) = (src, dst) else {
@@ -332,7 +331,8 @@ where
     F: Fn(&str) -> Endpoint,
 {
     let since = OffsetDateTime::now_utc() - Duration::seconds(60);
-    let rows: Vec<(String, Option<i32>, String, Option<i32>, Option<String>)> = match sqlx::query_as(
+    type FlowRow = (String, Option<i32>, String, Option<i32>, Option<String>);
+    let rows: Vec<FlowRow> = match sqlx::query_as(
         r#"SELECT DISTINCT ON (src_ip, src_port, dst_ip, dst_port, proto)
                   src_ip, src_port, dst_ip, dst_port, proto
              FROM destination_ips

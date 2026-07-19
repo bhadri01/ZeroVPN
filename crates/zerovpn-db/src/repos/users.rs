@@ -385,7 +385,8 @@ pub async fn get_totp_material(
     pool: &PgPool,
     user_id: Uuid,
 ) -> sqlx::Result<Option<(Vec<u8>, Vec<String>)>> {
-    let row: Option<(Option<Vec<u8>>, Option<Vec<String>>)> = sqlx::query_as(
+    type TotpRow = (Option<Vec<u8>>, Option<Vec<String>>);
+    let row: Option<TotpRow> = sqlx::query_as(
         "SELECT totp_secret_encrypted, totp_recovery_codes_hashed FROM users WHERE id = $1",
     )
     .bind(user_id)
@@ -452,6 +453,7 @@ pub async fn soft_delete(pool: &PgPool, user_id: Uuid) -> sqlx::Result<()> {
 ///   - `audit_logs` (actor + target), `access_logs`, `destination_ips` —
 ///     `ON DELETE SET NULL`, so they'd be anonymized-not-removed
 ///   - `failed_logins` — keyed by email (CITEXT), no FK
+///
 /// Everything runs in one transaction so a failure leaves the user intact.
 pub async fn hard_delete(pool: &PgPool, user_id: Uuid, email: &str) -> sqlx::Result<()> {
     let mut tx = pool.begin().await?;
