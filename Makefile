@@ -167,7 +167,10 @@ smoke: ## Run end-to-end smoke test against the running stack
 check: ## cargo check + clippy + tsc + eslint
 	cargo check --workspace --all-targets
 	cargo clippy --workspace --all-targets -- -D warnings
-	cd web && pnpm tsc --noEmit && pnpm lint
+	# tsc -b, not --noEmit: the root tsconfig is solution-style (files: [],
+	# project references), so a bare `tsc --noEmit` checks nothing. -b is
+	# what the frontend image build runs.
+	cd web && pnpm tsc -b && pnpm lint
 
 .PHONY: fmt
 fmt: ## Format code

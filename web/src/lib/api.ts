@@ -888,7 +888,10 @@ export interface AdminDeviceDetailResponse {
 export const adminGetDeviceDetail = (id: string) =>
   apiFetch<AdminDeviceDetailResponse>(`/admin/devices/${id}`)
 
-interface AdminUserActivity {
+/** Referenced via `import("@/lib/api").AdminUserActivity` type position in
+ * UserDetail's timeline builder — knip can't see those, hence the tag.
+ * @public */
+export interface AdminUserActivity {
   id: number
   action: string
   metadata: unknown
