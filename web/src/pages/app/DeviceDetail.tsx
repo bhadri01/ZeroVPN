@@ -473,9 +473,13 @@ export function DeviceDetailPage() {
           "Edit" dialog (peer config + QR stay in the "Config" dialog). The
           chart owns its timeframe + zoom/pan controls. */}
       <StaggerItem>
-        <Panel title="Bandwidth" sub="scroll to zoom · drag to pan">
-          <CandleChart scope="device" id={id} height={260} />
-        </Panel>
+        <CandleChart
+          scope="device"
+          id={id}
+          height={260}
+          title="Bandwidth"
+          sub="scroll to zoom · drag to pan"
+        />
       </StaggerItem>
 
       {/* DNS names — separate panel so the host alias list is first-class

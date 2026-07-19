@@ -252,9 +252,12 @@ export function DashboardPage() {
           devices. Owns its own timeframe + zoom/pan controls (same chart as
           the device detail + admin overview pages). */}
       <StaggerItem>
-        <Panel title="Bandwidth" sub="All devices · scroll to zoom · drag to pan">
-          <CandleChart scope="user" height={260} />
-        </Panel>
+        <CandleChart
+          scope="user"
+          height={260}
+          title="Bandwidth"
+          sub="All devices · scroll to zoom · drag to pan"
+        />
       </StaggerItem>
 
       {/* First-device empty state — surfaced only when there are zero

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react"
+import { type ReactNode, memo, useEffect, useMemo, useRef, useState } from "react"
 import * as echarts from "echarts/core"
 import { CustomChart, LineChart } from "echarts/charts"
 import {
@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Panel } from "@/components/swiss"
 import { type Timeframe, TIMEFRAMES } from "@/lib/api"
 import { type CandleScope, useCandleSeries } from "@/hooks/useCandleSeries"
 import {
@@ -69,6 +70,12 @@ interface Props {
   /** Device/server UUID. Omitted for the `user` scope (session-keyed). */
   id?: string
   height?: number
+  /** When set, the chart renders inside its own <Panel> with this title/sub and
+   *  hangs the toolbar (Latest / Lines-Bars / timeframe) in the header's
+   *  right slot — so the controls sit on the same line as the title. Omit for a
+   *  bare chart with the toolbar as a row above it (compact/embedded usage). */
+  title?: ReactNode
+  sub?: ReactNode
 }
 
 /**
@@ -84,7 +91,7 @@ interface Props {
  * Wrapped in `memo` so the parent card's per-second live-stats re-renders don't
  * reach the chart.
  */
-function CandleChartImpl({ scope, id, height = 260 }: Props) {
+function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
   const [tf, setTf] = useState<Timeframe>("1m")
   // Lines are the default view; switch to candle "Bars" from the toolbar.
   const [chartType, setChartType] = useState<ChartType>("line")
@@ -466,6 +473,16 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
     )
   }
 
+  // With a title, own the panel and hang the toolbar in the header's right
+  // slot so the controls sit on the same line as the title. Without one, fall
+  // back to a bare toolbar row above the chart (compact/embedded usage).
+  if (title != null || sub != null) {
+    return (
+      <Panel title={title} sub={sub} right={toolbar}>
+        {body}
+      </Panel>
+    )
+  }
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-end">{toolbar}</div>

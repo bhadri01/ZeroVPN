@@ -457,15 +457,15 @@ export function UserDetailPage() {
               <Panel
                 title="Bandwidth quota"
                 right={
-                  !isSelf && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setQuotaOpen(true)}
-                    >
-                      Edit cap
-                    </Button>
-                  )
+                  // Shown for self too — admins may edit their own cap (the
+                  // API has no self-restriction here, unlike suspend/delete).
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setQuotaOpen(true)}
+                  >
+                    Edit cap
+                  </Button>
                 }
               >
                 <QuotaSummary
@@ -478,15 +478,13 @@ export function UserDetailPage() {
           </StaggerItem>
 
           <StaggerItem>
-            <Panel
+            <CandleChart
+              scope="admin-user"
+              id={id}
+              height={300}
               title="Bandwidth"
               sub="Live bandwidth across all of this user's devices — drag to pan, scroll to zoom"
-              flush
-            >
-              <div className="p-3">
-                <CandleChart scope="admin-user" id={id} height={300} />
-              </div>
-            </Panel>
+            />
           </StaggerItem>
 
           <StaggerItem>

@@ -221,12 +221,13 @@ export function AdminDeviceDetailPage() {
           {/* Bandwidth — same self-contained OHLC candle chart as the user
               page (admin-scoped data source). */}
           <StaggerItem>
-            <Panel
+            <CandleChart
+              scope="admin-device"
+              id={id}
+              height={260}
               title="Bandwidth"
               sub="scroll to zoom · drag to pan"
-            >
-              <CandleChart scope="admin-device" id={id} height={260} />
-            </Panel>
+            />
           </StaggerItem>
 
           {/* DNS names — read-only (admin view). */}

@@ -144,12 +144,13 @@ export function ServerDetailPage() {
           </StaggerItem>
 
           <StaggerItem>
-            <Panel
+            <CandleChart
+              scope="server"
+              id={id}
+              height={260}
               title="Bandwidth"
               sub="Aggregated across every device on this server · scroll to zoom · drag to pan"
-            >
-              <CandleChart scope="server" id={id} height={260} />
-            </Panel>
+            />
           </StaggerItem>
 
           <StaggerItem>
