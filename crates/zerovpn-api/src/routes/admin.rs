@@ -1520,6 +1520,145 @@ pub async fn set_device_quota(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+// ── Admin device lifecycle ──────────────────────────────────────────────
+// Pause / resume / revoke any device without impersonating (or suspending)
+// its owner — the moderation path for an abusive or compromised peer. The
+// WG/DNS side effects are the same shared cores the owner's handlers use,
+// so the tunnel and resolver stay correct either way; only the audit actor
+// and action names differ.
+
+#[utoipa::path(
+    post,
+    path = "/admin/devices/{id}/pause",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Device UUID")),
+    responses(
+        (status = 200, description = "Device paused; WG peer removed from the interface"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "No such device"),
+        (status = 409, description = "Device is revoked"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_pause_device(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    admin_set_device_pause(&state, &actor, device_id, zerovpn_core::models::DeviceStatus::Paused)
+        .await?;
+    Ok(Json(json!({ "status": "paused" })))
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/devices/{id}/unpause",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Device UUID")),
+    responses(
+        (status = 200, description = "Device resumed; WG peer re-added to the interface"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "No such device"),
+        (status = 409, description = "Device is revoked"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_unpause_device(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    admin_set_device_pause(&state, &actor, device_id, zerovpn_core::models::DeviceStatus::Active)
+        .await?;
+    Ok(Json(json!({ "status": "active" })))
+}
+
+async fn admin_set_device_pause(
+    state: &AppState,
+    actor: &zerovpn_core::models::User,
+    device_id: Uuid,
+    target: zerovpn_core::models::DeviceStatus,
+) -> ApiResult<()> {
+    use zerovpn_core::models::DeviceStatus;
+    let device = devices::get_by_id(&state.pool, device_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    crate::routes::devices::apply_pause_state(state, &device, target).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: match target {
+                DeviceStatus::Paused => "admin.device_paused",
+                _ => "admin.device_unpaused",
+            },
+            target_type: Some("device"),
+            target_id: Some(device_id),
+            metadata: json!({ "owner_user_id": device.user_id, "to": target }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, %device_id, ?target, "admin changed device pause state");
+    crate::routes::devices::notify_device(
+        state,
+        device.user_id,
+        Some(device_id),
+        match target {
+            DeviceStatus::Paused => ChangeAction::Paused,
+            _ => ChangeAction::Unpaused,
+        },
+    );
+    Ok(())
+}
+
+#[utoipa::path(
+    delete,
+    path = "/admin/devices/{id}",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Device UUID")),
+    responses(
+        (status = 200, description = "Device revoked; IP released, WG peer + DNS names removed"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "No such device"),
+        (status = 409, description = "Device already revoked"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_revoke_device(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let device = devices::get_by_id(&state.pool, device_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if device.status == zerovpn_core::models::DeviceStatus::Revoked {
+        return Err(ApiError::Conflict("device already revoked".into()));
+    }
+    crate::routes::devices::teardown_device(&state, &device).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.device_revoked",
+            target_type: Some("device"),
+            target_id: Some(device_id),
+            metadata: json!({ "owner_user_id": device.user_id }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, %device_id, owner = %device.user_id, "admin revoked device");
+    crate::routes::devices::notify_device(
+        &state,
+        device.user_id,
+        Some(device_id),
+        ChangeAction::Deleted,
+    );
+    Ok(Json(json!({ "status": "ok" })))
+}
+
 #[utoipa::path(
     get,
     path = "/admin/failed-logins",

@@ -1,8 +1,16 @@
-import { useQuery } from "@tanstack/react-query"
-import { IconArrowLeft } from "@tabler/icons-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  IconArrowLeft,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconTrash,
+} from "@tabler/icons-react"
+import { useState } from "react"
 import { Link, useParams } from "react-router"
+import { toast } from "sonner"
 
 import { CandleChart } from "@/components/charts/CandleChart"
+import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { RelativeTime } from "@/components/RelativeTime"
@@ -27,6 +35,9 @@ import {
   adminGetDeviceDetail,
   adminListDeviceConnectionHistory,
   adminListDeviceEndpointHistory,
+  adminPauseDevice,
+  adminRevokeDevice,
+  adminUnpauseDevice,
 } from "@/lib/api"
 import { DEVICE_TYPE_ICONS, deviceTypeLabel, osLabel } from "@/lib/deviceIcons"
 import { formatBps, formatBytes } from "@/lib/units"
@@ -36,8 +47,9 @@ import { useLiveStats } from "@/stores/liveStats"
 
 /**
  * Admin device detail. Mirrors the user-facing device page's layout — a live
- * RX / TX / Total / Quota KPI strip and the OHLC bandwidth candle chart — but
- * read-only (admins view, they don't control another user's device). Admin
+ * RX / TX / Total / Quota KPI strip and the OHLC bandwidth candle chart —
+ * plus the admin moderation controls (pause / resume / revoke) so an abusive
+ * or compromised peer can be stopped without impersonating its owner. Admin
  * depth (owner, endpoint history, connection sessions, activity, identifiers)
  * lives below.
  */
@@ -75,7 +87,7 @@ export function AdminDeviceDetailPage() {
   const { rx: totalRx, tx: totalTx } = useLiveTotal(
     id,
     d?.total_rx_bytes ?? 0,
-    d?.total_tx_bytes ?? 0,
+    d?.total_tx_bytes ?? 0
   )
   const isOnline = useDeviceOnline((d as PublicDevice | undefined) ?? null)
 
@@ -85,6 +97,35 @@ export function AdminDeviceDetailPage() {
   const totalHistory = rxHistory.map((v, i) => v + (txHistory[i] ?? 0))
   const isPaused = d?.status === "paused"
   const isRevoked = d?.status === "revoked"
+
+  // ── Moderation actions ────────────────────────────────────────────────
+  const qc = useQueryClient()
+  const [revokeOpen, setRevokeOpen] = useState(false)
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["admin", "device", id] })
+    void qc.invalidateQueries({ queryKey: ["admin", "devices"] })
+  }
+  const onActionError = (e: unknown) => {
+    if (e instanceof ApiError) toast.error(e.message)
+  }
+  const pauseM = useMutation({
+    mutationFn: () =>
+      isPaused ? adminUnpauseDevice(id) : adminPauseDevice(id),
+    onSuccess: () => {
+      invalidate()
+      toast.success(isPaused ? "Device resumed" : "Device paused")
+    },
+    onError: onActionError,
+  })
+  const revokeM = useMutation({
+    mutationFn: () => adminRevokeDevice(id),
+    onSuccess: () => {
+      invalidate()
+      setRevokeOpen(false)
+      toast.success("Device revoked — IP released, peer and DNS removed")
+    },
+    onError: onActionError,
+  })
 
   return (
     <PageStagger>
@@ -101,7 +142,7 @@ export function AdminDeviceDetailPage() {
             d ? (
               <span className="inline-flex items-center gap-2">
                 {TypeIcon && (
-                  <TypeIcon className="text-muted-foreground size-[0.8em] shrink-0" />
+                  <TypeIcon className="size-[0.8em] shrink-0 text-muted-foreground" />
                 )}
                 <span className="min-w-0 break-words">{d.name}</span>
               </span>
@@ -135,6 +176,36 @@ export function AdminDeviceDetailPage() {
                   </Link>
                 </Button>
               )}
+              {d && !isRevoked && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={pauseM.isPending}
+                    onClick={() => pauseM.mutate()}
+                  >
+                    {isPaused ? (
+                      <>
+                        <IconPlayerPlay className="size-3.5" />
+                        Resume
+                      </>
+                    ) : (
+                      <>
+                        <IconPlayerPause className="size-3.5" />
+                        Pause
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => setRevokeOpen(true)}
+                  >
+                    <IconTrash className="size-3.5" />
+                    Revoke
+                  </Button>
+                </>
+              )}
               {d && (
                 <StatusPill
                   status={
@@ -156,7 +227,7 @@ export function AdminDeviceDetailPage() {
       {detailQ.isError && (
         <StaggerItem>
           <Panel title="Failed to load">
-            <p className="text-muted-foreground text-sm">
+            <p className="text-sm text-muted-foreground">
               {detailQ.error instanceof ApiError
                 ? detailQ.error.message
                 : "Could not fetch device."}
@@ -249,7 +320,7 @@ export function AdminDeviceDetailPage() {
                   ))}
                 </div>
               ) : (
-                <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                <div className="py-8 text-center font-mono text-sm text-muted-foreground">
                   No DNS names configured.
                 </div>
               )}
@@ -272,12 +343,12 @@ export function AdminDeviceDetailPage() {
                   <Eyebrow>Allocated IP</Eyebrow>
                   <CopyableCode value={d.allocated_ip} />
                 </div>
-                <div className="sm:col-span-2 flex flex-col gap-1.5">
+                <div className="flex flex-col gap-1.5 sm:col-span-2">
                   <Eyebrow>DNS override</Eyebrow>
                   {d.dns_override && d.dns_override.length > 0 ? (
                     <CopyableCode value={d.dns_override.join(", ")} />
                   ) : (
-                    <p className="text-muted-foreground font-mono text-xs">
+                    <p className="font-mono text-xs text-muted-foreground">
                       none · server default
                     </p>
                   )}
@@ -307,7 +378,7 @@ export function AdminDeviceDetailPage() {
                       {endpoints.slice(0, 50).map((r) => (
                         <tr key={r.id}>
                           <td className="font-mono text-xs">{r.endpoint}</td>
-                          <td className="text-muted-foreground font-mono text-xs">
+                          <td className="font-mono text-xs text-muted-foreground">
                             <RelativeTime value={r.observed_at} />
                           </td>
                         </tr>
@@ -316,12 +387,12 @@ export function AdminDeviceDetailPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                <div className="py-8 text-center font-mono text-sm text-muted-foreground">
                   No endpoints captured yet.
                 </div>
               )}
               {endpoints.length > 50 && (
-                <p className="text-muted-foreground p-2 font-mono text-[11px]">
+                <p className="p-2 font-mono text-[11px] text-muted-foreground">
                   Showing first 50 of {endpoints.length}.
                 </p>
               )}
@@ -358,14 +429,14 @@ export function AdminDeviceDetailPage() {
                           s.rx_bytes_at_end != null
                             ? Math.max(
                                 0,
-                                s.rx_bytes_at_end - s.rx_bytes_at_start,
+                                s.rx_bytes_at_end - s.rx_bytes_at_start
                               )
                             : null
                         const tx =
                           s.tx_bytes_at_end != null
                             ? Math.max(
                                 0,
-                                s.tx_bytes_at_end - s.tx_bytes_at_start,
+                                s.tx_bytes_at_end - s.tx_bytes_at_start
                               )
                             : null
                         const endpointChanged =
@@ -374,7 +445,7 @@ export function AdminDeviceDetailPage() {
                           s.peer_endpoint_at_end !== s.peer_endpoint_at_start
                         return (
                           <tr key={s.id}>
-                            <td className="text-muted-foreground font-mono text-xs">
+                            <td className="font-mono text-xs text-muted-foreground">
                               <RelativeTime value={s.started_at} />
                             </td>
                             <td className="font-mono text-xs tabular-nums">
@@ -400,14 +471,14 @@ export function AdminDeviceDetailPage() {
                                 </span>
                               )}
                             </td>
-                            <td className="text-muted-foreground text-right font-mono text-xs tabular-nums">
+                            <td className="text-right font-mono text-xs text-muted-foreground tabular-nums">
                               {rx != null ? (
                                 formatBytes(rx)
                               ) : (
                                 <span className="text-muted-foreground">—</span>
                               )}
                             </td>
-                            <td className="text-muted-foreground text-right font-mono text-xs tabular-nums">
+                            <td className="text-right font-mono text-xs text-muted-foreground tabular-nums">
                               {tx != null ? (
                                 formatBytes(tx)
                               ) : (
@@ -421,12 +492,12 @@ export function AdminDeviceDetailPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                <div className="py-8 text-center font-mono text-sm text-muted-foreground">
                   No connection sessions yet.
                 </div>
               )}
               {connections.length > 50 && (
-                <p className="text-muted-foreground p-2 font-mono text-[11px]">
+                <p className="p-2 font-mono text-[11px] text-muted-foreground">
                   Showing first 50 of {connections.length}.
                 </p>
               )}
@@ -457,10 +528,10 @@ export function AdminDeviceDetailPage() {
                               {a.action}
                             </Pill>
                           </td>
-                          <td className="text-muted-foreground font-mono text-[11px]">
+                          <td className="font-mono text-[11px] text-muted-foreground">
                             <Kbd>{summarize(a.metadata)}</Kbd>
                           </td>
-                          <td className="text-muted-foreground font-mono text-xs">
+                          <td className="font-mono text-xs text-muted-foreground">
                             <RelativeTime value={a.created_at} fallback="—" />
                           </td>
                         </tr>
@@ -469,7 +540,7 @@ export function AdminDeviceDetailPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-muted-foreground py-8 text-center font-mono text-sm">
+                <div className="py-8 text-center font-mono text-sm text-muted-foreground">
                   No activity.
                 </div>
               )}
@@ -492,6 +563,21 @@ export function AdminDeviceDetailPage() {
           </StaggerItem>
         </>
       )}
+      <ConfirmDialog
+        open={revokeOpen}
+        onOpenChange={setRevokeOpen}
+        title="Revoke this device?"
+        description={
+          d
+            ? `Permanently revokes ${d.name} (owner ${owner?.email ?? "unknown"}): the WG peer is removed, its IP is released for reallocation, and its DNS names stop resolving. The owner keeps their account and other devices.`
+            : undefined
+        }
+        confirmLabel="Revoke device"
+        destructive
+        confirmText={d?.name}
+        pending={revokeM.isPending}
+        onConfirm={() => revokeM.mutate()}
+      />
     </PageStagger>
   )
 }
@@ -527,7 +613,9 @@ function QuotaKpi({
         )}
       </div>
       <div className="zv-kpi-foot">
-        <span>{hasCap ? `/ ${formatBytes(cap0)} this month` : "this month"}</span>
+        <span>
+          {hasCap ? `/ ${formatBytes(cap0)} this month` : "this month"}
+        </span>
         <span
           className={
             autoPaused ? "text-amber-600 dark:text-amber-400" : undefined

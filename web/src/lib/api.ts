@@ -888,6 +888,20 @@ export interface AdminDeviceDetailResponse {
 export const adminGetDeviceDetail = (id: string) =>
   apiFetch<AdminDeviceDetailResponse>(`/admin/devices/${id}`)
 
+/** Admin moderation controls — pause / resume / revoke any device without
+ *  impersonating its owner. Same WG + DNS side effects as the owner's own
+ *  actions; audit-logged as `admin.device_*` with the owner in metadata. */
+export const adminPauseDevice = (id: string) =>
+  apiFetch<{ status: string }>(`/admin/devices/${id}/pause`, { method: "POST" })
+
+export const adminUnpauseDevice = (id: string) =>
+  apiFetch<{ status: string }>(`/admin/devices/${id}/unpause`, {
+    method: "POST",
+  })
+
+export const adminRevokeDevice = (id: string) =>
+  apiFetch<{ status: string }>(`/admin/devices/${id}`, { method: "DELETE" })
+
 /** Referenced via `import("@/lib/api").AdminUserActivity` type position in
  * UserDetail's timeline builder — knip can't see those, hence the tag.
  * @public */

@@ -41,7 +41,12 @@ const ONLINE_HANDSHAKE_WINDOW_SECS: i64 = 180;
 /// any admin watching) invalidate their device queries and reflect the change
 /// in real time — e.g. a peer added on a phone appears on the laptop instantly.
 /// Fire-and-forget; `device_id` is `None` for bulk operations like reorder.
-fn notify_device(state: &AppState, user_id: Uuid, device_id: Option<Uuid>, action: ChangeAction) {
+pub(crate) fn notify_device(
+    state: &AppState,
+    user_id: Uuid,
+    device_id: Option<Uuid>,
+    action: ChangeAction,
+) {
     state.broadcast(Event::DataChanged {
         user_id: Some(user_id),
         resource: ResourceKind::Device,
@@ -800,13 +805,7 @@ pub async fn delete(
     let device = devices::find_for_user(&state.pool, user.id, id)
         .await?
         .ok_or(ApiError::NotFound)?;
-    let n = devices::set_status(&state.pool, user.id, id, DeviceStatus::Revoked).await?;
-    if n == 0 {
-        return Err(ApiError::NotFound);
-    }
-    if let Some(alloc) = state.allocators.get(device.server_id) {
-        let _ = alloc.release(device.allocated_ip.ip());
-    }
+    teardown_device(&state, &device).await?;
     audit::record(
         &state.pool,
         audit::AuditEntry {
@@ -819,21 +818,35 @@ pub async fn delete(
         },
     )
     .await?;
+    info!(user_id = %user.id, device_id = %id, "device revoked");
+    notify_device(&state, user.id, Some(id), ChangeAction::Deleted);
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+/// Shared revoke core, used by the owner's DELETE and the admin revoke:
+/// flips the row to `revoked`, releases the allocated IP, removes the WG
+/// peer, and drops the device's DNS names from the resolver (the hosts
+/// file only lists active devices, and the freed IP may be reallocated).
+/// Callers own audit + notify — actor and action name differ per path.
+pub(crate) async fn teardown_device(state: &AppState, device: &Device) -> ApiResult<()> {
+    let n =
+        devices::set_status(&state.pool, device.user_id, device.id, DeviceStatus::Revoked).await?;
+    if n == 0 {
+        return Err(ApiError::NotFound);
+    }
+    if let Some(alloc) = state.allocators.get(device.server_id) {
+        let _ = alloc.release(device.allocated_ip.ip());
+    }
     if let Err(e) = state.wg.remove_peer(&device.public_key).await {
         tracing::warn!(?e, "wg remove_peer failed (non-fatal)");
     }
-    // Drop the device's names from the resolver — the hosts file only lists
-    // active devices, so a revoked peer must not keep resolving (its IP is
-    // released above and may be reallocated).
     if !device.dns_names.is_empty()
-        && let Err(e) = crate::routes::dns::sync_dnsmasq(&state.pool).await {
-            tracing::warn!(?e, "dnsmasq sync failed");
-        }
-
-    info!(user_id = %user.id, device_id = %id, "device revoked");
+        && let Err(e) = crate::routes::dns::sync_dnsmasq(&state.pool).await
+    {
+        tracing::warn!(?e, "dnsmasq sync failed");
+    }
     metrics::counter!("zerovpn_devices_revoked").increment(1);
-    notify_device(&state, user.id, Some(id), ChangeAction::Deleted);
-    Ok(Json(json!({ "status": "ok" })))
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -1557,10 +1570,50 @@ async fn set_pause_state(
     let device = devices::find_for_user(&state.pool, user_id, device_id)
         .await?
         .ok_or(ApiError::NotFound)?;
+    apply_pause_state(state, &device, target).await?;
+
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user_id),
+            action: match target {
+                DeviceStatus::Paused => "device.paused",
+                DeviceStatus::Active => "device.unpaused",
+                _ => "device.status_changed",
+            },
+            target_type: Some("device"),
+            target_id: Some(device_id),
+            metadata: json!({ "to": target }),
+            ip: None,
+        },
+    )
+    .await?;
+
+    notify_device(
+        state,
+        user_id,
+        Some(device_id),
+        match target {
+            DeviceStatus::Paused => ChangeAction::Paused,
+            _ => ChangeAction::Unpaused,
+        },
+    );
+
+    Ok(())
+}
+
+/// Shared pause/resume core, used by the owner's handlers and the admin
+/// ones: flips the row and reflects the state onto the running WG
+/// interface + resolver. Callers own audit + notify.
+pub(crate) async fn apply_pause_state(
+    state: &AppState,
+    device: &Device,
+    target: DeviceStatus,
+) -> ApiResult<()> {
     if device.status == DeviceStatus::Revoked {
         return Err(ApiError::Conflict("revoked device cannot change status".into()));
     }
-    let n = devices::set_status(&state.pool, user_id, device_id, target).await?;
+    let n = devices::set_status(&state.pool, device.user_id, device.id, target).await?;
     if n == 0 {
         return Err(ApiError::NotFound);
     }
@@ -1604,36 +1657,10 @@ async fn set_pause_state(
     // The resolver only lists *active* devices, so pause/unpause must
     // regenerate the hosts file just like a DNS-name edit does.
     if !device.dns_names.is_empty()
-        && let Err(e) = crate::routes::dns::sync_dnsmasq(&state.pool).await {
-            tracing::warn!(?e, "dnsmasq sync failed");
-        }
-
-    audit::record(
-        &state.pool,
-        audit::AuditEntry {
-            actor_user_id: Some(user_id),
-            action: match target {
-                DeviceStatus::Paused => "device.paused",
-                DeviceStatus::Active => "device.unpaused",
-                _ => "device.status_changed",
-            },
-            target_type: Some("device"),
-            target_id: Some(device_id),
-            metadata: json!({ "to": target }),
-            ip: None,
-        },
-    )
-    .await?;
-
-    notify_device(
-        state,
-        user_id,
-        Some(device_id),
-        match target {
-            DeviceStatus::Paused => ChangeAction::Paused,
-            _ => ChangeAction::Unpaused,
-        },
-    );
+        && let Err(e) = crate::routes::dns::sync_dnsmasq(&state.pool).await
+    {
+        tracing::warn!(?e, "dnsmasq sync failed");
+    }
 
     Ok(())
 }

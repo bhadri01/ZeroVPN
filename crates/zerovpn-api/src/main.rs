@@ -422,7 +422,15 @@ async fn main() -> Result<()> {
                 .route("/admin/devices", get(routes::admin::list_devices))
                 .route(
                     "/admin/devices/{id}",
-                    get(routes::admin::device_detail),
+                    get(routes::admin::device_detail).delete(routes::admin::admin_revoke_device),
+                )
+                .route(
+                    "/admin/devices/{id}/pause",
+                    post(routes::admin::admin_pause_device),
+                )
+                .route(
+                    "/admin/devices/{id}/unpause",
+                    post(routes::admin::admin_unpause_device),
                 )
                 .route(
                     "/admin/devices/{id}/bandwidth",

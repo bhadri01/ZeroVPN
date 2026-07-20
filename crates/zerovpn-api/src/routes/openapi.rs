@@ -126,6 +126,9 @@ use super::{
         admin::server_detail,
         admin::server_bandwidth,
         admin::set_device_quota,
+        admin::admin_pause_device,
+        admin::admin_unpause_device,
+        admin::admin_revoke_device,
         admin::impersonate_user,
         admin::stop_impersonation,
 
