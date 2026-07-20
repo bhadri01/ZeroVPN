@@ -22,6 +22,7 @@ mod error;
 mod extractors;
 mod middleware;
 mod quota;
+mod ratelimit;
 mod routes;
 mod state;
 
@@ -324,6 +325,10 @@ async fn main() -> Result<()> {
                 .route("/auth/totp/setup", post(routes::totp::setup))
                 .route("/auth/totp/enable", post(routes::totp::enable))
                 .route("/auth/totp/disable", post(routes::totp::disable))
+                .route(
+                    "/auth/totp/recovery-codes",
+                    post(routes::totp::regenerate_recovery_codes),
+                )
                 .route("/me/data-export", get(routes::me::export))
                 .route("/me/server", get(routes::me::server_info))
                 .route("/me/usage", get(routes::me::usage))
@@ -339,6 +344,11 @@ async fn main() -> Result<()> {
                 .route(
                     "/me/change-password",
                     post(routes::me::change_password),
+                )
+                .route("/me/sessions", get(routes::me::list_sessions))
+                .route(
+                    "/me/sessions/{id}",
+                    axum::routing::delete(routes::me::revoke_session),
                 )
                 .route(
                     "/me/sessions/revoke-all",

@@ -96,6 +96,13 @@ pub async fn register(
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
 
     let email = body.email.trim().to_lowercase();
+
+    // Every register (fresh or repeat) can send a verification email, so
+    // it burns the shared mail budget for this address + client IP.
+    if !state.mail_limits.check(&email, client_ip(&headers)) {
+        return Err(ApiError::RateLimited);
+    }
+
     let existing = users::find_by_email(&state.pool, &email).await?;
 
     // Always respond 200 with the same shape regardless of whether the

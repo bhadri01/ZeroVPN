@@ -5,6 +5,8 @@ import {
   IconKey,
   IconLogout,
   IconMail,
+  IconPlayerPause,
+  IconPlayerPlay,
   IconShieldOff,
   IconTrash,
   IconUserShield,
@@ -62,7 +64,10 @@ import {
   adminImpersonateUser,
   adminListDeviceConnectionHistory,
   adminListDeviceEndpointHistory,
+  adminPauseDevice,
+  adminRevokeDevice,
   adminRevokeUserSessions,
+  adminUnpauseDevice,
   adminSendPasswordReset,
   adminSetDeviceQuota,
   adminSetUserEmail,
@@ -164,6 +169,34 @@ export function UserDetailPage() {
     void qc.invalidateQueries({ queryKey: ["admin", "user", id] })
     void qc.invalidateQueries({ queryKey: ["admin", "users"] })
   }
+
+  // ── Device moderation (same endpoints as the admin device detail page) ──
+  const [revokeDevice, setRevokeDevice] = useState<{
+    id: string
+    name: string
+  } | null>(null)
+  const devicePauseM = useMutation({
+    mutationFn: (d: { id: string; paused: boolean }) =>
+      d.paused ? adminUnpauseDevice(d.id) : adminPauseDevice(d.id),
+    onSuccess: (_, d) => {
+      invalidateUser()
+      toast.success(d.paused ? "Device resumed" : "Device paused")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+  const deviceRevokeM = useMutation({
+    mutationFn: (deviceId: string) => adminRevokeDevice(deviceId),
+    onSuccess: () => {
+      invalidateUser()
+      setRevokeDevice(null)
+      toast.success("Device revoked — IP released, peer and DNS removed")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
 
   const setStatusM = useMutation({
     mutationFn: (status: UserStatus) => adminSetUserStatus(id, status),
@@ -520,6 +553,7 @@ export function UserDetailPage() {
                         <th>Last endpoint</th>
                         <th>Connections</th>
                         <th>Created</th>
+                        <th className="w-20">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -608,6 +642,44 @@ export function UserDetailPage() {
                           </td>
                           <td className="font-mono text-xs text-muted-foreground">
                             <RelativeTime value={d.created_at} fallback="—" />
+                          </td>
+                          <td>
+                            {d.status !== "revoked" && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={devicePauseM.isPending}
+                                  onClick={() =>
+                                    devicePauseM.mutate({
+                                      id: d.id,
+                                      paused: d.status === "paused",
+                                    })
+                                  }
+                                  className="p-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                  title={
+                                    d.status === "paused"
+                                      ? "Resume device"
+                                      : "Pause device"
+                                  }
+                                >
+                                  {d.status === "paused" ? (
+                                    <IconPlayerPlay className="size-4" />
+                                  ) : (
+                                    <IconPlayerPause className="size-4" />
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setRevokeDevice({ id: d.id, name: d.name })
+                                  }
+                                  className="p-1 text-muted-foreground hover:text-destructive"
+                                  title="Revoke device"
+                                >
+                                  <IconTrash className="size-4" />
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -699,6 +771,20 @@ export function UserDetailPage() {
         </StaggerItem>
       )}
 
+      <ConfirmDialog
+        open={revokeDevice !== null}
+        onOpenChange={(o) => {
+          if (!o) setRevokeDevice(null)
+        }}
+        title={`Revoke ${revokeDevice?.name ?? "device"}?`}
+        description="Permanently revokes the device: the WG peer is removed, its IP is released for reallocation, and its DNS names stop resolving. The user keeps their account and other devices."
+        confirmLabel="Revoke device"
+        destructive
+        pending={deviceRevokeM.isPending}
+        onConfirm={() => {
+          if (revokeDevice) deviceRevokeM.mutate(revokeDevice.id)
+        }}
+      />
       <ConfirmDialog
         open={suspendOpen}
         onOpenChange={setSuspendOpen}

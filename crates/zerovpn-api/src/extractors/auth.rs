@@ -83,6 +83,27 @@ where
         if snapshot.unix_timestamp() != live_secs {
             return Err(ApiError::Unauthorized);
         }
+
+        // Session-metadata bookkeeping for the "Active sessions" panel.
+        // Lazy upsert here (rather than at each mint site) covers every
+        // login path; the repo throttles the last-seen refresh to once a
+        // minute per session. Best-effort — auth never fails on it.
+        if let Some(session_id) = session.id() {
+            let ip = crate::routes::auth::client_ip(&parts.headers);
+            let ua = crate::routes::auth::client_user_agent(&parts.headers);
+            if let Err(e) = zerovpn_db::repos::user_sessions::upsert_seen(
+                &app_state.pool,
+                &session_id.to_string(),
+                user.id,
+                ip,
+                ua.as_deref(),
+            )
+            .await
+            {
+                tracing::warn!(?e, user_id = %user.id, "user_sessions upsert failed");
+            }
+        }
+
         Ok(Self(user))
     }
 }

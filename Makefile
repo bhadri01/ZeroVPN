@@ -52,13 +52,29 @@ up-prod: ## Deploy the prod stack from PRE-BUILT images (pull, never build)
 	$(COMPOSE) pull
 	$(COMPOSE) up -d
 
+# Registry + git SHA for versioned image tags. Every build is tagged both
+# with $ZEROVPN_IMAGE_TAG (deploy pointer, usually `latest`) and with the
+# commit SHA — so a bad deploy rolls back by setting ZEROVPN_IMAGE_TAG=sha-…
+# in the host's .env and re-running `make up-prod`.
+REGISTRY  := $(or $(shell grep -E '^ZEROVPN_REGISTRY=' .env 2>/dev/null | cut -d= -f2),ghcr.io/bhadri01)
+BASE_TAG  := $(or $(shell grep -E '^ZEROVPN_IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2),latest)
+GIT_SHA   := $(shell git rev-parse --short HEAD)
+APP_IMAGES := zerovpn-api zerovpn-worker zerovpn-frontend
+
 .PHONY: images
-images: ## Build the app images and tag them as $ZEROVPN_REGISTRY/...:$ZEROVPN_IMAGE_TAG
+images: ## Build the app images; tags: $ZEROVPN_IMAGE_TAG + sha-<git SHA>
 	$(COMPOSE_BUILD) build
+	@for img in $(APP_IMAGES); do \
+		docker tag $(REGISTRY)/$$img:$(BASE_TAG) $(REGISTRY)/$$img:sha-$(GIT_SHA); \
+		echo "tagged $(REGISTRY)/$$img:sha-$(GIT_SHA)"; \
+	done
 
 .PHONY: push
-push: ## Push the built app images to the registry (docker login first)
+push: ## Push the built app images (both tags) to the registry (docker login first)
 	$(COMPOSE_BUILD) push
+	@for img in $(APP_IMAGES); do \
+		docker push $(REGISTRY)/$$img:sha-$(GIT_SHA); \
+	done
 
 .PHONY: down
 down: ## Stop the stack

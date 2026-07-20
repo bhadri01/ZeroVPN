@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     response::IntoResponse,
 };
@@ -14,7 +14,7 @@ use tower_sessions::Session;
 use tracing::{info, warn};
 use utoipa::{IntoParams, ToSchema};
 use zerovpn_db::repos::{
-    audit, devices, servers, session_events, topology_positions, user_prefs, users,
+    audit, devices, servers, session_events, topology_positions, user_prefs, user_sessions, users,
 };
 
 use crate::{
@@ -594,6 +594,11 @@ pub async fn revoke_other_sessions(
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
+    // The watermark above already makes other sessions unusable; also
+    // hard-delete their rows so the Active-sessions list agrees at once.
+    if let Some(session_id) = session.id() {
+        user_sessions::revoke_all_except(&state.pool, user.id, &session_id.to_string()).await?;
+    }
     audit::record(
         &state.pool,
         audit::AuditEntry {
@@ -607,6 +612,90 @@ pub async fn revoke_other_sessions(
     )
     .await?;
     info!(user_id = %user.id, "user revoked all other sessions");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MySession {
+    #[serde(flatten)]
+    pub row: user_sessions::UserSessionRow,
+    /// True for the session making this request.
+    pub current: bool,
+}
+
+/// The caller's live sessions, newest activity first — the data behind the
+/// Security page's "Active sessions" panel. Only surrogate ids are exposed;
+/// the underlying tower session id is bearer-equivalent and never leaves
+/// the server.
+#[utoipa::path(
+    get,
+    path = "/me/sessions",
+    tag = "Account",
+    responses(
+        (status = 200, description = "Live sessions for the caller", body = Vec<MySession>),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    session: Session,
+) -> ApiResult<impl IntoResponse> {
+    let current_surrogate = match session.id() {
+        Some(id) => {
+            user_sessions::surrogate_for_session(&state.pool, &id.to_string()).await?
+        }
+        None => None,
+    };
+    let rows = user_sessions::list_active_for_user(&state.pool, user.id).await?;
+    let out: Vec<MySession> = rows
+        .into_iter()
+        .map(|row| MySession {
+            current: Some(row.id) == current_surrogate,
+            row,
+        })
+        .collect();
+    Ok(Json(out))
+}
+
+/// Revoke one of the caller's sessions by surrogate id. Deleting the
+/// authoritative session row kills that cookie instantly. Revoking the
+/// *current* session is allowed and behaves like logout.
+#[utoipa::path(
+    delete,
+    path = "/me/sessions/{id}",
+    tag = "Account",
+    params(("id" = Uuid, Path, description = "Session surrogate id")),
+    responses(
+        (status = 200, description = "Session revoked", body = StatusAck),
+        (status = 401, description = "No session"),
+        (status = 404, description = "No such session for this user"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn revoke_session(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(surrogate): Path<uuid::Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let revoked = user_sessions::revoke_by_surrogate(&state.pool, user.id, surrogate).await?;
+    if !revoked {
+        return Err(ApiError::NotFound);
+    }
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "user.session_revoked",
+            target_type: Some("user"),
+            target_id: Some(user.id),
+            metadata: json!({ "session": surrogate }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(user_id = %user.id, %surrogate, "user revoked one session");
     Ok(Json(json!({ "status": "ok" })))
 }
 

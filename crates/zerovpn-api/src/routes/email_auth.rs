@@ -269,10 +269,19 @@ pub async fn verify_email(
 )]
 pub async fn forgot_password(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<ForgotBody>,
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
     let email = body.email.trim().to_lowercase();
+    // Reset links go to *existing* addresses, so without a ceiling this
+    // endpoint can mail-bomb a known user (and burn the relay's quota).
+    if !state
+        .mail_limits
+        .check(&email, crate::routes::auth::client_ip(&headers))
+    {
+        return Err(ApiError::RateLimited);
+    }
     let user = users::find_by_email(&state.pool, &email).await?;
 
     // Email-enumeration prevention: always return 200 with the same
@@ -450,10 +459,19 @@ const RESEND_WINDOW_SECS: i64 = 10 * 60;
 )]
 pub async fn resend_verify(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<ResendBody>,
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
     let email = body.email.trim().to_lowercase();
+    // Layered on top of the per-user token cap below: this also covers
+    // addresses with no account and adds the per-IP ceiling.
+    if !state
+        .mail_limits
+        .check(&email, crate::routes::auth::client_ip(&headers))
+    {
+        return Err(ApiError::RateLimited);
+    }
     if let Some(u) = users::find_by_email(&state.pool, &email).await?
         && u.status == UserStatus::PendingVerification {
             let recent = verification_tokens::count_recent_for_user(

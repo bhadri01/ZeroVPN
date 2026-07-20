@@ -385,6 +385,23 @@ export const changePassword = (
 export const revokeOtherSessions = () =>
   apiFetch<{ status: string }>("/me/sessions/revoke-all", { method: "POST" })
 
+/** One live session, as shown on the Security page. `id` is a surrogate —
+ *  the real session id never leaves the server. */
+export interface MySession {
+  id: string
+  ip: string | null
+  user_agent: string | null
+  created_at: string
+  last_seen_at: string
+  current: boolean
+}
+
+export const mySessions = () => apiFetch<MySession[]>("/me/sessions")
+
+/** Revoke one session. Revoking the current one behaves like logout. */
+export const revokeSession = (id: string) =>
+  apiFetch<{ status: string }>(`/me/sessions/${id}`, { method: "DELETE" })
+
 /** Pre-flight check for a reset-password link. Lets the form surface
  *  an "expired" state before the user types a new password. `reason`
  *  distinguishes "invalid" (no such token — usually a stale link from a
@@ -704,6 +721,14 @@ export const totpEnable = (secret: string, code: string) =>
 
 export const totpDisable = (code: string) =>
   apiFetch<{ status: string }>("/auth/totp/disable", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  })
+
+/** Rotate recovery codes. Requires a current TOTP code; returns the fresh
+ *  batch exactly once and invalidates every previous code. */
+export const totpRegenerateRecovery = (code: string) =>
+  apiFetch<{ recovery_codes: string[] }>("/auth/totp/recovery-codes", {
     method: "POST",
     body: JSON.stringify({ code }),
   })
