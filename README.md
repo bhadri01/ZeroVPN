@@ -73,14 +73,19 @@ machines. It is deliberately **not** a full-tunnel or anonymity product.
   flows view; layout persists per user.
 - **Per-device stats & lifecycle** — bandwidth, handshake and endpoint history, and a
   timeline of every lifecycle event.
-- **TOTP & recovery codes** — RFC 6238 authenticator support with hashed recovery codes,
-  opt-in per account.
+- **TOTP & recovery codes** — RFC 6238 authenticator support with hashed recovery codes
+  (regenerable from the Security page), opt-in per account and enforced on the Google
+  sign-in path too.
+- **Session management** — an Active-sessions panel (client, IP, last activity) with
+  per-session revoke and one-click "sign out everywhere else".
 - **Installable PWA** — home-screen install, with in-app and OS notifications for
   connectivity, quota, security, and lifecycle events.
 
 **For admins**
 
 - **User control** — suspend, quota, key-rotate, and impersonate for support.
+- **Device moderation** — pause, resume, or revoke any device directly (WG peer, IP
+  lease, and DNS names torn down atomically) without touching the owner's account.
 - **Fleet** — manage WireGuard hub servers, review the session & security event log
   (logins, 2FA, impersonation), and view a fleet-wide topology.
 - **Audit & access logs** — append-only audit log (filterable, with CSV export), a
@@ -141,11 +146,14 @@ Then open:
 | ------------- | -------------------------------- |
 | Web (Vite)    | <http://localhost:6173>          |
 | API (debug)   | <http://localhost:18080>         |
-| MailHog       | <http://localhost:8025>          |
 | WireGuard     | `udp/51820` on your LAN IP       |
 
 **Register the first user — they are promoted to admin automatically.** First build/compile
 takes a few minutes; watch it with `make logs-dev`.
+
+> **Dev email:** with `ZEROVPN_SMTP__HOST` unset (the default), the API doesn't send mail —
+> it **logs** every verification / reset link, so grab them from `make logs-dev`. Point the
+> SMTP block at a real relay (or a manually-layered MailHog) to send for real.
 
 > Note: `make migrate` and `make bootstrap-admin` target the **prod** `api` container. With
 > the `up-dev` stack the API migrates itself on boot, and you bootstrap the admin by simply
@@ -153,7 +161,7 @@ takes a few minutes; watch it with `make logs-dev`.
 
 ## Other dev loops
 
-- **Fully-dockerized** (`make up`): core stack + MailHog behind Traefik at
+- **Fully-dockerized** (`make up`): the core stack behind Traefik at
   <https://localhost> (self-signed cert). Pair with `make migrate` and
   `make bootstrap-admin EMAIL=you@example.com`.
 - **Native** (`make dev`): runs `db`/dns/mail in Docker and leaves the api, worker, and web
@@ -165,11 +173,12 @@ takes a few minutes; watch it with `make logs-dev`.
 ## Quickstart (production)
 
 App images are **built + pushed to a registry**, and the deploy host **pulls** them (never
-builds):
+builds). Every build is tagged twice — `$ZEROVPN_IMAGE_TAG` (the deploy pointer, usually
+`latest`) **and** `sha-<git commit>` for rollback:
 
 ```bash
 # Build + push images (CI does this on push to main/tags; or locally after `docker login`):
-make images && make push        # → $ZEROVPN_REGISTRY/zerovpn-*:$ZEROVPN_IMAGE_TAG
+make images && make push        # → zerovpn-*:$ZEROVPN_IMAGE_TAG  +  zerovpn-*:sha-<commit>
 
 # On the deploy host:
 make setup                      # copy .env.example → .env and generate secrets
@@ -181,9 +190,21 @@ make bootstrap-admin EMAIL=admin@your-domain
 Production differs from dev only in `.env`: `ZEROVPN_ENVIRONMENT=production`, a real
 `ZEROVPN_DOMAIN` / `ZEROVPN_PUBLIC_URL`, a real SMTP relay, `ZEROVPN_CERT_RESOLVER=le`
 (Traefik + Let's Encrypt) with `ZEROVPN_ACME_EMAIL`, and `ZEROVPN_REGISTRY` /
-`ZEROVPN_IMAGE_TAG`. `make up-prod` uses the base compose alone, so MailHog never comes up.
-The API refuses to boot in production with `CHANGEME` secrets or a placeholder domain. See
-the [runbook](docs/runbook.md#dev-vs-prod-isolation) for the full dev/prod table.
+`ZEROVPN_IMAGE_TAG`. The API refuses to boot in production with `CHANGEME` secrets or a
+placeholder domain, and runs its migrations itself on startup. See the
+[runbook](docs/runbook.md#dev-vs-prod-isolation) for the full dev/prod table.
+
+> **Redeploys need `git pull` on the host, not just new images.** The reverse-proxy
+> routing (`deploy/traefik-dynamic.yml`), the compose files, and the Makefile are read
+> from the host's checkout — images alone don't carry them. A routine update is:
+>
+> ```bash
+> git pull && make up-prod && make smoke
+> ```
+>
+> **Rollback:** set `ZEROVPN_IMAGE_TAG=sha-<last-good-commit>` in the host's `.env` and
+> re-run `make up-prod`. Migrations are additive, so older images run fine against a
+> newer schema.
 
 ## Configuration
 
@@ -191,6 +212,12 @@ All config is environment-driven — see [`.env.example`](.env.example) for ever
 by concern (core, database, SMTP, WireGuard, TLS, registry). Secrets are generated by
 [`./scripts/init-secrets.sh`](scripts/init-secrets.sh) (run via `make setup`): the session
 secret, the database password, and the **key-encryption key (KEK)**.
+
+Two knobs worth knowing about up front: `ZEROVPN_SESSION_IDLE_MINUTES` sets the sign-in
+idle window (defaults: 7 days in production, 30 in dev — every authenticated request
+refreshes it), and the mail-sending auth endpoints (register / resend-verify /
+forgot-password) are always rate-limited per address **and** per client IP to protect
+your SMTP relay's quota.
 
 > ⚠️ **Guard the KEK.** It seals column-level secrets (TOTP seeds and WireGuard device &
 > server private keys). There is no HSM and no automatic rotation — if you lose it, those
@@ -206,9 +233,9 @@ Run `make help` for the live list. The essentials:
 | `make up-dev`             | Dev containers: api/worker/web in Linux, hot-reload + real WG      |
 | `make down-dev`           | Stop the dev containers                                            |
 | `make logs-dev`           | Tail dev-container logs                                            |
-| `make up`                 | Start the fully-dockerized dev stack (core + MailHog)             |
+| `make up`                 | Start the fully-dockerized dev stack behind Traefik               |
 | `make up-prod`            | Deploy prod from pre-built images (pull, never build)             |
-| `make images` / `push`    | Build / push the app images to the registry                       |
+| `make images` / `push`    | Build / push the app images (`$ZEROVPN_IMAGE_TAG` + `sha-<commit>`) |
 | `make down`               | Stop the stack                                                     |
 | `make dev`                | Native loop: infra in Docker, app processes native                |
 | `make dev-api` / `-worker` / `-web` | Run each process natively against the dockerized infra  |
@@ -266,15 +293,18 @@ push.
 
 Please report vulnerabilities privately — see **[SECURITY.md](SECURITY.md)**. ZeroVPN is
 transparent about its limits: keys are stored server-side (not zero-knowledge), the KEK is a
-single operator-provided secret, split-tunnel only, per-email rate limiting, and the Google
-sign-in path bypasses TOTP. The full posture — including what it does and does not log — is on
-the [security section](https://bhadri01.github.io/ZeroVPN/#security) of the website.
+single operator-provided secret, and it is split-tunnel only. Login is rate-limited per
+email, the mail-sending endpoints per email + client IP, TOTP is enforced on the Google
+sign-in path too, and sessions are individually revocable from the Security page. The full
+posture — including what it does and does not log — is on the
+[security section](https://bhadri01.github.io/ZeroVPN/#security) of the website.
 
 ## Roadmap
 
-Shipped today: device management, live telemetry, topology/flows, TOTP, admin console, audit
-logging, quotas, Google OAuth, PWA. On the roadmap: automatic multi-region failover, webhooks,
-OIDC/SAML SSO, a native mobile app, and a stable OpenAPI v1.
+Shipped today: device management, live telemetry, topology/flows, TOTP (with Google-OAuth
+2FA and recovery-code rotation), session management, admin console with device moderation,
+audit logging, quotas, rate limiting, PWA. On the roadmap: automatic multi-region failover,
+webhooks, OIDC/SAML SSO, a native mobile app, and a stable OpenAPI v1.
 
 ## License
 

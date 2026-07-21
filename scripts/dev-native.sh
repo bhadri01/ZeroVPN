@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run a command with the dev environment rewritten for native (non-docker)
 # execution. Reads `.env` as the source of truth, then rewrites container
-# hostnames (db, worker, mailhog) to their localhost port mappings
+# hostnames (db, worker) to their localhost port mappings
 # from docker-compose.yml.
 #
 # Usage:
@@ -9,7 +9,7 @@
 #   ./scripts/dev-native.sh cargo run -p zerovpn-worker
 #   ./scripts/dev-native.sh env | grep ZEROVPN_       # inspect resolved values
 #
-# Requires `make dev` to be running (db, mailhog, dnsmasq up; api +
+# Requires `make dev` to be running (db, dnsmasq up; api +
 # worker stopped).
 set -euo pipefail
 cd "$(dirname "$0")/.."

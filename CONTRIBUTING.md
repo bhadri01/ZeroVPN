@@ -11,8 +11,9 @@ we expect before a change is merged.
    make setup
    make up-dev      # Linux containers, hot-reload, real userspace WireGuard tunnel
    ```
-   Register the first account to become admin. Web is at <http://localhost:6173>, the API at
-   <http://localhost:18080>, and MailHog (dev mail) at <http://localhost:8025>.
+   Register the first account to become admin. Web is at <http://localhost:6173> and the API
+   at <http://localhost:18080>. With no SMTP configured (the dev default) the API **logs**
+   verification / reset links instead of sending mail — grab them from `make logs-dev`.
 3. For the fastest inner loop, run the app processes natively with `make dev` +
    `make dev-api` / `make dev-worker` / `make dev-web`.
 
@@ -27,12 +28,18 @@ under `docs/`.
 Everything must pass:
 
 ```bash
-make check    # cargo check + clippy (-D warnings) + tsc --noEmit + eslint
+make check    # cargo check + clippy (-D warnings) + tsc -b + eslint
 make test     # workspace unit tests
 ```
 
+> Frontend type-checking gotcha: the web root `tsconfig.json` is solution-style, so a bare
+> `tsc --noEmit` checks **nothing** and exits green. Always use `pnpm tsc -b` (what
+> `make check` and the image build run).
+
 For changes that touch SQL, run `make test-it` (DB integration tests — needs Docker) and, if
-you changed a query, regenerate the offline data with `make sqlx-prepare`.
+you changed a query, regenerate the offline data with `make sqlx-prepare`. For dead-code
+hygiene in the frontend, `cd web && pnpm dlx knip` should stay clean (config in
+`web/knip.jsonc`).
 
 ### Formatting — read this
 
