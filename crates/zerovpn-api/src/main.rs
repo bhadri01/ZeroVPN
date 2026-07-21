@@ -38,6 +38,16 @@ fn env_bool(key: &str) -> Option<bool> {
     }
 }
 
+/// Session idle window in minutes. `ZEROVPN_SESSION_IDLE_MINUTES` wins when
+/// set to a positive integer; otherwise 7 days in production, 30 in dev.
+fn session_idle_minutes(is_production: bool) -> i64 {
+    env::var("ZEROVPN_SESSION_IDLE_MINUTES")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .filter(|m: &i64| *m > 0)
+        .unwrap_or(if is_production { 7 * 24 * 60 } else { 30 * 24 * 60 })
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
@@ -76,14 +86,12 @@ async fn main() -> Result<()> {
     // `secure: true` requires the cookie to ride only over HTTPS. Traefik
     // terminates TLS for us in production; in dev we serve over plaintext
     // localhost so the flag is off.
-    // Session idle window: 30 minutes in prod (snappy auth turnover), 30
-    // days in dev so a cargo restart or an overnight tab doesn't kick you
-    // back to /login. Each authenticated request refreshes the window.
-    let idle_expiry = if is_production {
-        time::Duration::minutes(30)
-    } else {
-        time::Duration::days(30)
-    };
+    // Session idle window — every authenticated request refreshes it, so
+    // this is "signed out after N of no activity", not an absolute cap.
+    // Operators tune it via ZEROVPN_SESSION_IDLE_MINUTES; defaults are
+    // 7 days in production and 30 days in dev (so a cargo restart or an
+    // overnight tab doesn't kick you back to /login).
+    let idle_expiry = time::Duration::minutes(session_idle_minutes(is_production));
     let session_layer = SessionManagerLayer::new(session_store)
         .with_secure(is_production)
         .with_http_only(true)
@@ -647,5 +655,27 @@ fn event_kind(e: &Event) -> &'static str {
         Event::ServerSample { .. } => "server_sample",
         Event::DataChanged { .. } => "data_changed",
         Event::Notify { .. } => "notify",
+    }
+}
+
+#[cfg(test)]
+mod session_idle_tests {
+    use super::session_idle_minutes;
+
+    // Single test so the env-var mutation can't race a parallel case.
+    #[test]
+    fn env_override_and_defaults() {
+        const KEY: &str = "ZEROVPN_SESSION_IDLE_MINUTES";
+        unsafe { std::env::remove_var(KEY) };
+        assert_eq!(session_idle_minutes(true), 7 * 24 * 60);
+        assert_eq!(session_idle_minutes(false), 30 * 24 * 60);
+        unsafe { std::env::set_var(KEY, "10080") };
+        assert_eq!(session_idle_minutes(true), 10080);
+        // Garbage / non-positive values fall back to the defaults.
+        unsafe { std::env::set_var(KEY, "0") };
+        assert_eq!(session_idle_minutes(true), 7 * 24 * 60);
+        unsafe { std::env::set_var(KEY, "soon") };
+        assert_eq!(session_idle_minutes(false), 30 * 24 * 60);
+        unsafe { std::env::remove_var(KEY) };
     }
 }
