@@ -35,27 +35,48 @@ pub struct DestinationIpRow {
     pub created_at: OffsetDateTime,
 }
 
-/// Insert a new destination record. `device_id` / `user_id` may be
+/// A destination record to insert. `device_id` / `user_id` may be
 /// `None` if the mapping couldn't be resolved at write time.
 /// Geo fields are optional; they are populated by the GeoIP enrichment
 /// pipeline at ingest time.
+#[derive(Debug)]
+pub struct NewDestinationIp<'a> {
+    pub device_id: Option<Uuid>,
+    pub user_id: Option<Uuid>,
+    pub src_ip: &'a str,
+    pub src_port: Option<i32>,
+    pub dst_ip: &'a str,
+    pub dst_port: Option<i32>,
+    pub proto: Option<&'a str>,
+    pub bytes_in: i64,
+    pub bytes_out: i64,
+    pub started_at: OffsetDateTime,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub country_code: Option<String>,
+    pub country_name: Option<String>,
+    pub city_name: Option<String>,
+}
+
 pub async fn insert(
     pool: &PgPool,
-    device_id: Option<Uuid>,
-    user_id: Option<Uuid>,
-    src_ip: &str,
-    src_port: Option<i32>,
-    dst_ip: &str,
-    dst_port: Option<i32>,
-    proto: Option<&str>,
-    bytes_in: i64,
-    bytes_out: i64,
-    started_at: OffsetDateTime,
-    latitude: Option<f64>,
-    longitude: Option<f64>,
-    country_code: Option<String>,
-    country_name: Option<String>,
-    city_name: Option<String>,
+    NewDestinationIp {
+        device_id,
+        user_id,
+        src_ip,
+        src_port,
+        dst_ip,
+        dst_port,
+        proto,
+        bytes_in,
+        bytes_out,
+        started_at,
+        latitude,
+        longitude,
+        country_code,
+        country_name,
+        city_name,
+    }: NewDestinationIp<'_>,
 ) -> sqlx::Result<i64> {
     let row: (i64,) = sqlx::query_as(
         r#"INSERT INTO destination_ips
@@ -131,89 +152,3 @@ pub async fn list_for_user(
     .await
 }
 
-/// Per-device traffic with date range filtering (admin explorer).
-/// Returns flows between `from` and `to` timestamps, newest first.
-/// `limit` clamped to 500; `offset` allows pagination.
-pub async fn list_for_device_by_date_range(
-    pool: &PgPool,
-    device_id: Uuid,
-    from: OffsetDateTime,
-    to: OffsetDateTime,
-    limit: i64,
-    offset: i64,
-) -> sqlx::Result<Vec<DestinationIpRow>> {
-    let limit = limit.clamp(1, 500);
-    let offset = offset.max(0);
-    sqlx::query_as::<_, DestinationIpRow>(
-        r#"SELECT id, device_id, user_id, src_ip, src_port, dst_ip, dst_port,
-                  proto, bytes_in, bytes_out, latitude, longitude,
-                  country_code, country_name, city_name,
-                  started_at, ended_at, created_at
-             FROM destination_ips
-            WHERE device_id = $1
-              AND created_at >= $2
-              AND created_at < $3
-            ORDER BY created_at DESC, id DESC
-            LIMIT $4
-            OFFSET $5"#,
-    )
-    .bind(device_id)
-    .bind(from)
-    .bind(to)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
-}
-
-/// Count flows for a device within a date range (for pagination).
-pub async fn count_for_device_by_date_range(
-    pool: &PgPool,
-    device_id: Uuid,
-    from: OffsetDateTime,
-    to: OffsetDateTime,
-) -> sqlx::Result<i64> {
-    let row: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*) FROM destination_ips
-            WHERE device_id = $1
-              AND created_at >= $2
-              AND created_at < $3"#,
-    )
-    .bind(device_id)
-    .bind(from)
-    .bind(to)
-    .fetch_one(pool)
-    .await?;
-    Ok(row.0)
-}
-
-/// Per-device traffic aggregated by destination country (for heatmap).
-/// Returns the top destination countries by flow count or bytes.
-pub async fn list_destinations_by_country_for_device(
-    pool: &PgPool,
-    device_id: Uuid,
-    from: OffsetDateTime,
-    to: OffsetDateTime,
-    limit: i64,
-) -> sqlx::Result<Vec<(String, String, i64, i64)>> {
-    // Returns: (country_code, country_name, flow_count, total_bytes)
-    let limit = limit.clamp(1, 100);
-    sqlx::query_as(
-        r#"SELECT country_code, country_name, COUNT(*) as flow_count,
-                  SUM(bytes_in + bytes_out) as total_bytes
-             FROM destination_ips
-            WHERE device_id = $1
-              AND created_at >= $2
-              AND created_at < $3
-              AND country_code IS NOT NULL
-            GROUP BY country_code, country_name
-            ORDER BY total_bytes DESC, flow_count DESC
-            LIMIT $4"#,
-    )
-    .bind(device_id)
-    .bind(from)
-    .bind(to)
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-}

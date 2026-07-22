@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { IconDownload, IconSearch, IconX } from "@tabler/icons-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
+
+import { useResettingPage } from "@/hooks/useResettingPage"
 
 import { CopyableCode } from "@/components/CopyableCode"
 import { PageStagger, StaggerItem } from "@/components/motion"
@@ -54,7 +56,6 @@ const TARGET_TYPE_OPTIONS = [
 ]
 
 export function AuditLogPage() {
-  const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(50)
 
   const [actionFilter, setActionFilter] = useState("")
@@ -63,11 +64,18 @@ export function AuditLogPage() {
   const [targetType, setTargetType] = useState<string>("all")
   const [range, setRange] = useState<RangeChoice>("all")
 
-  // Reset to page 0 whenever a filter changes — pagination cursor on
-  // the unfiltered set isn't meaningful for the filtered one.
-  useEffect(() => {
-    setPage(0)
-  }, [actionFilter, actorIdFilter, targetIdFilter, targetType, range, pageSize])
+  // Page 0 whenever a filter changes — pagination cursor on the
+  // unfiltered set isn't meaningful for the filtered one.
+  const [page, setPage] = useResettingPage(
+    JSON.stringify([
+      actionFilter,
+      actorIdFilter,
+      targetIdFilter,
+      targetType,
+      range,
+      pageSize,
+    ])
+  )
 
   const filters = useMemo<AdminAuditFilters>(
     () => ({
@@ -77,7 +85,7 @@ export function AuditLogPage() {
       target_type: targetType === "all" ? undefined : targetType,
       since: rangeToSince(range),
     }),
-    [actionFilter, actorIdFilter, targetIdFilter, targetType, range],
+    [actionFilter, actorIdFilter, targetIdFilter, targetType, range]
   )
 
   const filtersActive =
@@ -109,7 +117,7 @@ export function AuditLogPage() {
         <PageHead
           eyebrow="Admin · 03"
           title="Audit log"
-          sub={`${total.toLocaleString()} entries${filtersActive ? " (filtered)" : ""} · retained indefinitely · IP + UA captured · CSV export honors filters`}
+          sub={`${total.toLocaleString()} entries${filtersActive ? " (filtered)" : ""} · retained per policy (30d default) · IP + UA captured · CSV export honors filters`}
           right={
             <Button asChild variant="outline" size="sm">
               <a href={adminAuditCsvUrl(filters, 5000)} download="audit.csv">
@@ -123,10 +131,14 @@ export function AuditLogPage() {
 
       <StaggerItem>
         <Panel flush>
-          <div className="border-border flex flex-wrap items-end gap-2 border-b p-2">
-            <FilterField label="Action" htmlFor="audit-action" widthClass="w-56">
+          <div className="flex flex-wrap items-end gap-2 border-b border-border p-2">
+            <FilterField
+              label="Action"
+              htmlFor="audit-action"
+              widthClass="w-56"
+            >
               <div className="relative">
-                <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
+                <IconSearch className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="audit-action"
                   value={actionFilter}
@@ -136,7 +148,11 @@ export function AuditLogPage() {
                 />
               </div>
             </FilterField>
-            <FilterField label="Actor user-id" htmlFor="audit-actor" widthClass="w-64">
+            <FilterField
+              label="Actor user-id"
+              htmlFor="audit-actor"
+              widthClass="w-64"
+            >
               <Input
                 id="audit-actor"
                 value={actorIdFilter}
@@ -145,7 +161,11 @@ export function AuditLogPage() {
                 className="h-8 font-mono text-xs"
               />
             </FilterField>
-            <FilterField label="Target id" htmlFor="audit-target" widthClass="w-64">
+            <FilterField
+              label="Target id"
+              htmlFor="audit-target"
+              widthClass="w-64"
+            >
               <Input
                 id="audit-target"
                 value={targetIdFilter}
@@ -154,11 +174,12 @@ export function AuditLogPage() {
                 className="h-8 font-mono text-xs"
               />
             </FilterField>
-            <FilterField label="Target type" htmlFor="audit-tt" widthClass="w-36">
-              <Select
-                value={targetType}
-                onValueChange={setTargetType}
-              >
+            <FilterField
+              label="Target type"
+              htmlFor="audit-tt"
+              widthClass="w-36"
+            >
+              <Select value={targetType} onValueChange={setTargetType}>
                 <SelectTrigger id="audit-tt" className="h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
@@ -225,15 +246,15 @@ export function AuditLogPage() {
                 <tbody>
                   {items.map((row) => (
                     <tr key={row.id}>
-                      <td className="text-muted-foreground font-mono text-xs">
+                      <td className="font-mono text-xs text-muted-foreground">
                         <RelativeTime value={row.created_at} />
                       </td>
-                      <td className="text-muted-foreground font-mono text-xs">
+                      <td className="font-mono text-xs text-muted-foreground">
                         {row.actor_user_id ? (
                           <button
                             type="button"
                             onClick={() => setActorIdFilter(row.actor_user_id!)}
-                            className="hover:text-foreground transition-colors"
+                            className="transition-colors hover:text-foreground"
                             title="Filter by this actor"
                           >
                             {row.actor_user_id.slice(0, 8)}
@@ -257,7 +278,7 @@ export function AuditLogPage() {
                           <button
                             type="button"
                             onClick={() => setTargetIdFilter(row.target_id!)}
-                            className="text-muted-foreground hover:text-foreground ml-1 transition-colors"
+                            className="ml-1 text-muted-foreground transition-colors hover:text-foreground"
                             title="Filter by this target"
                           >
                             · {String(row.target_id).slice(0, 8)}
@@ -272,7 +293,7 @@ export function AuditLogPage() {
                         )}
                       </td>
                       <td
-                        className="text-muted-foreground hidden max-w-[260px] truncate font-mono text-[11px] lg:table-cell"
+                        className="hidden max-w-[260px] truncate font-mono text-[11px] text-muted-foreground lg:table-cell"
                         title={row.user_agent ?? undefined}
                       >
                         {row.user_agent ?? (
@@ -291,7 +312,7 @@ export function AuditLogPage() {
                     <tr>
                       <td
                         colSpan={7}
-                        className="text-muted-foreground py-8 text-center font-mono text-sm"
+                        className="py-8 text-center font-mono text-sm text-muted-foreground"
                       >
                         {filtersActive
                           ? "No entries match the current filters."
@@ -333,7 +354,7 @@ function FilterField({
     <div className={`flex flex-col gap-1 ${widthClass}`}>
       <label
         htmlFor={htmlFor}
-        className="text-muted-foreground font-mono text-[10px] uppercase tracking-wide"
+        className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase"
       >
         {label}
       </label>

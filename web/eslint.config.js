@@ -20,4 +20,13 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // shadcn-style primitives co-locate components with their cva variant
+    // exports (buttonVariants, …) and context hooks (useSidebar) by design;
+    // HMR falling back to a full reload for these rarely-edited files is fine.
+    files: ['src/components/ui/**/*.tsx'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

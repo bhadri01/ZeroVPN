@@ -5,9 +5,11 @@ SHELL := /bin/bash
 # SMTP host, WG backend, logging) live in `.env`; optional service groups
 # are gated by compose profiles.
 COMPOSE     := docker compose
-# MailHog lives in docker-compose.mail.yml (dev-only), layered into the dev
-# targets below but never into `make up-prod` — so the base compose is pure prod.
-COMPOSE_DEV := $(COMPOSE) -f docker-compose.yml -f docker-compose.mail.yml --profile dev
+# Dev sends real mail through the relay configured in `.env`
+# (ZEROVPN_SMTP__*), same as prod. To catch mail locally instead, layer
+# `-f docker-compose.mail.yml` (MailHog) back into the dev targets and point
+# ZEROVPN_SMTP__HOST=mailhog / PORT=1025.
+COMPOSE_DEV := $(COMPOSE) -f docker-compose.yml --profile dev
 # App images (api/worker/frontend) are pre-built + pushed to a
 # registry; the base compose references them by tag (image:). This overlay
 # re-adds `build:` so they can be built/pushed locally or in CI. A *deploy* host
@@ -17,7 +19,7 @@ COMPOSE_BUILD := $(COMPOSE) -f docker-compose.yml -f docker-compose.build.yml
 # Dev *containers*: run api/worker/web in Linux with hot-reload + a real
 # (userspace) WireGuard tunnel. The overlay gates the prod api/worker/frontend/
 # traefik behind the `prod` profile so only the *-dev services run.
-COMPOSE_DEVCTR := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.mail.yml --profile dev
+COMPOSE_DEVCTR := $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml --profile dev
 
 .PHONY: help
 help: ## Show this help
@@ -42,21 +44,37 @@ setup: ## One-time: copy .env template + generate secrets (build/pull happens in
 	@echo "ZEROVPN_REGISTRY/ZEROVPN_IMAGE_TAG in .env, then 'make up-prod' (pulls)."
 
 .PHONY: up
-up: ## Start the dev stack locally (core + MailHog); builds images if missing
-	$(COMPOSE_BUILD) -f docker-compose.mail.yml up -d
+up: ## Start the dev stack locally; builds images if missing
+	$(COMPOSE_BUILD) up -d
 
 .PHONY: up-prod
 up-prod: ## Deploy the prod stack from PRE-BUILT images (pull, never build)
 	$(COMPOSE) pull
 	$(COMPOSE) up -d
 
+# Registry + git SHA for versioned image tags. Every build is tagged both
+# with $ZEROVPN_IMAGE_TAG (deploy pointer, usually `latest`) and with the
+# commit SHA — so a bad deploy rolls back by setting ZEROVPN_IMAGE_TAG=sha-…
+# in the host's .env and re-running `make up-prod`.
+REGISTRY  := $(or $(shell grep -E '^ZEROVPN_REGISTRY=' .env 2>/dev/null | cut -d= -f2),ghcr.io/bhadri01)
+BASE_TAG  := $(or $(shell grep -E '^ZEROVPN_IMAGE_TAG=' .env 2>/dev/null | cut -d= -f2),latest)
+GIT_SHA   := $(shell git rev-parse --short HEAD)
+APP_IMAGES := zerovpn-api zerovpn-worker zerovpn-frontend
+
 .PHONY: images
-images: ## Build the app images and tag them as $ZEROVPN_REGISTRY/...:$ZEROVPN_IMAGE_TAG
+images: ## Build the app images; tags: $ZEROVPN_IMAGE_TAG + sha-<git SHA>
 	$(COMPOSE_BUILD) build
+	@for img in $(APP_IMAGES); do \
+		docker tag $(REGISTRY)/$$img:$(BASE_TAG) $(REGISTRY)/$$img:sha-$(GIT_SHA); \
+		echo "tagged $(REGISTRY)/$$img:sha-$(GIT_SHA)"; \
+	done
 
 .PHONY: push
-push: ## Push the built app images to the registry (docker login first)
+push: ## Push the built app images (both tags) to the registry (docker login first)
 	$(COMPOSE_BUILD) push
+	@for img in $(APP_IMAGES); do \
+		docker push $(REGISTRY)/$$img:sha-$(GIT_SHA); \
+	done
 
 .PHONY: down
 down: ## Stop the stack
@@ -83,11 +101,11 @@ logs-dev: ## Tail dev-container logs
 	$(COMPOSE_DEVCTR) logs -f --tail=120
 
 # ── Native dev loop ─────────────────────────────────────────────────────────
-# Run db/dnsmasq/mailhog in docker, but run api/worker/frontend
+# Run db/dnsmasq in docker, but run api/worker/frontend
 # natively for fast iteration (cargo incremental, Vite HMR). The api +
 # worker container slots are kept stopped so they don't fight for ports.
 
-DEV_INFRA := db dnsmasq mailhog
+DEV_INFRA := db dnsmasq
 
 .PHONY: dev
 dev: ## Native dev: start infra in docker, leave api/worker/frontend for cargo + pnpm
@@ -165,7 +183,10 @@ smoke: ## Run end-to-end smoke test against the running stack
 check: ## cargo check + clippy + tsc + eslint
 	cargo check --workspace --all-targets
 	cargo clippy --workspace --all-targets -- -D warnings
-	cd web && pnpm tsc --noEmit && pnpm lint
+	# tsc -b, not --noEmit: the root tsconfig is solution-style (files: [],
+	# project references), so a bare `tsc --noEmit` checks nothing. -b is
+	# what the frontend image build runs.
+	cd web && pnpm tsc -b && pnpm lint
 
 .PHONY: fmt
 fmt: ## Format code

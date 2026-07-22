@@ -385,7 +385,8 @@ pub async fn get_totp_material(
     pool: &PgPool,
     user_id: Uuid,
 ) -> sqlx::Result<Option<(Vec<u8>, Vec<String>)>> {
-    let row: Option<(Option<Vec<u8>>, Option<Vec<String>>)> = sqlx::query_as(
+    type TotpRow = (Option<Vec<u8>>, Option<Vec<String>>);
+    let row: Option<TotpRow> = sqlx::query_as(
         "SELECT totp_secret_encrypted, totp_recovery_codes_hashed FROM users WHERE id = $1",
     )
     .bind(user_id)
@@ -452,6 +453,7 @@ pub async fn soft_delete(pool: &PgPool, user_id: Uuid) -> sqlx::Result<()> {
 ///   - `audit_logs` (actor + target), `access_logs`, `destination_ips` —
 ///     `ON DELETE SET NULL`, so they'd be anonymized-not-removed
 ///   - `failed_logins` — keyed by email (CITEXT), no FK
+///
 /// Everything runs in one transaction so a failure leaves the user intact.
 pub async fn hard_delete(pool: &PgPool, user_id: Uuid, email: &str) -> sqlx::Result<()> {
     let mut tx = pool.begin().await?;
@@ -634,7 +636,18 @@ pub async fn admin_stats(pool: &PgPool) -> sqlx::Result<AdminStats> {
               (SELECT COUNT(*) FROM devices d
                  JOIN users u ON u.id = d.user_id
                 WHERE u.deleted_at IS NULL AND d.status <> 'revoked')::BIGINT
-                AS devices_total
+                AS devices_total,
+              -- Devices online *now*, using the same rule the frontend's
+              -- connState() applies (active + handshake within the 180s
+              -- window). DB-backed so the admin KPI is correct on first
+              -- paint and survives refresh, instead of depending on a live
+              -- WS tick that starts empty each session.
+              (SELECT COUNT(*) FROM devices d
+                 JOIN users u ON u.id = d.user_id
+                WHERE u.deleted_at IS NULL
+                  AND d.status = 'active'
+                  AND d.last_handshake_at > now() - interval '180 seconds')::BIGINT
+                AS online_now
            FROM users"#,
     )
     .fetch_one(pool)
@@ -649,6 +662,7 @@ pub struct AdminStats {
     pub suspended: i64,
     pub pending_verification: i64,
     pub devices_total: i64,
+    pub online_now: i64,
 }
 
 pub async fn admin_set_status(

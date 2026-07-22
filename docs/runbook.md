@@ -9,12 +9,11 @@ ZeroVPN ships a prod `docker-compose.yml` + single `.env`. Dev vs. prod is drive
 | Compose invocation | `docker compose --profile dev up -d` (via `make up`) | `docker compose up -d` (via `make up-prod`) |
 | Env file | `.env` (from `.env.example`) — `ZEROVPN_ENVIRONMENT=dev` | `.env` (same file, edited) — `ZEROVPN_ENVIRONMENT=production` |
 | TLS | self-signed (`ZEROVPN_CERT_RESOLVER` empty → Traefik default cert) | Let's Encrypt (`ZEROVPN_CERT_RESOLVER=le` in `.env`) |
-| Exposed host ports | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 + 8025 (MailHog, dev only) | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 (no MailHog) |
-| Mailer | MailHog (`docker-compose.mail.yml`, dev only) | real SMTP relay (set `ZEROVPN_SMTP__*` in `.env`) |
+| Exposed host ports | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 | 80, 443, 51820/udp + loopback-only 18080/5555/55432/56379 |
+| Mailer | none by default — the api **logs** verification/reset links (`ZEROVPN_SMTP__HOST` empty); optionally layer `docker-compose.mail.yml` (MailHog) by hand | real SMTP relay (set `ZEROVPN_SMTP__*` in `.env`) |
 | WG backend | userspace boringtun (in api-dev) | userspace boringtun (`shell` backend, set in the prod compose; api is the WG host — no `wg` container, no host module) |
 | Session cookie | not Secure (plaintext localhost) | Secure flag set (api enforces when `ZEROVPN_ENVIRONMENT=production`) |
 
-`make up` adds MailHog via `--profile dev`; `make up-prod` omits it.
 
 ## First-time setup (dev)
 
@@ -27,14 +26,14 @@ make migrate
 make bootstrap-admin EMAIL=admin@example.com   # interactive password prompt
 ```
 
-The bootstrap admin lands as `must_change_password=TRUE` and is forced through the email-link reset on first login (MailHog catches mail at <http://localhost:8025>).
+The bootstrap admin lands as `must_change_password=TRUE` and is forced through the email-link reset on first login. With no SMTP configured (the dev default) the api logs the reset link — `make logs` / `make logs-dev`.
 
 ## Fast dev loop (native cargo + Vite HMR)
 
-`make up` runs everything in docker — fine for verifying the prod-shape build, but slow when iterating on code (every change = `docker compose build`). For fast iteration, run only the *infrastructure* (db, dnsmasq, mailhog) in docker and run `api` / `worker` / `frontend` natively. Frontend gets Vite HMR (<100 ms); backend uses cargo's incremental compile (~3–10 s after a small change).
+`make up` runs everything in docker — fine for verifying the prod-shape build, but slow when iterating on code (every change = `docker compose build`). For fast iteration, run only the *infrastructure* (db, dnsmasq) in docker and run `api` / `worker` / `frontend` natively. Frontend gets Vite HMR (<100 ms); backend uses cargo's incremental compile (~3–10 s after a small change).
 
 ```
-make dev                                    # one-time: stops dockerized api/worker/frontend, starts db/redis/mailhog/dnsmasq
+make dev                                    # one-time: stops dockerized api/worker/frontend, starts db/dnsmasq
 make dev-migrate                            # run migrations (only first time, or after a new migration)
 make dev-bootstrap-admin EMAIL=you@example.com   # only first time
 
@@ -44,11 +43,11 @@ make dev-worker                             # cargo run -p zerovpn-worker → tc
 make dev-web                                # vite dev server          → http://localhost:6173
 ```
 
-Open <http://localhost:6173> in your browser. The Vite dev server proxies `/api/*` and `/ws/*` to `127.0.0.1:8080`, so the api round-trip works transparently. MailHog stays at <http://localhost:8025>.
+Open <http://localhost:6173> in your browser. The Vite dev server proxies `/api/*` and `/ws/*` to `127.0.0.1:8080`, so the api round-trip works transparently.
 
 How it works:
 
-- [scripts/dev-native.sh](../scripts/dev-native.sh) sources `.env` then rewrites the docker-network hostnames (`db`, `redis`, `worker`, `mailhog`) to their `localhost:<host-port>` mappings from `docker-compose.yml`. Single source of truth — change a secret in `.env` and it flows through.
+- [scripts/dev-native.sh](../scripts/dev-native.sh) sources `.env` then rewrites the docker-network hostnames (`db`, `worker`) to their `localhost:<host-port>` mappings from `docker-compose.yml`. Single source of truth — change a secret in `.env` and it flows through.
 - The dockerized api/worker/frontend services are kept stopped while you iterate; ports 8080 and 5555 are free for the host processes to bind.
 - `make dev-down` stops the infra. To go back to the fully-dockerized loop: `make up`.
 
@@ -69,7 +68,7 @@ git clone <this repo>
 cd zerovpn
 make setup                                   # copies .env.example → .env, generates secrets
 $EDITOR .env                                 # see "going to production" block at the top of .env
-make up-prod                                 # docker compose pull && up -d (pulls pre-built images; no MailHog)
+make up-prod                                 # docker compose pull && up -d (pulls pre-built images)
 make migrate
 make bootstrap-admin EMAIL=admin@yourdomain
 ```
@@ -228,5 +227,5 @@ For zero-downtime upgrades, drain peers off this server first by toggling **main
 - api / worker: `read_only: true`, `tmpfs: /tmp`, `cap_drop: [ALL]`, `no-new-privileges`. Distroless non-root.
 - traefik: `cap_drop: [ALL]`, `cap_add: [NET_BIND_SERVICE]`, `no-new-privileges`.
 - frontend (nginx): `cap_drop: [ALL]`, `cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]`, tmpfs for `/var/cache/nginx` + `/var/run`.
-- db / redis: untouched (need full FS access for their data dirs).
+- db: untouched (needs full FS access for its data dir).
 - api (WireGuard host): `cap_add: [NET_ADMIN]` + `/dev/net/tun` for the userspace tunnel — so it is NOT `cap_drop:[ALL]`/`read_only` like a pure app service. The worker shares its netns for stats.

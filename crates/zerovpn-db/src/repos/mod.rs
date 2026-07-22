@@ -12,6 +12,7 @@ pub mod session_events;
 pub mod servers;
 pub mod topology_positions;
 pub mod user_prefs;
+pub mod user_sessions;
 pub mod users;
 pub mod verification_tokens;
 pub mod destination_ips;

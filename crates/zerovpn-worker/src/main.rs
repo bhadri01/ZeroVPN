@@ -88,8 +88,8 @@ async fn main() -> Result<()> {
     }
 
     // Destination ingest: accept JSON flow events and persist them.
-    if let Ok(bind) = std::env::var("ZEROVPN_INGEST__DEST_BIND") {
-        if !bind.is_empty() {
+    if let Ok(bind) = std::env::var("ZEROVPN_INGEST__DEST_BIND")
+        && !bind.is_empty() {
             let pool = pool.clone();
             tokio::spawn(async move {
                 if let Err(e) = destination_ingest::run(pool, &bind).await {
@@ -97,7 +97,6 @@ async fn main() -> Result<()> {
                 }
             });
         }
-    }
 
     // Bandwidth aggregator task — rolls up closed hours every 5 minutes
     // and closed days at 00:05 UTC.

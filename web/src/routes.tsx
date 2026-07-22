@@ -1,3 +1,6 @@
+/* eslint-disable react-refresh/only-export-components -- route table: the
+   module's only export is `router` (not a component), so it can never fast-
+   refresh regardless; the lazy() wrappers here don't change that. */
 import { lazy } from "react"
 import { createBrowserRouter, Outlet } from "react-router"
 
@@ -7,116 +10,117 @@ import { PublicRouteError, RouteError } from "@/components/RouteError"
 import {
   AdminRoute,
   DeviceDetailRoute,
+  HomeRedirect,
   ProtectedRoute,
   useBootstrapAuth,
 } from "@/lib/auth-guard"
 
 // All pages lazy-loaded to keep the entry chunk small. The DashboardLayout
 // wraps the lazy load with its own Suspense fallback (skeleton).
-const LandingPage = lazy(() =>
-  import("@/pages/public/Landing").then((m) => ({ default: m.LandingPage })),
-)
 const LoginPage = lazy(() =>
-  import("@/pages/public/Login").then((m) => ({ default: m.LoginPage })),
+  import("@/pages/public/Login").then((m) => ({ default: m.LoginPage }))
 )
 const RegisterPage = lazy(() =>
-  import("@/pages/public/Register").then((m) => ({ default: m.RegisterPage })),
+  import("@/pages/public/Register").then((m) => ({ default: m.RegisterPage }))
 )
 const VerifyEmailPage = lazy(() =>
   import("@/pages/public/VerifyEmail").then((m) => ({
     default: m.VerifyEmailPage,
-  })),
+  }))
 )
 const ForgotPasswordPage = lazy(() =>
   import("@/pages/public/ForgotPassword").then((m) => ({
     default: m.ForgotPasswordPage,
-  })),
+  }))
 )
 const ResetPasswordPage = lazy(() =>
   import("@/pages/public/ResetPassword").then((m) => ({
     default: m.ResetPasswordPage,
-  })),
+  }))
 )
 const GoogleCallbackPage = lazy(() =>
   import("@/pages/public/GoogleCallback").then((m) => ({
     default: m.GoogleCallbackPage,
-  })),
+  }))
 )
 
 const DashboardPage = lazy(() =>
-  import("@/pages/app/Dashboard").then((m) => ({ default: m.DashboardPage })),
+  import("@/pages/app/Dashboard").then((m) => ({ default: m.DashboardPage }))
 )
 const DevicesPage = lazy(() =>
-  import("@/pages/app/Devices").then((m) => ({ default: m.DevicesPage })),
+  import("@/pages/app/Devices").then((m) => ({ default: m.DevicesPage }))
 )
 const FinderPage = lazy(() =>
-  import("@/pages/app/Finder").then((m) => ({ default: m.FinderPage })),
+  import("@/pages/app/Finder").then((m) => ({ default: m.FinderPage }))
 )
 const TopologyPage = lazy(() =>
-  import("@/pages/app/Topology").then((m) => ({ default: m.TopologyPage })),
+  import("@/pages/app/Topology").then((m) => ({ default: m.TopologyPage }))
+)
+const UserFinderPage = lazy(() =>
+  import("@/pages/app/UserFinder").then((m) => ({ default: m.UserFinderPage }))
 )
 const ActivityPage = lazy(() =>
-  import("@/pages/app/Activity").then((m) => ({ default: m.ActivityPage })),
+  import("@/pages/app/Activity").then((m) => ({ default: m.ActivityPage }))
 )
 const SettingsPage = lazy(() =>
-  import("@/pages/app/Settings").then((m) => ({ default: m.SettingsPage })),
+  import("@/pages/app/Settings").then((m) => ({ default: m.SettingsPage }))
 )
 const DeviceDetailPage = lazy(() =>
   import("@/pages/app/DeviceDetail").then((m) => ({
     default: m.DeviceDetailPage,
-  })),
+  }))
 )
 const ChangePasswordPage = lazy(() =>
   import("@/pages/app/ChangePassword").then((m) => ({
     default: m.ChangePasswordPage,
-  })),
+  }))
 )
 const AdminOverviewPage = lazy(() =>
   import("@/pages/admin/Overview").then((m) => ({
     default: m.AdminOverviewPage,
-  })),
+  }))
 )
 const UsersPage = lazy(() =>
-  import("@/pages/admin/Users").then((m) => ({ default: m.UsersPage })),
+  import("@/pages/admin/Users").then((m) => ({ default: m.UsersPage }))
 )
 const UserDetailPage = lazy(() =>
   import("@/pages/admin/UserDetail").then((m) => ({
     default: m.UserDetailPage,
-  })),
+  }))
 )
 const AdminDeviceDetailPage = lazy(() =>
   import("@/pages/admin/DeviceDetail").then((m) => ({
     default: m.AdminDeviceDetailPage,
-  })),
+  }))
 )
 const AuditLogPage = lazy(() =>
-  import("@/pages/admin/AuditLog").then((m) => ({ default: m.AuditLogPage })),
+  import("@/pages/admin/AuditLog").then((m) => ({ default: m.AuditLogPage }))
 )
 const FailedLoginsPage = lazy(() =>
   import("@/pages/admin/FailedLogins").then((m) => ({
     default: m.FailedLoginsPage,
-  })),
+  }))
 )
 const SessionsPage = lazy(() =>
-  import("@/pages/admin/Sessions").then((m) => ({ default: m.SessionsPage })),
+  import("@/pages/admin/Sessions").then((m) => ({ default: m.SessionsPage }))
 )
 const AccessLogsPage = lazy(() =>
   import("@/pages/admin/AccessLogs").then((m) => ({
     default: m.AccessLogsPage,
-  })),
+  }))
 )
 const ServersPage = lazy(() =>
-  import("@/pages/admin/Servers").then((m) => ({ default: m.ServersPage })),
+  import("@/pages/admin/Servers").then((m) => ({ default: m.ServersPage }))
 )
 const ServerDetailPage = lazy(() =>
   import("@/pages/admin/ServerDetail").then((m) => ({
     default: m.ServerDetailPage,
-  })),
+  }))
 )
 const AdminTopologyPage = lazy(() =>
   import("@/pages/admin/Topology").then((m) => ({
     default: m.AdminTopologyPage,
-  })),
+  }))
 )
 
 /**
@@ -137,7 +141,7 @@ export const router = createBrowserRouter([
         element: <PublicShell />,
         errorElement: <PublicRouteError />,
         children: [
-          { path: "/", element: <LandingPage /> },
+          { path: "/", element: <HomeRedirect /> },
           { path: "/login", element: <LoginPage /> },
           { path: "/register", element: <RegisterPage /> },
           { path: "/verify-email", element: <VerifyEmailPage /> },
@@ -185,6 +189,11 @@ export const router = createBrowserRouter([
             path: "/app/topology",
             handle: { breadcrumb: "Topology" },
             element: <TopologyPage />,
+          },
+          {
+            path: "/app/finder",
+            handle: { breadcrumb: "Finder" },
+            element: <UserFinderPage />,
           },
           {
             path: "/app/activity",

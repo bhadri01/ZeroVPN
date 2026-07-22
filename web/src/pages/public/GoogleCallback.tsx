@@ -1,16 +1,26 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router"
 import { toast } from "sonner"
 
 import {
   AuthFooterRule,
+  AuthForm,
   AuthHeading,
   AuthShell,
 } from "@/components/layout/AuthShell"
+import { Kbd } from "@/components/swiss"
+import { Button } from "@/components/ui/button"
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+} from "@/components/ui/input-otp"
+import { Label } from "@/components/ui/label"
 import {
   ApiError,
   getMyPreferences,
   googleCallback,
+  googleVerifyTotp,
   landingPath,
   me,
   type LoginResponse,
@@ -19,90 +29,88 @@ import {
 import { useAuth } from "@/stores/auth"
 
 /**
- * Google's redirect lands here with `code` + `state` query params. We
- * pass them to the backend to finalise the exchange, then drop the user
- * into `/app`. The page is intentionally minimal — no form, no controls
- * — because the API call should complete within a second; anything more
- * elaborate flickers.
+ * Google's redirect lands here with `code` + `state`. We exchange them for a
+ * session. If the account has 2FA enabled the backend returns `totp_required`
+ * and leaves a pending-TOTP session (NOT a real one) — so we show the same
+ * 6-digit prompt as password login and complete via `/auth/google/verify-totp`.
+ * The Google identity alone never bypasses 2FA.
  *
- * The OAuth `state` is single-use server-side, so duplicate posts always
- * fail the second one with "invalid or expired state". Two scenarios
- * trigger that without the dedupe below:
- *   1. React StrictMode in dev — mounts the component, runs the effect,
- *      unmounts, remounts a *fresh* instance (refs reset) and runs again.
- *      A `useRef` guard does NOT help across the remount.
- *   2. Browser refresh / back-button to the callback URL — same state
- *      param, already consumed.
- *
- * Module-scope dedupe handles both: an in-flight `Map` shares one promise
- * across the StrictMode remount, and a sessionStorage marker lets a
- * post-success refresh fall through to `/me` + navigate instead of
- * surfacing a misleading error.
+ * The OAuth `state` is single-use server-side, so the exchange must run once.
+ * Module-scope dedupe handles React StrictMode's double-mount (shared in-flight
+ * promise) and refresh/back (a sessionStorage marker). A second marker
+ * remembers "awaiting 2FA" so the prompt survives a StrictMode remount instead
+ * of falling through to a misleading "session expired".
  */
 const inflight = new Map<string, Promise<LoginResponse>>()
 const DONE_KEY_PREFIX = "oauth-state-done:"
+const TOTP_KEY_PREFIX = "oauth-state-totp:"
 
 export function GoogleCallbackPage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
   const setUser = useAuth((s) => s.setUser)
-  const [error, setError] = useState<string | null>(null)
+  // Bad callback params are derivable straight from the URL; only errors
+  // from the async exchange/verify need state.
+  const googleError = params.get("error")
+  const paramError = googleError
+    ? `Google returned: ${googleError}`
+    : !params.get("code") || !params.get("state")
+      ? "Missing code or state in callback URL"
+      : null
+  const [asyncError, setAsyncError] = useState<string | null>(null)
+  const error = asyncError ?? paramError
+  const [needsTotp, setNeedsTotp] = useState(false)
+  const [totpCode, setTotpCode] = useState("")
+  const [verifying, setVerifying] = useState(false)
 
-  useEffect(() => {
-    const code = params.get("code")
-    const state = params.get("state")
-    const googleError = params.get("error")
-
-    if (googleError) {
-      setError(`Google returned: ${googleError}`)
-      return
-    }
-    if (!code || !state) {
-      setError("Missing code or state in callback URL")
-      return
-    }
-
-    let cancelled = false
-    const goNext = async (user: PublicUser, mustChange = false) => {
-      if (cancelled) return
+  // Drop the user into the app once we hold a *real* session.
+  const finishSignIn = useCallback(
+    async (user: PublicUser, mustChange = false) => {
       setUser(user)
       toast.success(`Welcome, ${user.email}`)
       if (mustChange) {
         navigate("/app/change-password", { replace: true })
         return
       }
-      // Honor the saved "default landing" preference; fall back to the
-      // dashboard if the prefs fetch fails.
       const prefs = await getMyPreferences().catch(() => null)
-      if (cancelled) return
       navigate(prefs ? landingPath(prefs.default_landing) : "/app", {
         replace: true,
       })
-    }
+    },
+    [navigate, setUser]
+  )
+
+  useEffect(() => {
+    const code = params.get("code")
+    const state = params.get("state")
+    if (!code || !state || params.get("error")) return
+
+    let cancelled = false
     const fail = (msg: string) => {
       if (cancelled) return
-      setError(msg)
+      setAsyncError(msg)
       toast.error(msg)
     }
 
     ;(async () => {
-      // Refresh / back-button after a successful exchange: the state has
-      // already been consumed server-side, but the cookie is set — hydrate
-      // from /me and navigate. If that fails, fall through to the normal
-      // error message.
+      // Already exchanged this state (StrictMode remount, or a refresh).
       if (sessionStorage.getItem(DONE_KEY_PREFIX + state)) {
+        // Mid-2FA: re-show the prompt instead of hitting /me, which 401s on a
+        // pending-TOTP session. Survives StrictMode's remount.
+        if (sessionStorage.getItem(TOTP_KEY_PREFIX + state)) {
+          if (!cancelled) setNeedsTotp(true)
+          return
+        }
         try {
           const u = await me()
-          await goNext(u)
+          if (!cancelled) await finishSignIn(u)
         } catch {
           fail("Sign-in session expired — please try again.")
         }
         return
       }
 
-      // Share one network call across StrictMode's double-mount. Whichever
-      // mount runs first kicks off the request; the second mount awaits
-      // the same promise and both resolve to the same successful response.
+      // Share one exchange across StrictMode's double-mount.
       let promise = inflight.get(state)
       if (!promise) {
         promise = googleCallback({ code, state })
@@ -112,13 +120,17 @@ export function GoogleCallbackPage() {
       try {
         const res = await promise
         sessionStorage.setItem(DONE_KEY_PREFIX + state, "1")
-        await goNext(res.user, res.must_change_password)
+        if (cancelled) return
+        if (res.totp_required) {
+          sessionStorage.setItem(TOTP_KEY_PREFIX + state, "1")
+          setNeedsTotp(true)
+          return
+        }
+        await finishSignIn(res.user, res.must_change_password)
       } catch (e) {
-        // Drop the failed promise so a manual retry isn't stuck replaying
-        // the same error.
         inflight.delete(state)
         fail(
-          e instanceof ApiError ? e.message : "Couldn't complete Google sign-in",
+          e instanceof ApiError ? e.message : "Couldn't complete Google sign-in"
         )
       }
     })()
@@ -126,35 +138,107 @@ export function GoogleCallbackPage() {
     return () => {
       cancelled = true
     }
-  }, [params, navigate, setUser])
+  }, [params, finishSignIn])
+
+  const submitTotp = async () => {
+    const code = totpCode.trim()
+    if (code.length < 6 || verifying) return
+    setVerifying(true)
+    setAsyncError(null)
+    try {
+      const res = await googleVerifyTotp(code)
+      const state = params.get("state")
+      if (state) sessionStorage.removeItem(TOTP_KEY_PREFIX + state)
+      await finishSignIn(res.user, res.must_change_password)
+    } catch (e) {
+      setAsyncError(
+        e instanceof ApiError ? e.message : "Couldn't verify the code"
+      )
+      setVerifying(false)
+    }
+  }
 
   return (
     <AuthShell>
-      {/* Same 360px well + gap-5 stack as <AuthForm> elsewhere — without
-          the <form> wrapper since this page has no inputs. Keeps the
-          heading, status line, and footer rule aligned with the rest of
-          the auth pages instead of stretching the full right column. */}
-      <div className="flex w-[360px] max-w-full flex-col gap-5">
-        <AuthHeading eyebrow="·· Signing in">
-          {error ? "Sign-in failed." : "Finishing up…"}
-        </AuthHeading>
-        {error ? (
-          <p className="text-destructive font-mono text-xs">{error}</p>
-        ) : (
-          <p className="text-muted-foreground font-mono text-xs">
-            Completing Google authentication.
-          </p>
-        )}
-        <AuthFooterRule>
-          <button
-            type="button"
-            onClick={() => navigate("/login", { replace: true })}
-            className="hover:text-foreground"
+      {needsTotp ? (
+        <AuthForm
+          onSubmit={(e) => {
+            e.preventDefault()
+            void submitTotp()
+          }}
+        >
+          <AuthHeading eyebrow="02 · Two-factor">
+            Enter the 6-digit code.
+          </AuthHeading>
+
+          <div className="flex flex-col gap-1.5">
+            <Label className="zv-eyebrow">6-digit code</Label>
+            <InputOTP
+              maxLength={6}
+              value={totpCode}
+              onChange={(v) => setTotpCode(v)}
+              autoFocus
+            >
+              <InputOTPGroup>
+                <InputOTPSlot index={0} />
+                <InputOTPSlot index={1} />
+                <InputOTPSlot index={2} />
+                <InputOTPSlot index={3} />
+                <InputOTPSlot index={4} />
+                <InputOTPSlot index={5} />
+              </InputOTPGroup>
+            </InputOTP>
+            <p className="font-mono text-[11px] text-muted-foreground">
+              From your authenticator app or recovery code
+            </p>
+          </div>
+
+          {error && (
+            <p className="font-mono text-xs text-destructive">{error}</p>
+          )}
+
+          <Button
+            type="submit"
+            disabled={totpCode.length < 6 || verifying}
+            size="lg"
           >
-            ← Back to sign in
-          </button>
-        </AuthFooterRule>
-      </div>
+            {verifying ? "Verifying…" : "Verify"}
+            <Kbd className="ml-2">↵</Kbd>
+          </Button>
+
+          <AuthFooterRule>
+            <button
+              type="button"
+              onClick={() => navigate("/login", { replace: true })}
+              className="hover:text-foreground"
+            >
+              ← Back to sign in
+            </button>
+          </AuthFooterRule>
+        </AuthForm>
+      ) : (
+        <div className="flex w-[360px] max-w-full flex-col gap-5">
+          <AuthHeading eyebrow="·· Signing in">
+            {error ? "Sign-in failed." : "Finishing up…"}
+          </AuthHeading>
+          {error ? (
+            <p className="font-mono text-xs text-destructive">{error}</p>
+          ) : (
+            <p className="font-mono text-xs text-muted-foreground">
+              Completing Google authentication.
+            </p>
+          )}
+          <AuthFooterRule>
+            <button
+              type="button"
+              onClick={() => navigate("/login", { replace: true })}
+              className="hover:text-foreground"
+            >
+              ← Back to sign in
+            </button>
+          </AuthFooterRule>
+        </div>
+      )}
     </AuthShell>
   )
 }

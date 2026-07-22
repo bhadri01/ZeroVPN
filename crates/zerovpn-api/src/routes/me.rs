@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     response::IntoResponse,
 };
@@ -14,7 +14,7 @@ use tower_sessions::Session;
 use tracing::{info, warn};
 use utoipa::{IntoParams, ToSchema};
 use zerovpn_db::repos::{
-    audit, devices, servers, session_events, topology_positions, user_prefs, users,
+    audit, devices, servers, session_events, topology_positions, user_prefs, user_sessions, users,
 };
 
 use crate::{
@@ -59,9 +59,10 @@ pub async fn export(
 
     // All devices owned by user (regardless of status)
     let devs = sqlx::query_as::<_, zerovpn_core::models::Device>(
-        r#"SELECT id, user_id, server_id, name, os, public_key, allocated_ip, status,
-                  dns_names, allowed_ips_override, dns_override,
-                  last_handshake_at, created_at
+        r#"SELECT id, user_id, server_id, name, os, device_type, public_key, allocated_ip,
+                  status, dns_names, allowed_ips_override, dns_override,
+                  last_handshake_at, created_at,
+                  NULL::bytea AS private_key_encrypted
              FROM devices
             WHERE user_id = $1
             ORDER BY created_at DESC"#,
@@ -436,30 +437,26 @@ pub async fn set_preferences(
     CurrentUser(user): CurrentUser,
     Json(patch): Json<user_prefs::UserPreferencesPatch>,
 ) -> ApiResult<impl IntoResponse> {
-    if let Some(v) = patch.units.as_deref() {
-        if !matches!(v, "bps" | "Bps") {
+    if let Some(v) = patch.units.as_deref()
+        && !matches!(v, "bps" | "Bps") {
             return Err(ApiError::Validation(format!("invalid units: {v}")));
         }
-    }
-    if let Some(v) = patch.date_format.as_deref() {
-        if !matches!(v, "iso" | "us" | "eu") {
+    if let Some(v) = patch.date_format.as_deref()
+        && !matches!(v, "iso" | "us" | "eu") {
             return Err(ApiError::Validation(format!("invalid date_format: {v}")));
         }
-    }
-    if let Some(v) = patch.time_format.as_deref() {
-        if !matches!(v, "h24" | "h12") {
+    if let Some(v) = patch.time_format.as_deref()
+        && !matches!(v, "h24" | "h12") {
             return Err(ApiError::Validation(format!("invalid time_format: {v}")));
         }
-    }
-    if let Some(v) = patch.default_landing.as_deref() {
-        if !matches!(v, "dashboard" | "devices" | "topology") {
+    if let Some(v) = patch.default_landing.as_deref()
+        && !matches!(v, "dashboard" | "devices" | "topology") {
             return Err(ApiError::Validation(format!(
                 "invalid default_landing: {v}"
             )));
         }
-    }
-    if let Some(v) = patch.toast_position.as_deref() {
-        if !matches!(
+    if let Some(v) = patch.toast_position.as_deref()
+        && !matches!(
             v,
             "top-left"
                 | "top-center"
@@ -472,12 +469,10 @@ pub async fn set_preferences(
                 "invalid toast_position: {v}"
             )));
         }
-    }
-    if let Some(v) = patch.theme.as_deref() {
-        if !matches!(v, "swiss" | "brutalist" | "terminal" | "editorial" | "soft") {
+    if let Some(v) = patch.theme.as_deref()
+        && !matches!(v, "swiss" | "brutalist" | "terminal" | "editorial" | "soft") {
             return Err(ApiError::Validation(format!("invalid theme: {v}")));
         }
-    }
     let prefs = user_prefs::upsert(&state.pool, user.id, &patch).await?;
     Ok(Json(prefs))
 }
@@ -599,6 +594,11 @@ pub async fn revoke_other_sessions(
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
     }
+    // The watermark above already makes other sessions unusable; also
+    // hard-delete their rows so the Active-sessions list agrees at once.
+    if let Some(session_id) = session.id() {
+        user_sessions::revoke_all_except(&state.pool, user.id, &session_id.to_string()).await?;
+    }
     audit::record(
         &state.pool,
         audit::AuditEntry {
@@ -612,6 +612,90 @@ pub async fn revoke_other_sessions(
     )
     .await?;
     info!(user_id = %user.id, "user revoked all other sessions");
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MySession {
+    #[serde(flatten)]
+    pub row: user_sessions::UserSessionRow,
+    /// True for the session making this request.
+    pub current: bool,
+}
+
+/// The caller's live sessions, newest activity first — the data behind the
+/// Security page's "Active sessions" panel. Only surrogate ids are exposed;
+/// the underlying tower session id is bearer-equivalent and never leaves
+/// the server.
+#[utoipa::path(
+    get,
+    path = "/me/sessions",
+    tag = "Account",
+    responses(
+        (status = 200, description = "Live sessions for the caller", body = Vec<MySession>),
+        (status = 401, description = "No session"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    session: Session,
+) -> ApiResult<impl IntoResponse> {
+    let current_surrogate = match session.id() {
+        Some(id) => {
+            user_sessions::surrogate_for_session(&state.pool, &id.to_string()).await?
+        }
+        None => None,
+    };
+    let rows = user_sessions::list_active_for_user(&state.pool, user.id).await?;
+    let out: Vec<MySession> = rows
+        .into_iter()
+        .map(|row| MySession {
+            current: Some(row.id) == current_surrogate,
+            row,
+        })
+        .collect();
+    Ok(Json(out))
+}
+
+/// Revoke one of the caller's sessions by surrogate id. Deleting the
+/// authoritative session row kills that cookie instantly. Revoking the
+/// *current* session is allowed and behaves like logout.
+#[utoipa::path(
+    delete,
+    path = "/me/sessions/{id}",
+    tag = "Account",
+    params(("id" = Uuid, Path, description = "Session surrogate id")),
+    responses(
+        (status = 200, description = "Session revoked", body = StatusAck),
+        (status = 401, description = "No session"),
+        (status = 404, description = "No such session for this user"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn revoke_session(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(surrogate): Path<uuid::Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let revoked = user_sessions::revoke_by_surrogate(&state.pool, user.id, surrogate).await?;
+    if !revoked {
+        return Err(ApiError::NotFound);
+    }
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "user.session_revoked",
+            target_type: Some("user"),
+            target_id: Some(user.id),
+            metadata: json!({ "session": surrogate }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(user_id = %user.id, %surrogate, "user revoked one session");
     Ok(Json(json!({ "status": "ok" })))
 }
 
@@ -650,11 +734,10 @@ pub async fn delete_account(
     // never abort the deletion (DB is already updated).
     if let Ok(user_devices) = devices::list_for_user(&state.pool, user.id).await {
         for d in user_devices {
-            if d.status == zerovpn_core::models::DeviceStatus::Active {
-                if let Err(e) = state.wg.remove_peer(&d.public_key).await {
+            if d.status == zerovpn_core::models::DeviceStatus::Active
+                && let Err(e) = state.wg.remove_peer(&d.public_key).await {
                     tracing::warn!(?e, device_id = %d.id, "delete_account: wg remove_peer failed");
                 }
-            }
             if let Some(alloc) = state.allocators.get(d.server_id) {
                 let _ = alloc.release(d.allocated_ip.ip());
             }

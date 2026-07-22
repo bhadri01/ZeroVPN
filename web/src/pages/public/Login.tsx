@@ -201,11 +201,7 @@ export function LoginPage() {
             </Link>
           </div>
 
-          <AuthFooterRule>
-            <Link to="/" className="hover:text-foreground">
-              ← Home
-            </Link>
-          </AuthFooterRule>
+          <AuthFooterRule />
         </AuthForm>
       ) : (
         <AuthForm

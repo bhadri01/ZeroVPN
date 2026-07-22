@@ -19,16 +19,7 @@ pub struct ServerSample {
     pub handshake_count: i32,
 }
 
-pub async fn insert(
-    pool: &PgPool,
-    server_id: Uuid,
-    sampled_at: OffsetDateTime,
-    total_rx_bytes: i64,
-    total_tx_bytes: i64,
-    peer_count: i32,
-    online_count: i32,
-    handshake_count: i32,
-) -> sqlx::Result<()> {
+pub async fn insert(pool: &PgPool, sample: &ServerSample) -> sqlx::Result<()> {
     sqlx::query(
         r#"INSERT INTO server_samples
               (server_id, sampled_at, total_rx_bytes, total_tx_bytes,
@@ -36,13 +27,13 @@ pub async fn insert(
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT (server_id, sampled_at) DO NOTHING"#,
     )
-    .bind(server_id)
-    .bind(sampled_at)
-    .bind(total_rx_bytes)
-    .bind(total_tx_bytes)
-    .bind(peer_count)
-    .bind(online_count)
-    .bind(handshake_count)
+    .bind(sample.server_id)
+    .bind(sample.sampled_at)
+    .bind(sample.total_rx_bytes)
+    .bind(sample.total_tx_bytes)
+    .bind(sample.peer_count)
+    .bind(sample.online_count)
+    .bind(sample.handshake_count)
     .execute(pool)
     .await?;
     Ok(())

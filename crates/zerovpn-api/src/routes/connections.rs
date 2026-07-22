@@ -91,9 +91,26 @@ pub async fn list_for_user(
         .iter()
         .map(|d| d.allocated_ip.ip().to_string())
         .collect();
+    // Keep only flows that touch one of the caller's own peers, then mask the
+    // identity of the *other* side. AllowedIPs is a split-tunnel to the whole
+    // VPN subnet, so a peer↔peer flow can cross another user's device; a
+    // non-admin must never learn that peer's device name / device_id / user_id
+    // just because the flow touched their own device. The IP is retained (it's
+    // the far end of the caller's own traffic) but rendered as an anonymous
+    // "Peer". Own devices and genuine `External` endpoints are untouched.
     let filtered: Vec<Flow> = all
         .into_iter()
         .filter(|f| own_ips.contains(&f.source.ip) || own_ips.contains(&f.target.ip))
+        .map(|mut f| {
+            for ep in [&mut f.source, &mut f.target] {
+                if !own_ips.contains(&ep.ip) && ep.device_id.is_some() {
+                    ep.name = "Peer".to_string();
+                    ep.device_id = None;
+                    ep.user_id = None;
+                }
+            }
+            f
+        })
         .collect();
     Ok(Json(filtered))
 }
@@ -271,11 +288,10 @@ where
                 if sport.is_none() {
                     sport = rest.parse::<i32>().ok();
                 }
-            } else if let Some(rest) = part.strip_prefix("dport=") {
-                if dport.is_none() {
+            } else if let Some(rest) = part.strip_prefix("dport=")
+                && dport.is_none() {
                     dport = rest.parse::<i32>().ok();
                 }
-            }
         }
 
         let (Some(src_ip), Some(dst_ip)) = (src, dst) else {
@@ -315,7 +331,8 @@ where
     F: Fn(&str) -> Endpoint,
 {
     let since = OffsetDateTime::now_utc() - Duration::seconds(60);
-    let rows: Vec<(String, Option<i32>, String, Option<i32>, Option<String>)> = match sqlx::query_as(
+    type FlowRow = (String, Option<i32>, String, Option<i32>, Option<String>);
+    let rows: Vec<FlowRow> = match sqlx::query_as(
         r#"SELECT DISTINCT ON (src_ip, src_port, dst_ip, dst_port, proto)
                   src_ip, src_port, dst_ip, dst_port, proto
              FROM destination_ips

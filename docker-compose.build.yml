@@ -8,16 +8,24 @@
 #
 # Each service keeps the `image:` from the base file, so `build` tags it with
 # the ${ZEROVPN_REGISTRY}/...:${ZEROVPN_IMAGE_TAG} name ready to push.
+#
+# Deploy hosts are x86_64, so builds target linux/amd64 regardless of the
+# build machine (on an Apple Silicon Mac this cross-builds via Rosetta —
+# slower, but the pushed image actually runs on the server). Set
+# ZEROVPN_BUILD_PLATFORM=linux/arm64 for a fast native image for `make up`.
 services:
   api:
     build:
       context: .
       dockerfile: deploy/Dockerfile.api
+      platforms: ["${ZEROVPN_BUILD_PLATFORM:-linux/amd64}"]
   worker:
     build:
       context: .
       dockerfile: deploy/Dockerfile.worker
+      platforms: ["${ZEROVPN_BUILD_PLATFORM:-linux/amd64}"]
   frontend:
     build:
       context: .
       dockerfile: deploy/Dockerfile.web
+      platforms: ["${ZEROVPN_BUILD_PLATFORM:-linux/amd64}"]

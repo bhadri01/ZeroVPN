@@ -125,19 +125,6 @@ pub async fn list_all_active(pool: &PgPool) -> sqlx::Result<Vec<Device>> {
     .await
 }
 
-pub async fn list_by_server(pool: &PgPool, server_id: Uuid) -> sqlx::Result<Vec<Device>> {
-    sqlx::query_as::<_, Device>(
-        r#"SELECT id, user_id, server_id, name, os, device_type, public_key, allocated_ip, status,
-                  dns_names, allowed_ips_override, dns_override,
-                  last_handshake_at, created_at, private_key_encrypted
-           FROM devices
-           WHERE server_id = $1"#,
-    )
-    .bind(server_id)
-    .fetch_all(pool)
-    .await
-}
-
 pub async fn count_active_for_server(pool: &PgPool, server_id: Uuid) -> sqlx::Result<i64> {
     let row: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM devices WHERE server_id = $1 AND status = 'active'",

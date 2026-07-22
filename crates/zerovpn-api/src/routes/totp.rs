@@ -202,3 +202,73 @@ pub async fn disable(
     info!(user_id = %user.id, "totp disabled");
     Ok(Json(json!({ "status": "ok" })))
 }
+
+/// Regenerate recovery codes. Requires a current valid TOTP code (a stolen
+/// session alone can't rotate them), invalidates every previous code, and
+/// returns the fresh batch exactly once — same contract as `enable`.
+#[utoipa::path(
+    post,
+    path = "/auth/totp/recovery-codes",
+    tag = "Auth",
+    request_body = VerifyBody,
+    responses(
+        (status = 200, description = "Fresh recovery codes — shown ONCE; all previous codes are dead", body = EnableResponse),
+        (status = 400, description = "Invalid TOTP code"),
+        (status = 409, description = "2FA not enabled"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn regenerate_recovery_codes(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    headers: HeaderMap,
+    Json(body): Json<VerifyBody>,
+) -> ApiResult<impl IntoResponse> {
+    if !user.totp_enabled {
+        return Err(ApiError::Conflict("2FA not enabled".into()));
+    }
+    let (secret_encrypted, _) = users::get_totp_material(&state.pool, user.id)
+        .await?
+        .ok_or(ApiError::Internal("totp material missing".into()))?;
+    let secret_bytes = state
+        .kek
+        .decrypt(&secret_encrypted)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let secret = String::from_utf8(secret_bytes)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let ok = totp::verify(&secret, &body.code)
+        .map_err(|e| ApiError::Validation(e.to_string()))?;
+    if !ok {
+        return Err(ApiError::Validation("invalid 2FA code".into()));
+    }
+
+    let (plaintext_codes, hashed_codes) =
+        totp::generate_recovery_codes().map_err(|e| ApiError::Internal(e.to_string()))?;
+    users::replace_recovery_codes(&state.pool, user.id, &hashed_codes).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(user.id),
+            action: "user.totp_recovery_regenerated",
+            target_type: Some("user"),
+            target_id: Some(user.id),
+            metadata: json!({}),
+            ip: None,
+        },
+    )
+    .await?;
+    if let Err(e) = session_events::record(
+        &state.pool,
+        user.id,
+        session_events::SessionEvent::TotpEnable,
+        crate::routes::auth::client_ip(&headers),
+        crate::routes::auth::client_user_agent(&headers).as_deref(),
+        json!({ "recovery_regenerated": true }),
+    )
+    .await
+    {
+        warn!(?e, user_id = %user.id, "session_events recovery_regen record failed");
+    }
+    info!(user_id = %user.id, "totp recovery codes regenerated");
+    Ok(Json(EnableResponse { recovery_codes: plaintext_codes }))
+}

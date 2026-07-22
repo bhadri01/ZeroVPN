@@ -1,0 +1,9 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "ignore": [
+    // Static assets; sw.js is runtime-registered (registerSW.ts), not imported.
+    "public/**",
+    // Vendored shadcn primitives keep their full export surface by convention.
+    "src/components/ui/**"
+  ]
+}

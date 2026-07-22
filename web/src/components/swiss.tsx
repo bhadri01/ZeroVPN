@@ -1,3 +1,6 @@
+/* eslint-disable react-refresh/only-export-components -- design-system
+   module: components and their sibling format helpers (fmtRel, …) ship
+   together by design; a full reload on edit is acceptable here. */
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
@@ -69,8 +72,8 @@ export function LogoLoader({
   return (
     <div
       className={cn(
-        "text-foreground flex min-h-svh flex-col items-center justify-center gap-4",
-        className,
+        "flex min-h-svh flex-col items-center justify-center gap-4 text-foreground",
+        className
       )}
       role="status"
       aria-live="polite"
@@ -148,9 +151,9 @@ export function LogoLoader({
         </circle>
       </svg>
       {caption && (
-        <span className="text-muted-foreground/70 font-mono text-[10px] uppercase tracking-[0.18em]">
+        <span className="font-mono text-[10px] tracking-[0.18em] text-muted-foreground/70 uppercase">
           {caption}
-          <span className="text-primary ml-0.5 inline-block animate-pulse">
+          <span className="ml-0.5 inline-block animate-pulse text-primary">
             ▍
           </span>
         </span>
@@ -223,7 +226,7 @@ export function PageHead({
         {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
         <h1 className="font-heading break-words">{title}</h1>
         {sub && (
-          <div className="text-muted-foreground mt-1 text-[13px]">{sub}</div>
+          <div className="mt-1 text-[13px] text-muted-foreground">{sub}</div>
         )}
         {children}
       </div>
@@ -263,7 +266,7 @@ export function Panel({
     <div className={cn("zv-panel", className)}>
       {(title || right) && (
         <div className="zv-panel-head">
-          <div className="flex flex-col gap-0.5 min-w-0">
+          <div className="flex min-w-0 flex-col gap-0.5">
             {title && <h3>{title}</h3>}
             {sub && <div className="zv-panel-sub truncate">{sub}</div>}
           </div>
@@ -278,7 +281,7 @@ export function Panel({
         {children}
       </div>
       {footer && (
-        <div className="zv-panel-head border-b-0 border-t border-border">
+        <div className="zv-panel-head border-t border-b-0 border-border">
           {footer}
         </div>
       )}
@@ -317,7 +320,7 @@ export function Pill({
    Tiny inline chart for KPIs. SVG-only, vector-effect non-scaling so the
    stroke stays 1.2-1.4px regardless of container width. */
 
-export function Sparkline({
+function Sparkline({
   data,
   height = 26,
   kind = "area",
@@ -356,7 +359,15 @@ export function Sparkline({
           const x = (i / data.length) * w
           const y = h - bh - 1
           return (
-            <rect key={i} x={x} y={y} width={bw} height={bh} fill={color} opacity="0.9" />
+            <rect
+              key={i}
+              x={x}
+              y={y}
+              width={bw}
+              height={bh}
+              fill={color}
+              opacity="0.9"
+            />
           )
         })}
       </svg>

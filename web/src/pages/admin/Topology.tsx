@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useMemo, useState } from "react"
 
-import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
+import { LiveIndicator } from "@/components/charts/LiveIndicator"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { PageHead, Panel } from "@/components/swiss"
 import { FlowTopology } from "@/components/topology/FlowTopology"
@@ -83,7 +83,7 @@ export function AdminTopologyPage() {
     return m
   }, [liveDevices])
 
-  const devices = devicesQ.data ?? []
+  const devices = useMemo(() => devicesQ.data ?? [], [devicesQ.data])
   const server = serversQ.data?.[0]
   const serverLabel = server?.endpoint_host ?? "vpn-server"
   const serverMeta = server
@@ -104,7 +104,7 @@ export function AdminTopologyPage() {
 
   const uniqueUsers = useMemo(
     () => new Set(devices.map((d) => d.user_id)).size,
-    [devices],
+    [devices]
   )
 
   // Fleet-wide active flows. New conntrack entries aren't WS-pushed, so
@@ -179,14 +179,14 @@ function ModeToggle({
   onChange: (m: TopologyMode) => void
 }) {
   return (
-    <div className="border-border flex items-center border">
+    <div className="flex items-center border border-border">
       {(["devices", "flows"] as const).map((m) => (
         <Button
           key={m}
           size="sm"
           variant={mode === m ? "default" : "ghost"}
           onClick={() => onChange(m)}
-          className="h-7 rounded-none px-2 font-mono text-[10px] uppercase tracking-wider"
+          className="h-7 rounded-none px-2 font-mono text-[10px] tracking-wider uppercase"
         >
           {m}
         </Button>
@@ -211,7 +211,7 @@ function LiveOnlyToggle({
       size="sm"
       variant={on ? "default" : "outline"}
       onClick={() => onChange(!on)}
-      className="h-7 gap-1.5 px-2 font-mono text-[10px] uppercase tracking-wider"
+      className="h-7 gap-1.5 px-2 font-mono text-[10px] tracking-wider uppercase"
       title={
         on
           ? "Showing only peers currently connected to the VPN"
@@ -219,7 +219,7 @@ function LiveOnlyToggle({
       }
     >
       <span
-        className={`size-1.5 rounded-full ${on ? "bg-status-online animate-pulse" : "bg-muted-foreground/40"}`}
+        className={`size-1.5 rounded-full ${on ? "animate-pulse bg-status-online" : "bg-muted-foreground/40"}`}
       />
       Live only
     </Button>

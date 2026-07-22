@@ -96,6 +96,13 @@ pub async fn register(
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
 
     let email = body.email.trim().to_lowercase();
+
+    // Every register (fresh or repeat) can send a verification email, so
+    // it burns the shared mail budget for this address + client IP.
+    if !state.mail_limits.check(&email, client_ip(&headers)) {
+        return Err(ApiError::RateLimited);
+    }
+
     let existing = users::find_by_email(&state.pool, &email).await?;
 
     // Always respond 200 with the same shape regardless of whether the
@@ -141,13 +148,12 @@ pub async fn register(
         // Re-trigger the verification email when an unverified account
         // signs up again with the same address. Active/suspended accounts
         // get no email — same response shape keeps enumeration closed.
-        if u.status == UserStatus::PendingVerification {
-            if let Err(e) =
+        if u.status == UserStatus::PendingVerification
+            && let Err(e) =
                 crate::routes::email_auth::issue_verify_email(&state, u.id, &u.email).await
             {
                 warn!(?e, user_id = %u.id, "failed to re-issue verify-email on register");
             }
-        }
     }
 
     Ok(Json(RegisterAck { status: "ok" }))
@@ -510,7 +516,7 @@ pub async fn login(
 
 /// Verify a code against the stored TOTP secret OR consume a recovery code.
 /// On a successful recovery match, that code is removed from the user's set.
-async fn verify_totp_or_recovery(
+pub(crate) async fn verify_totp_or_recovery(
     state: &AppState,
     user_id: uuid::Uuid,
     code: &str,
@@ -564,8 +570,8 @@ pub async fn logout(
         .flush()
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    if let Some(uid) = user_id {
-        if let Err(e) = session_events::record(
+    if let Some(uid) = user_id
+        && let Err(e) = session_events::record(
             &state.pool,
             uid,
             session_events::SessionEvent::Logout,
@@ -577,7 +583,6 @@ pub async fn logout(
         {
             warn!(?e, user_id = %uid, "session_events logout record failed");
         }
-    }
     Ok(Json(json!({ "status": "ok" })))
 }
 

@@ -25,13 +25,11 @@ fn resolve_server_endpoint() -> (String, i32) {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(51820);
-    if raw.matches(':').count() == 1 {
-        if let Some((host, port)) = raw.split_once(':') {
-            if let Ok(p) = port.parse::<i32>() {
+    if raw.matches(':').count() == 1
+        && let Some((host, port)) = raw.split_once(':')
+            && let Ok(p) = port.parse::<i32>() {
                 return (host.to_string(), p);
             }
-        }
-    }
     (raw, listen_port)
 }
 
@@ -138,11 +136,10 @@ async fn write_server_conf(private_key: &str, listen_port: i32) {
          SaveConfig = false\n",
     );
 
-    if let Some(parent) = conf_path.parent() {
-        if let Err(e) = fs::create_dir_all(parent).await {
+    if let Some(parent) = conf_path.parent()
+        && let Err(e) = fs::create_dir_all(parent).await {
             warn!(?e, parent = %parent.display(), "could not create wg config dir");
         }
-    }
     match fs::File::create(&conf_path).await {
         Ok(mut f) => {
             if let Err(e) = f.write_all(conf.as_bytes()).await {

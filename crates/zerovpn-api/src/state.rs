@@ -30,6 +30,10 @@ pub struct AppState {
     /// `ZEROVPN_GOOGLE_OAUTH__*` — `/auth/google/*` routes return 503 in
     /// that case so the rest of the API still boots without credentials.
     pub google_oauth: Option<Arc<GoogleOAuthConfig>>,
+    /// Sliding-window ceilings for the mail-sending auth endpoints
+    /// (register / resend-verify / forgot-password) — every hit on those
+    /// costs a real outbound email through the operator's relay.
+    pub mail_limits: Arc<crate::ratelimit::MailLimits>,
 }
 
 impl AppState {
@@ -62,6 +66,7 @@ impl AppState {
             public_url,
             wg,
             google_oauth: google_oauth.map(Arc::new),
+            mail_limits: Arc::new(crate::ratelimit::MailLimits::default()),
         }
     }
 }

@@ -12,7 +12,7 @@ import { useMemo } from "react"
 import { toast } from "sonner"
 
 import { CandleChart } from "@/components/charts/CandleChart"
-import { LiveIndicator } from "@/components/charts/LazyNetworkMonitorChart"
+import { LiveIndicator } from "@/components/charts/LiveIndicator"
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { Kpi, KpiStrip, PageHead, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
@@ -79,6 +79,10 @@ export function AdminOverviewPage() {
   const suspended = stats?.suspended ?? 0
   const pending = stats?.pending_verification ?? 0
   const totalDevices = stats?.devices_total ?? 0
+  // Durable, DB-computed online count (same 180s handshake rule as the user
+  // dashboard). Used as the KPI base so it's correct on first paint and
+  // survives refresh; live WS ticks below can only refine it upward.
+  const onlineDb = stats?.online_now ?? 0
   const fleetRx = fleetBwQ.data?.rx_bytes ?? 0
   const fleetTx = fleetBwQ.data?.tx_bytes ?? 0
   const maintOn = !!maintQ.data?.maintenance_mode
@@ -92,9 +96,9 @@ export function AdminOverviewPage() {
     () =>
       Object.values(liveServers).reduce(
         (acc, srv) => acc + (srv?.onlineCount ?? 0),
-        0,
+        0
       ),
-    [liveServers],
+    [liveServers]
   )
 
   return (
@@ -126,8 +130,8 @@ export function AdminOverviewPage() {
                       <code className="rounded-sm bg-amber-400/20 px-1 py-px font-semibold text-amber-300">
                         503
                       </code>{" "}
-                      and the UI shows a banner. Admin sessions stay
-                      functional so you can still recover.
+                      and the UI shows a banner. Admin sessions stay functional
+                      so you can still recover.
                     </p>
                     <p className="text-background/60">
                       Reads continue normally · WS streams continue · existing
@@ -139,7 +143,7 @@ export function AdminOverviewPage() {
                 <button
                   type="button"
                   aria-label="About maintenance mode"
-                  className="text-muted-foreground hover:text-foreground focus-visible:text-foreground inline-flex size-7 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
                   <IconInfoCircle className="size-4" />
                 </button>
@@ -170,7 +174,7 @@ export function AdminOverviewPage() {
           />
           <Kpi
             label="Online · now"
-            value={statsQ.isLoading ? "—" : onlineNow}
+            value={statsQ.isLoading ? "—" : Math.max(onlineDb, onlineNow)}
             unit={totalDevices > 0 ? `/ ${totalDevices}` : undefined}
             footL={
               maintOn
@@ -192,17 +196,12 @@ export function AdminOverviewPage() {
           >
             <div className="flex flex-col">
               {(serversQ.data ?? []).map((srv, i) => (
-                <ServerLiveCard
-                  key={srv.id}
-                  server={srv}
-                  divider={i > 0}
-                />
+                <ServerLiveCard key={srv.id} server={srv} divider={i > 0} />
               ))}
             </div>
           </Panel>
         </StaggerItem>
       )}
-
     </PageStagger>
   )
 }
@@ -219,19 +218,19 @@ function ServerLiveCard({
 
   return (
     <div
-      className={`flex flex-col gap-4 p-5 ${divider ? "border-border border-t" : ""}`}
+      className={`flex flex-col gap-4 p-5 ${divider ? "border-t border-border" : ""}`}
     >
       {/* Header — server identity + active/disabled tag on the right */}
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="border-border bg-muted/40 flex size-8 shrink-0 items-center justify-center border">
-            <IconServer className="text-muted-foreground size-4" />
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex size-8 shrink-0 items-center justify-center border border-border bg-muted/40">
+            <IconServer className="size-4 text-muted-foreground" />
           </span>
-          <div className="flex flex-col min-w-0">
-            <span className="text-foreground truncate font-mono text-sm font-medium">
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate font-mono text-sm font-medium text-foreground">
               {server.name}
             </span>
-            <span className="text-muted-foreground truncate font-mono text-[11px]">
+            <span className="truncate font-mono text-[11px] text-muted-foreground">
               {server.region} · {server.endpoint_host}:{server.endpoint_port}
             </span>
           </div>
@@ -246,7 +245,7 @@ function ServerLiveCard({
       {/* KPI strip — Peers · Online · RX/TX live rate, streamed from
           `server_sample` over the WS. Each value pop-animates when it
           changes so updates are obvious. */}
-      <div className="border-border grid grid-cols-2 border md:grid-cols-4">
+      <div className="grid grid-cols-2 border border-border md:grid-cols-4">
         <LiveStat
           label="Peers"
           value={live?.peerCount ?? 0}
@@ -279,7 +278,7 @@ function ServerLiveCard({
           single throughput-over-time view (the old live RX/TX line chart was
           redundant with this and has been removed). */}
       <div className="flex flex-col gap-2">
-        <span className="text-muted-foreground font-mono text-[10px] uppercase tracking-wide">
+        <span className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
           Bandwidth · scroll to zoom · drag to pan
         </span>
         <CandleChart scope="server" id={server.id} height={260} />
@@ -308,8 +307,8 @@ function LiveStat({
   reduceMotion: boolean | null
 }) {
   return (
-    <div className="border-border flex flex-col gap-1 border-r p-3 last:border-r-0 [&:nth-child(2n)]:border-r-0 md:[&:nth-child(2n)]:border-r md:last:border-r-0">
-      <span className="text-muted-foreground inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide">
+    <div className="flex flex-col gap-1 border-r border-border p-3 last:border-r-0 md:last:border-r-0 [&:nth-child(2n)]:border-r-0 md:[&:nth-child(2n)]:border-r">
+      <span className="inline-flex items-center gap-1.5 font-mono text-[10px] tracking-wide text-muted-foreground uppercase">
         {icon}
         {label}
       </span>
@@ -317,13 +316,9 @@ function LiveStat({
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.span
             key={String(value)}
-            initial={
-              reduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }
-            }
+            initial={reduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={
-              reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }
-            }
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             className={`block font-mono text-base tabular-nums ${tone === "ok" ? "text-status-online" : "text-foreground"}`}
           >
@@ -334,4 +329,3 @@ function LiveStat({
     </div>
   )
 }
-

@@ -50,17 +50,13 @@ pub async fn maintenance_gate(
     // Maintenance is ON. Try to identify the caller via the session
     // already attached by SessionManagerLayer.
     let session_opt = req.extensions().get::<Session>().cloned();
-    if let Some(session) = session_opt {
-        if let Ok(Some(user_id)) = session.get::<uuid::Uuid>(SESSION_KEY_USER_ID).await {
-            if let Ok(Some(user)) =
+    if let Some(session) = session_opt
+        && let Ok(Some(user_id)) = session.get::<uuid::Uuid>(SESSION_KEY_USER_ID).await
+            && let Ok(Some(user)) =
                 zerovpn_db::repos::users::find_by_id(&state.pool, user_id).await
-            {
-                if user.role == zerovpn_core::models::UserRole::Admin {
+                && user.role == zerovpn_core::models::UserRole::Admin {
                     return next.run(req).await;
                 }
-            }
-        }
-    }
 
     let body = axum::Json(json!({
         "error": {

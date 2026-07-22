@@ -1,11 +1,12 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { IconCopy, IconDownload, IconLogout } from "@tabler/icons-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { IconCopy, IconDownload, IconLogout, IconX } from "@tabler/icons-react"
 import { motion } from "motion/react"
 import { useState } from "react"
 import { toast } from "sonner"
 
 import { ConfirmDialog } from "@/components/ConfirmDialog"
 import { CopyableCode } from "@/components/CopyableCode"
+import { RelativeTime } from "@/components/RelativeTime"
 import { Kbd, Panel, Pill } from "@/components/swiss"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,8 +19,11 @@ import { Label } from "@/components/ui/label"
 import {
   ApiError,
   changePassword,
+  mySessions,
   revokeOtherSessions,
+  revokeSession,
   totpDisable,
+  totpRegenerateRecovery,
   totpEnable,
   totpSetup,
 } from "@/lib/api"
@@ -66,6 +70,18 @@ export function SecuritySections() {
     },
   })
 
+  const regenM = useMutation({
+    mutationFn: (c: string) => totpRegenerateRecovery(c.trim()),
+    onSuccess: (d) => {
+      // Reuse the shown-once recovery panel (copy + download included).
+      setRecoveryCodes(d.recovery_codes)
+      toast.success("Recovery codes regenerated — previous codes are dead")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
   const disableM = useMutation({
     mutationFn: (c: string) => totpDisable(c.trim()),
     onSuccess: () => {
@@ -94,7 +110,7 @@ export function SecuritySections() {
               ) : (
                 <Pill tone="warn">Disabled</Pill>
               )}
-              <span className="text-muted-foreground text-xs">
+              <span className="text-xs text-muted-foreground">
                 {totpEnabled
                   ? "An authenticator app is configured for this account. Sign-ins require a 6-digit code."
                   : "Required for admins. Recommended for everyone."}
@@ -102,13 +118,25 @@ export function SecuritySections() {
             </div>
 
             {totpEnabled ? (
-              // 2FA already on — give the user direct access to the
-              // disable form (no need to hide it behind a <details>
-              // disclosure when this is the only available action).
-              <DisableForm
-                onSubmit={(c) => disableM.mutate(c)}
-                pending={disableM.isPending}
-              />
+              // 2FA already on — both code-gated actions rendered inline
+              // (no need to hide them behind a <details> disclosure).
+              <div className="flex flex-col gap-3">
+                <CodeConfirmForm
+                  hint="Lost your recovery codes? Enter a current authenticator code to mint a fresh set — every previous code stops working."
+                  cta="Regenerate recovery codes"
+                  pendingCta="Regenerating…"
+                  variant="outline"
+                  onSubmit={(c) => regenM.mutate(c)}
+                  pending={regenM.isPending}
+                />
+                <CodeConfirmForm
+                  hint="Enter a current authenticator code to confirm. Recovery codes also work here."
+                  cta="Disable 2FA"
+                  pendingCta="Disabling…"
+                  onSubmit={(c) => disableM.mutate(c)}
+                  pending={disableM.isPending}
+                />
+              </div>
             ) : (
               <div className="flex gap-2">
                 <Button
@@ -143,7 +171,7 @@ export function SecuritySections() {
                 size. */}
             <div className="grid items-start gap-5 sm:grid-cols-[auto_1fr]">
               <div
-                className="zv-qr-box bg-card size-40 shrink-0"
+                className="zv-qr-box size-40 shrink-0 bg-card"
                 dangerouslySetInnerHTML={{ __html: setupData.qr_svg }}
               />
 
@@ -193,7 +221,7 @@ export function SecuritySections() {
               <p className="text-sm font-medium">
                 Save these recovery codes — they're shown only once.
               </p>
-              <p className="text-muted-foreground font-mono text-xs">
+              <p className="font-mono text-xs text-muted-foreground">
                 Each code can be used once if you lose your authenticator.
               </p>
             </div>
@@ -237,10 +265,119 @@ export function SecuritySections() {
 
       <Panel
         title="Active sessions"
-        sub="Sign out of every other browser / device this account is open in"
+        sub="Every browser / device this account is currently signed in on"
+        flush
       >
-        <SignOutEverywherePanel />
+        <SessionsList />
+        <div className="border-t border-border p-4">
+          <SignOutEverywherePanel />
+        </div>
       </Panel>
+    </div>
+  )
+}
+
+/** Compact "Chrome · macOS" style label from a raw User-Agent. Best-effort
+ *  string sniffing — unknown agents fall back to the raw UA (truncated). */
+function uaSummary(ua: string | null): string {
+  if (!ua) return "Unknown client"
+  const browser = /edg\//i.test(ua)
+    ? "Edge"
+    : /firefox\//i.test(ua)
+      ? "Firefox"
+      : /chrome|crios/i.test(ua)
+        ? "Chrome"
+        : /safari/i.test(ua)
+          ? "Safari"
+          : /curl|wget|python|httpie/i.test(ua)
+            ? "CLI / script"
+            : null
+  const os = /android/i.test(ua)
+    ? "Android"
+    : /iphone|ipad|ios/i.test(ua)
+      ? "iOS"
+      : /mac os x|macintosh/i.test(ua)
+        ? "macOS"
+        : /windows/i.test(ua)
+          ? "Windows"
+          : /linux/i.test(ua)
+            ? "Linux"
+            : null
+  if (browser && os) return `${browser} · ${os}`
+  if (browser || os) return browser ?? os ?? ""
+  return ua.length > 40 ? `${ua.slice(0, 40)}…` : ua
+}
+
+/** Live session rows with per-session revoke. The current session is
+ *  pinned with a pill instead of a revoke button (use logout for that). */
+function SessionsList() {
+  const qc = useQueryClient()
+  const q = useQuery({
+    queryKey: ["me", "sessions"],
+    queryFn: mySessions,
+    refetchInterval: 30_000,
+  })
+  const revokeM = useMutation({
+    mutationFn: (id: string) => revokeSession(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["me", "sessions"] })
+      toast.success("Session revoked")
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+  const sessions = q.data ?? []
+  return (
+    <div className="flex flex-col">
+      {q.isLoading && (
+        <p className="p-4 font-mono text-xs text-muted-foreground">
+          Loading sessions…
+        </p>
+      )}
+      {sessions.map((s) => (
+        <div
+          key={s.id}
+          className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5 last:border-b-0"
+        >
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">
+                {uaSummary(s.user_agent)}
+              </span>
+              {s.current && (
+                <Pill tone="ok" dot={false}>
+                  this session
+                </Pill>
+              )}
+            </div>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {s.ip ? s.ip.replace(/\/(32|128)$/, "") : "unknown ip"}
+              <span className="px-1">·</span>
+              active <RelativeTime value={s.last_seen_at} />
+              <span className="px-1">·</span>
+              signed in <RelativeTime value={s.created_at} />
+            </span>
+          </div>
+          {!s.current && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={revokeM.isPending}
+              onClick={() => revokeM.mutate(s.id)}
+              title="Sign this session out"
+            >
+              <IconX className="size-3.5" />
+              Revoke
+            </Button>
+          )}
+        </div>
+      ))}
+      {!q.isLoading && sessions.length === 0 && (
+        <p className="p-4 font-mono text-xs text-muted-foreground">
+          No session metadata yet — rows appear as sessions make requests.
+        </p>
+      )}
     </div>
   )
 }
@@ -268,10 +405,10 @@ function SignOutEverywherePanel() {
   return (
     <>
       <div className="flex flex-col gap-3">
-        <p className="text-muted-foreground text-xs">
-          Use this if you forgot to sign out somewhere, suspect a session
-          you don't recognise, or just rotated your password externally.
-          You stay signed in here.
+        <p className="text-xs text-muted-foreground">
+          Use this if you forgot to sign out somewhere, suspect a session you
+          don't recognise, or just rotated your password externally. You stay
+          signed in here.
         </p>
         <div>
           <Button
@@ -310,7 +447,7 @@ export function ChangePasswordForm() {
       setNext("")
       setConfirm("")
       toast.success(
-        "Password changed. Any other signed-in sessions will be signed out on their next request.",
+        "Password changed. Any other signed-in sessions will be signed out on their next request."
       )
     },
     onError: (e: unknown) => {
@@ -366,7 +503,7 @@ export function ChangePasswordForm() {
         />
       </div>
       {sameAsCurrent && (
-        <p className="text-status-degraded font-mono text-[11px]">
+        <p className="font-mono text-[11px] text-status-degraded">
           New password must differ from your current one.
         </p>
       )}
@@ -411,7 +548,7 @@ function Field({
         className="font-mono"
       />
       {hint && (
-        <p className="text-status-degraded font-mono text-[11px]">{hint}</p>
+        <p className="font-mono text-[11px] text-status-degraded">{hint}</p>
       )}
     </div>
   )
@@ -454,20 +591,28 @@ function downloadRecoveryCodes(codes: string[], email: string | undefined) {
   toast.success("Recovery codes downloaded")
 }
 
-function DisableForm({
+/** Code-gated action row: an authenticator-code input beside a button.
+ *  Shared by "Disable 2FA" and "Regenerate recovery codes" so both are
+ *  protected the same way (a stolen session alone isn't enough). */
+function CodeConfirmForm({
+  hint,
+  cta,
+  pendingCta,
+  variant = "destructive",
   onSubmit,
   pending,
 }: {
+  hint: string
+  cta: string
+  pendingCta: string
+  variant?: "destructive" | "outline"
   onSubmit: (code: string) => void
   pending?: boolean
 }) {
   const [c, setC] = useState("")
   return (
-    <div className="border-border mt-1 flex flex-col gap-2 border-l pl-3">
-      <p className="text-muted-foreground font-mono text-[11px]">
-        Enter a current authenticator code to confirm. Recovery codes also
-        work here.
-      </p>
+    <div className="mt-1 flex flex-col gap-2 border-l border-border pl-3">
+      <p className="font-mono text-[11px] text-muted-foreground">{hint}</p>
       <div className="flex flex-wrap gap-2">
         <Input
           value={c}
@@ -479,11 +624,11 @@ function DisableForm({
         />
         <Button
           size="sm"
-          variant="destructive"
+          variant={variant}
           onClick={() => onSubmit(c)}
           disabled={pending || c.length < 6}
         >
-          {pending ? "Disabling…" : "Disable 2FA"}
+          {pending ? pendingCta : cta}
         </Button>
       </div>
     </div>

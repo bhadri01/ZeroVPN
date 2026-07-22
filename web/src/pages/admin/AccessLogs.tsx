@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { IconSearch, IconX } from "@tabler/icons-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
+
+import { useResettingPage } from "@/hooks/useResettingPage"
 
 import { PageStagger, StaggerItem } from "@/components/motion"
 import { Pagination } from "@/components/Pagination"
@@ -16,10 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  type AdminAccessLogFilters,
-  adminListAccessLogs,
-} from "@/lib/api"
+import { type AdminAccessLogFilters, adminListAccessLogs } from "@/lib/api"
 
 type RangeChoice = "1h" | "24h" | "7d" | "30d" | "all"
 type StatusChoice = "all" | "2xx" | "3xx" | "4xx" | "5xx" | "non2xx"
@@ -93,7 +92,6 @@ function toneForStatus(status: number): PillTone {
 }
 
 export function AccessLogsPage() {
-  const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(50)
 
   const [methodFilter, setMethodFilter] = useState<MethodChoice>("all")
@@ -103,17 +101,17 @@ export function AccessLogsPage() {
   const [ipFilter, setIpFilter] = useState("")
   const [range, setRange] = useState<RangeChoice>("1h")
 
-  useEffect(() => {
-    setPage(0)
-  }, [
-    methodFilter,
-    statusFilter,
-    pathFilter,
-    userIdFilter,
-    ipFilter,
-    range,
-    pageSize,
-  ])
+  const [page, setPage] = useResettingPage(
+    JSON.stringify([
+      methodFilter,
+      statusFilter,
+      pathFilter,
+      userIdFilter,
+      ipFilter,
+      range,
+      pageSize,
+    ])
+  )
 
   const filters = useMemo<AdminAccessLogFilters>(() => {
     const sb = statusBand(statusFilter)
@@ -167,7 +165,7 @@ export function AccessLogsPage() {
 
       <StaggerItem>
         <Panel flush>
-          <div className="border-border flex flex-wrap items-end gap-2 border-b p-2">
+          <div className="flex flex-wrap items-end gap-2 border-b border-border p-2">
             <FilterField label="Method" htmlFor="ax-method" widthClass="w-36">
               <Select
                 value={methodFilter}
@@ -204,7 +202,7 @@ export function AccessLogsPage() {
             </FilterField>
             <FilterField label="Path" htmlFor="ax-path" widthClass="w-56">
               <div className="relative">
-                <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
+                <IconSearch className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="ax-path"
                   value={pathFilter}
@@ -278,7 +276,9 @@ export function AccessLogsPage() {
                     <th className="hidden w-[70px] sm:table-cell">Method</th>
                     <th>Path</th>
                     <th className="w-[80px]">Status</th>
-                    <th className="hidden w-[80px] text-right md:table-cell">Latency</th>
+                    <th className="hidden w-[80px] text-right md:table-cell">
+                      Latency
+                    </th>
                     <th className="hidden md:table-cell">User</th>
                     <th className="hidden w-[140px] lg:table-cell">IP</th>
                     <th className="hidden lg:table-cell">User-Agent</th>
@@ -287,7 +287,7 @@ export function AccessLogsPage() {
                 <tbody>
                   {items.map((row) => (
                     <tr key={row.id}>
-                      <td className="text-muted-foreground font-mono text-xs">
+                      <td className="font-mono text-xs text-muted-foreground">
                         <RelativeTime value={row.created_at} />
                       </td>
                       <td className="hidden sm:table-cell">
@@ -308,7 +308,7 @@ export function AccessLogsPage() {
                         <button
                           type="button"
                           onClick={() => setPathFilter(row.path)}
-                          className="hover:text-foreground underline-offset-2 hover:underline"
+                          className="underline-offset-2 hover:text-foreground hover:underline"
                           title="Filter by this path prefix"
                         >
                           {row.path}
@@ -319,15 +319,15 @@ export function AccessLogsPage() {
                           {row.status}
                         </Pill>
                       </td>
-                      <td className="text-muted-foreground hidden text-right font-mono text-xs tabular-nums md:table-cell">
+                      <td className="hidden text-right font-mono text-xs text-muted-foreground tabular-nums md:table-cell">
                         {row.latency_ms} ms
                       </td>
-                      <td className="text-muted-foreground hidden font-mono text-xs md:table-cell">
+                      <td className="hidden font-mono text-xs text-muted-foreground md:table-cell">
                         {row.user_id ? (
                           <button
                             type="button"
                             onClick={() => setUserIdFilter(row.user_id!)}
-                            className="hover:text-foreground transition-colors"
+                            className="transition-colors hover:text-foreground"
                             title="Filter by this user"
                           >
                             {row.user_id.slice(0, 8)}
@@ -344,7 +344,7 @@ export function AccessLogsPage() {
                               const bare = row.ip!.replace(/\/(32|128)$/, "")
                               setIpFilter(bare)
                             }}
-                            className="text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                            className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                             title="Filter by this IP"
                           >
                             {row.ip.replace(/\/(32|128)$/, "")}
@@ -354,7 +354,7 @@ export function AccessLogsPage() {
                         )}
                       </td>
                       <td
-                        className="text-muted-foreground hidden max-w-[260px] truncate font-mono text-[11px] lg:table-cell"
+                        className="hidden max-w-[260px] truncate font-mono text-[11px] text-muted-foreground lg:table-cell"
                         title={row.user_agent ?? undefined}
                       >
                         {row.user_agent ?? (
@@ -367,7 +367,7 @@ export function AccessLogsPage() {
                     <tr>
                       <td
                         colSpan={8}
-                        className="text-muted-foreground py-8 text-center font-mono text-sm"
+                        className="py-8 text-center font-mono text-sm text-muted-foreground"
                       >
                         {filtersActive
                           ? "No requests match the current filters."
@@ -409,7 +409,7 @@ function FilterField({
     <div className={`flex flex-col gap-1 ${widthClass}`}>
       <label
         htmlFor={htmlFor}
-        className="text-muted-foreground font-mono text-[10px] uppercase tracking-wide"
+        className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase"
       >
         {label}
       </label>

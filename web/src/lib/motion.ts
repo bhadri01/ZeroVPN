@@ -9,7 +9,6 @@
  *   • prefers-reduced-motion is honored everywhere via `useReducedMotion`
  */
 import { useSyncExternalStore } from "react"
-import type { Transition, Variants } from "motion/react"
 import { useReducedMotion as useOsReducedMotion } from "motion/react"
 
 // User's saved "reduced motion" preference, applied app-wide via a
@@ -46,7 +45,7 @@ export function useReducedMotion(): boolean {
   const pref = useSyncExternalStore(
     subscribeReducedMotion,
     reducedMotionSnapshot,
-    reducedMotionSnapshot,
+    reducedMotionSnapshot
   )
   return Boolean(os) || pref
 }
@@ -71,19 +70,3 @@ export const EASING = {
   in: [0.7, 0, 0.84, 0] as const,
   inOut: [0.83, 0, 0.17, 1] as const,
 }
-
-const enter: Transition = { duration: TIMING.enter, ease: EASING.out }
-const exit: Transition = { duration: TIMING.exit, ease: EASING.in }
-
-/** Cards mounted on a page after data resolves. Stagger via `delay`. */
-export const cardVariants: Variants = {
-  initial: { opacity: 0, y: 4 },
-  animate: { opacity: 1, y: 0, transition: enter },
-  exit: { opacity: 0, y: -2, transition: exit },
-}
-
-/** Stagger N children at 40 ms apart inside the parent's `animate`. */
-export const stagger = (delay = 0.04): Transition => ({
-  staggerChildren: delay,
-  delayChildren: 0.02,
-})

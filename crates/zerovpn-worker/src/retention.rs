@@ -165,6 +165,27 @@ async fn run_once(pool: &PgPool, windows: &RetentionWindows) -> sqlx::Result<()>
     )
     .await?;
 
+    // Expired OAuth states. `consume` deletes a row on use and filters on
+    // `expires_at`, so this is purely a growth bound for abandoned sign-in
+    // flows that never hit the callback.
+    purge(
+        pool,
+        "purged expired oauth states",
+        "DELETE FROM oauth_states WHERE expires_at <= $1",
+        now,
+    )
+    .await?;
+
+    // Session-metadata rows whose authoritative tower session is gone
+    // (expired, logged out, or revoked). Uses the repo helper rather than
+    // the `purge()` shape because the predicate is an anti-join, not a
+    // timestamp cutoff.
+    match zerovpn_db::repos::user_sessions::purge_dangling(pool).await {
+        Ok(n) if n > 0 => info!(rows = n, "purged dangling user_sessions rows"),
+        Ok(_) => {}
+        Err(e) => warn!(?e, "user_sessions purge failed"),
+    }
+
     // Hard-purge users soft-deleted >30 days ago. Cascades remove devices,
     // sessions, etc.
     purge(

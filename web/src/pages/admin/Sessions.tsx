@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { IconSearch, IconX } from "@tabler/icons-react"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
+
+import { useResettingPage } from "@/hooks/useResettingPage"
 
 import { CopyableCode } from "@/components/CopyableCode"
 import { PageStagger, StaggerItem } from "@/components/motion"
@@ -60,17 +62,18 @@ const EVENT_OPTIONS: { value: "all" | SessionEventKind; label: string }[] = [
 ]
 
 export function SessionsPage() {
-  const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(50)
 
-  const [eventFilter, setEventFilter] = useState<"all" | SessionEventKind>("all")
+  const [eventFilter, setEventFilter] = useState<"all" | SessionEventKind>(
+    "all"
+  )
   const [userIdFilter, setUserIdFilter] = useState("")
   const [ipFilter, setIpFilter] = useState("")
   const [range, setRange] = useState<RangeChoice>("all")
 
-  useEffect(() => {
-    setPage(0)
-  }, [eventFilter, userIdFilter, ipFilter, range, pageSize])
+  const [page, setPage] = useResettingPage(
+    JSON.stringify([eventFilter, userIdFilter, ipFilter, range, pageSize])
+  )
 
   const filters = useMemo<AdminSessionEventFilters>(
     () => ({
@@ -79,14 +82,11 @@ export function SessionsPage() {
       ip: ipFilter.trim() || undefined,
       since: rangeToSince(range),
     }),
-    [eventFilter, userIdFilter, ipFilter, range],
+    [eventFilter, userIdFilter, ipFilter, range]
   )
 
   const filtersActive =
-    !!filters.event ||
-    !!filters.user_id ||
-    !!filters.ip ||
-    !!filters.since
+    !!filters.event || !!filters.user_id || !!filters.ip || !!filters.since
 
   const q = useQuery({
     queryKey: ["admin", "session-events", filters, page, pageSize],
@@ -115,7 +115,7 @@ export function SessionsPage() {
 
       <StaggerItem>
         <Panel flush>
-          <div className="border-border flex flex-wrap items-end gap-2 border-b p-2">
+          <div className="flex flex-wrap items-end gap-2 border-b border-border p-2">
             <FilterField label="Event" htmlFor="sess-event" widthClass="w-44">
               <Select
                 value={eventFilter}
@@ -146,7 +146,7 @@ export function SessionsPage() {
             </FilterField>
             <FilterField label="IP" htmlFor="sess-ip" widthClass="w-44">
               <div className="relative">
-                <IconSearch className="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
+                <IconSearch className="absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   id="sess-ip"
                   value={ipFilter}
@@ -209,14 +209,14 @@ export function SessionsPage() {
                 <tbody>
                   {items.map((row) => (
                     <tr key={row.id}>
-                      <td className="text-muted-foreground font-mono text-xs">
+                      <td className="font-mono text-xs text-muted-foreground">
                         <RelativeTime value={row.created_at} />
                       </td>
-                      <td className="text-muted-foreground font-mono text-xs">
+                      <td className="font-mono text-xs text-muted-foreground">
                         <button
                           type="button"
                           onClick={() => setUserIdFilter(row.user_id)}
-                          className="hover:text-foreground transition-colors"
+                          className="transition-colors hover:text-foreground"
                           title="Filter by this user"
                         >
                           {row.user_id.slice(0, 8)}
@@ -239,7 +239,7 @@ export function SessionsPage() {
                               const bare = row.ip!.replace(/\/(32|128)$/, "")
                               setIpFilter(bare)
                             }}
-                            className="text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                            className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                             title="Filter by this IP"
                           >
                             {row.ip.replace(/\/(32|128)$/, "")}
@@ -249,7 +249,7 @@ export function SessionsPage() {
                         )}
                       </td>
                       <td
-                        className="text-muted-foreground hidden max-w-[240px] truncate font-mono text-[11px] lg:table-cell"
+                        className="hidden max-w-[240px] truncate font-mono text-[11px] text-muted-foreground lg:table-cell"
                         title={row.user_agent ?? undefined}
                       >
                         {row.user_agent ?? (
@@ -263,7 +263,7 @@ export function SessionsPage() {
                             truncate
                           />
                         ) : (
-                          <span className="text-muted-foreground font-mono text-[11px]">
+                          <span className="font-mono text-[11px] text-muted-foreground">
                             —
                           </span>
                         )}
@@ -274,7 +274,7 @@ export function SessionsPage() {
                     <tr>
                       <td
                         colSpan={6}
-                        className="text-muted-foreground py-8 text-center font-mono text-sm"
+                        className="py-8 text-center font-mono text-sm text-muted-foreground"
                       >
                         {filtersActive
                           ? "No events match the current filters."
@@ -316,7 +316,7 @@ function FilterField({
     <div className={`flex flex-col gap-1 ${widthClass}`}>
       <label
         htmlFor={htmlFor}
-        className="text-muted-foreground font-mono text-[10px] uppercase tracking-wide"
+        className="font-mono text-[10px] tracking-wide text-muted-foreground uppercase"
       >
         {label}
       </label>

@@ -30,9 +30,11 @@ export function LiveEventStream() {
   const connectedAt = useEventTail((s) => s.connectedAt)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Anchor relative timestamps to the first line we ever saw, falling back
-  // to "now" so the display still makes sense on a fresh session.
-  const baseMs = connectedAt ?? lines[0]?.tsMs ?? Date.now()
+  // Anchor relative timestamps to the first line we ever saw. The cursor row
+  // shows the latest line's time (not wall-clock "now" — render must stay
+  // pure); with no lines yet both collapse to +0s.
+  const lastMs = lines[lines.length - 1]?.tsMs
+  const baseMs = connectedAt ?? lines[0]?.tsMs ?? 0
 
   useEffect(() => {
     const el = scrollRef.current
@@ -46,16 +48,16 @@ export function LiveEventStream() {
       // Fixed height keeps the panel balanced with `<RecentActivity>` to
       // its left in the dashboard grid — the scroll container ALWAYS has
       // the same footprint whether there are 0 lines or 60.
-      className="text-muted-foreground h-[420px] overflow-y-auto py-2 font-mono text-[11px] leading-[1.55]"
+      className="h-[420px] overflow-y-auto py-2 font-mono text-[11px] leading-[1.55] text-muted-foreground"
     >
       {lines.length === 0 && (
-        <div className="text-muted-foreground/70 px-4 py-2">
+        <div className="px-4 py-2 text-muted-foreground/70">
           waiting for first event…
         </div>
       )}
       {lines.map((ln) => (
         <div key={ln.id} className="flex items-baseline gap-2 px-4 py-[2px]">
-          <span className="text-muted-foreground/60 w-12 shrink-0">
+          <span className="w-12 shrink-0 text-muted-foreground/60">
             {formatTs(ln.tsMs, baseMs)}
           </span>
           <span
@@ -65,14 +67,14 @@ export function LiveEventStream() {
           >
             ●
           </span>
-          <span className="text-foreground/85 truncate">{ln.text}</span>
+          <span className="truncate text-foreground/85">{ln.text}</span>
         </div>
       ))}
       <div className="flex items-baseline gap-2 px-4 py-[2px]">
-        <span className="text-muted-foreground/60 w-12 shrink-0">
-          {formatTs(Date.now(), baseMs)}
+        <span className="w-12 shrink-0 text-muted-foreground/60">
+          {formatTs(lastMs ?? baseMs, baseMs)}
         </span>
-        <span className="text-primary shrink-0" aria-hidden>
+        <span className="shrink-0 text-primary" aria-hidden>
           ▌
         </span>
       </div>

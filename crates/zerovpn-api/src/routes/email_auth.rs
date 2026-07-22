@@ -269,18 +269,27 @@ pub async fn verify_email(
 )]
 pub async fn forgot_password(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<ForgotBody>,
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
     let email = body.email.trim().to_lowercase();
+    // Reset links go to *existing* addresses, so without a ceiling this
+    // endpoint can mail-bomb a known user (and burn the relay's quota).
+    if !state
+        .mail_limits
+        .check(&email, crate::routes::auth::client_ip(&headers))
+    {
+        return Err(ApiError::RateLimited);
+    }
     let user = users::find_by_email(&state.pool, &email).await?;
 
     // Email-enumeration prevention: always return 200 with the same
     // shape regardless of whether the address exists. The email is only
     // sent (and the audit row only written) when the user is real and
     // in a state where receiving a reset link makes sense.
-    if let Some(u) = user {
-        if u.status == UserStatus::Active || u.status == UserStatus::PendingVerification {
+    if let Some(u) = user
+        && (u.status == UserStatus::Active || u.status == UserStatus::PendingVerification) {
             issue_password_reset(&state, u.id, &u.email).await?;
             // Audit the request itself (not just the eventual reset).
             // Useful when looking at "did someone try to take over this
@@ -298,7 +307,6 @@ pub async fn forgot_password(
             )
             .await?;
         }
-    }
     Ok(Json(Ack { status: "ok" }))
 }
 
@@ -451,12 +459,21 @@ const RESEND_WINDOW_SECS: i64 = 10 * 60;
 )]
 pub async fn resend_verify(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<ResendBody>,
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
     let email = body.email.trim().to_lowercase();
-    if let Some(u) = users::find_by_email(&state.pool, &email).await? {
-        if u.status == UserStatus::PendingVerification {
+    // Layered on top of the per-user token cap below: this also covers
+    // addresses with no account and adds the per-IP ceiling.
+    if !state
+        .mail_limits
+        .check(&email, crate::routes::auth::client_ip(&headers))
+    {
+        return Err(ApiError::RateLimited);
+    }
+    if let Some(u) = users::find_by_email(&state.pool, &email).await?
+        && u.status == UserStatus::PendingVerification {
             let recent = verification_tokens::count_recent_for_user(
                 &state.pool,
                 u.id,
@@ -475,6 +492,5 @@ pub async fn resend_verify(
                 );
             }
         }
-    }
     Ok(Json(Ack { status: "ok" }))
 }

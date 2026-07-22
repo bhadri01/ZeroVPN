@@ -1,3 +1,6 @@
+/* eslint-disable react-refresh/only-export-components -- guard components +
+   the bootstrap hook form one auth boundary consumed by the route table; a
+   full reload on edit is correct here, not a fast-refresh regression. */
 import { useEffect } from "react"
 import { Navigate } from "react-router"
 
@@ -57,6 +60,16 @@ export function useBootstrapAuth() {
   }, [setUser, setLoading])
 }
 
+/** Root "/" entry. The deployed app has no marketing landing — wait for the
+ *  auth bootstrap to settle (showing the branded loader so signed-in users
+ *  aren't flashed the login form), then send authenticated users to the
+ *  dashboard and everyone else to the login page, which is the front door. */
+export function HomeRedirect() {
+  const { user, loading } = useAuth()
+  if (loading) return <LogoLoader caption="loading" />
+  return <Navigate to={user ? "/app" : "/login"} replace />
+}
+
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, mustChangePassword } = useAuth()
   if (loading) {
@@ -85,11 +98,7 @@ export function AdminRoute({ children }: { children: React.ReactNode }) {
  *  verify-email, so this works from first paint without an extra fetch. */
 export function DeviceDetailRoute({ children }: { children: React.ReactNode }) {
   const user = useAuth((s) => s.user)
-  if (
-    user &&
-    user.role !== "admin" &&
-    user.user_policy?.hide_device_detail
-  ) {
+  if (user && user.role !== "admin" && user.user_policy?.hide_device_detail) {
     return <Navigate to="/app/devices" replace />
   }
   return <>{children}</>

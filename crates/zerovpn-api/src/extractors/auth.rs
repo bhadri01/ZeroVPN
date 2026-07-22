@@ -19,6 +19,14 @@ pub const SESSION_KEY_USER_ID: &str = "user_id";
 /// reach into tower-sessions' opaque storage.
 pub const SESSION_KEY_PW_CHANGED_AT: &str = "pw_changed_at_unix";
 
+/// Holds the user_id of a half-authenticated Google OAuth login that still
+/// owes a TOTP challenge. Set by the Google callback when the account has 2FA
+/// enabled; consumed by `/auth/google/verify-totp`, which swaps it for the
+/// real [`SESSION_KEY_USER_ID`] once the code checks out. A request carrying
+/// only this key is NOT authenticated — the `CurrentUser` extractor reads
+/// [`SESSION_KEY_USER_ID`], never this — so no route is reachable mid-challenge.
+pub const SESSION_KEY_PENDING_TOTP_USER: &str = "pending_totp_user_id";
+
 /// Set when an admin is impersonating another user. Stores the admin's
 /// real UUID so the session can be restored when impersonation ends.
 pub const SESSION_KEY_REAL_USER_ID: &str = "real_user_id";
@@ -75,6 +83,27 @@ where
         if snapshot.unix_timestamp() != live_secs {
             return Err(ApiError::Unauthorized);
         }
+
+        // Session-metadata bookkeeping for the "Active sessions" panel.
+        // Lazy upsert here (rather than at each mint site) covers every
+        // login path; the repo throttles the last-seen refresh to once a
+        // minute per session. Best-effort — auth never fails on it.
+        if let Some(session_id) = session.id() {
+            let ip = crate::routes::auth::client_ip(&parts.headers);
+            let ua = crate::routes::auth::client_user_agent(&parts.headers);
+            if let Err(e) = zerovpn_db::repos::user_sessions::upsert_seen(
+                &app_state.pool,
+                &session_id.to_string(),
+                user.id,
+                ip,
+                ua.as_deref(),
+            )
+            .await
+            {
+                tracing::warn!(?e, user_id = %user.id, "user_sessions upsert failed");
+            }
+        }
+
         Ok(Self(user))
     }
 }

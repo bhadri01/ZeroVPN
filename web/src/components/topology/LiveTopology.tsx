@@ -21,6 +21,7 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
+import { RelativeTime } from "@/components/RelativeTime"
 import { WithTooltip } from "@/components/ui/with-tooltip"
 import { usePageVisible } from "@/hooks/usePageVisible"
 import {
@@ -31,6 +32,7 @@ import {
   type PublicDevice,
 } from "@/lib/api"
 import { connState } from "@/lib/deviceState"
+import { formatBytes } from "@/lib/units"
 
 interface LiveTopologyProps {
   devices: PublicDevice[]
@@ -443,6 +445,34 @@ export function LiveTopology({
   const [isDragging, setIsDragging] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // Hovered device → summary tooltip. Position is in container px (the
+  // card is an HTML overlay, not SVG, so it stays crisp under zoom);
+  // flip flags keep it inside the canvas near the right/bottom edges.
+  const [hover, setHover] = useState<{
+    id: string
+    x: number
+    y: number
+    flipX: boolean
+    flipY: boolean
+  } | null>(null)
+
+  const updateHover = useCallback(
+    (id: string, e: React.PointerEvent<SVGGElement>) => {
+      const rect = wrapRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      setHover({
+        id,
+        x,
+        y,
+        flipX: x > rect.width - 280,
+        flipY: y > rect.height - 240,
+      })
+    },
+    [],
+  )
+
   // Per-node position overrides. When the user grabs a peer (or the hub)
   // and drags it, we record the resulting (x, y) in viewBox space here.
   // Subsequent renders prefer the override to the computed ring position.
@@ -537,6 +567,9 @@ export function LiveTopology({
       if (e.button !== 0) return
       // Don't start a canvas-pan if a node grabbed the pointer first.
       if (nodeDragRef.current) return
+      // Suppress the browser's native drag behaviors (text selection
+      // spilling into the rest of the page) for the whole drag.
+      e.preventDefault()
       ;(e.target as Element).setPointerCapture?.(e.pointerId)
       const p = clientToView(e.clientX, e.clientY)
       dragRef.current = { startX: p.x, startY: p.y, tx: view.tx, ty: view.ty }
@@ -599,6 +632,11 @@ export function LiveTopology({
     ) => {
       if (e.button !== 0) return
       e.stopPropagation()
+      e.preventDefault() // no native text-selection start on node drags
+      setHover(null) // dragging a node dismisses the summary tooltip
+      // Node drags count as dragging too, so the cursor flips to the
+      // closed-hand "grabbing" (nodes inherit the SVG's cursor class).
+      setIsDragging(true)
       // Capture on the SVG, not the <g>, so onPointerMove on the SVG keeps
       // firing while we drag. Without this, capture happens on the <g>
       // and move events skip the SVG handler.
@@ -828,13 +866,15 @@ export function LiveTopology({
     <div
       ref={wrapRef}
       className={
+        // select-none: drags (pan + node) must never start a text
+        // selection — SVG labels and the HUD are display-only.
         isFullscreen
           ? // "Full view": fixed-position overlay covering the window.
             // z-50 floats above the sidebar/top-bar without going over
             // toasts (which use z-[100]+). bg-background hides the page
             // chrome behind so the topology reads cleanly.
-            "zv-livetopo-wrap fixed inset-0 z-50 bg-background"
-          : "zv-livetopo-wrap relative h-full w-full"
+            "zv-livetopo-wrap fixed inset-0 z-50 select-none bg-background"
+          : "zv-livetopo-wrap relative h-full w-full select-none"
       }
     >
       <svg
@@ -953,6 +993,8 @@ export function LiveTopology({
               peer={p}
               hubX={p.userX}
               onPointerDown={(e) => beginNodeDrag(e, p.device.id, p.x, p.y)}
+              onHover={(e) => updateHover(p.device.id, e)}
+              onHoverEnd={() => setHover(null)}
             />
           ))}
 
@@ -1082,6 +1124,118 @@ export function LiveTopology({
           </button>
         </WithTooltip>
       </div>
+
+      {/* Device summary tooltip — follows the cursor over a peer node.
+          HTML (not SVG) so it stays crisp at any zoom and can reuse the
+          app's type/format components. pointer-events-none so it never
+          steals the hover it depends on. */}
+      {hover && !isDragging && (() => {
+        const p = placed.find((pp) => pp.device.id === hover.id)
+        if (!p) return null
+        return (
+          <DeviceSummaryCard
+            peer={p}
+            rates={rates.get(p.device.id)}
+            ownerLabel={userMap?.get(p.device.user_id)?.label}
+            x={hover.x}
+            y={hover.y}
+            flipX={hover.flipX}
+            flipY={hover.flipY}
+          />
+        )
+      })()}
+    </div>
+  )
+}
+
+/** Floating device-summary card for the topology hover. Fixed width so
+ *  the edge-flip math in `updateHover` can assume its footprint. */
+function DeviceSummaryCard({
+  peer,
+  rates,
+  ownerLabel,
+  x,
+  y,
+  flipX,
+  flipY,
+}: {
+  peer: LaidOutPeer
+  rates?: { rxBps: number; txBps: number }
+  ownerLabel?: string
+  x: number
+  y: number
+  flipX: boolean
+  flipY: boolean
+}) {
+  const d = peer.device
+  const online = peer.tone === "live" || peer.tone === "online"
+  const statusWord =
+    d.status === "paused" ? "paused" : online ? "online" : "offline"
+  const statusClass =
+    d.status === "paused"
+      ? "text-amber-500"
+      : online
+        ? "text-emerald-500"
+        : "text-muted-foreground"
+  const rows: [string, React.ReactNode][] = []
+  if (ownerLabel) rows.push(["owner", ownerLabel])
+  rows.push(["system", `${d.os} · ${d.device_type}`])
+  rows.push(["vpn ip", d.allocated_ip])
+  if (d.dns_names.length > 0) rows.push(["dns", d.dns_names[0]])
+  if (d.last_peer_endpoint) rows.push(["endpoint", d.last_peer_endpoint])
+  if (online) {
+    rows.push([
+      "rate",
+      `↓ ${formatRateShort(rates?.rxBps ?? 0)} · ↑ ${formatRateShort(rates?.txBps ?? 0)}`,
+    ])
+  }
+  rows.push([
+    "handshake",
+    <RelativeTime key="hs" value={d.last_handshake_at} fallback="never" />,
+  ])
+  rows.push([
+    "this month",
+    formatBytes(d.current_month_bytes) +
+      (d.monthly_byte_cap && d.monthly_byte_cap > 0
+        ? ` / ${formatBytes(d.monthly_byte_cap)}`
+        : ""),
+  ])
+  rows.push([
+    "lifetime",
+    `↓ ${formatBytes(d.total_rx_bytes)} · ↑ ${formatBytes(d.total_tx_bytes)}`,
+  ])
+  return (
+    <div
+      className="border-border bg-card pointer-events-none absolute z-10 w-[248px] border p-2.5 shadow-lg"
+      style={{
+        left: x,
+        top: y,
+        transform: `translate(${flipX ? "calc(-100% - 14px)" : "14px"}, ${
+          flipY ? "calc(-100% - 10px)" : "10px"
+        })`,
+      }}
+    >
+      <div className="mb-1.5 flex items-baseline justify-between gap-2">
+        <span className="text-foreground truncate text-xs font-semibold">
+          {d.name}
+        </span>
+        <span className={`font-mono text-[10px] ${statusClass}`}>
+          ● {statusWord}
+        </span>
+      </div>
+      <dl className="flex flex-col gap-0.5">
+        {rows.map(([label, value]) => (
+          <div
+            key={label}
+            className="flex items-baseline justify-between gap-3 font-mono text-[10px]"
+          >
+            <dt className="text-muted-foreground shrink-0 uppercase tracking-wide">
+              {label}
+            </dt>
+            <dd className="text-foreground truncate">{value}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   )
 }
@@ -1188,11 +1342,9 @@ function HubNode({
   onPointerDown: (e: React.PointerEvent<SVGGElement>) => void
 }) {
   return (
-    <g
-      transform={`translate(${hubX}, ${hubY})`}
-      onPointerDown={onPointerDown}
-      style={{ cursor: "grab" }}
-    >
+    // Cursor is inherited from the SVG root (grab, or grabbing while a
+    // drag — canvas or node — is in flight), so no inline cursor here.
+    <g transform={`translate(${hubX}, ${hubY})`} onPointerDown={onPointerDown}>
       <circle r={28 + tick} className="zv-topo-halo" opacity="0.55" />
       <circle r={22} className="zv-topo-halo" opacity="0.85" />
       <circle r={18} className="zv-topo-hub" strokeWidth="1.4" />
@@ -1239,7 +1391,6 @@ function UserNode({
       transform={`translate(${user.x}, ${user.y})`}
       className="zv-topo-peer"
       onPointerDown={onPointerDown}
-      style={{ cursor: "grab" }}
     >
       <circle r={18} className={strokeClass} strokeWidth="1.4" />
       <g transform="translate(-9, -9)" className="zv-topo-peer-icon">
@@ -1259,10 +1410,15 @@ function PeerNode({
   peer,
   hubX,
   onPointerDown,
+  onHover,
+  onHoverEnd,
 }: {
   peer: LaidOutPeer
   hubX: number
   onPointerDown: (e: React.PointerEvent<SVGGElement>) => void
+  /** Fired on enter AND move so the summary card tracks the cursor. */
+  onHover: (e: React.PointerEvent<SVGGElement>) => void
+  onHoverEnd: () => void
 }) {
   const Shape = OS_SHAPE_ICON[peer.device.os]
   const Brand = OS_BRAND_ICON[peer.device.os]
@@ -1279,7 +1435,9 @@ function PeerNode({
       transform={`translate(${peer.x}, ${peer.y})`}
       className="zv-topo-peer"
       onPointerDown={onPointerDown}
-      style={{ cursor: "grab" }}
+      onPointerEnter={onHover}
+      onPointerMove={onHover}
+      onPointerLeave={onHoverEnd}
     >
       {/* outer ring */}
       <circle r={14} className={strokeClass} strokeWidth="1.2" />

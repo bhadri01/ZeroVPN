@@ -1,4 +1,11 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react"
+import {
+  type ReactNode,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import * as echarts from "echarts/core"
 import { CustomChart, LineChart } from "echarts/charts"
 import {
@@ -17,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Panel } from "@/components/swiss"
 import { type Timeframe, TIMEFRAMES } from "@/lib/api"
 import { type CandleScope, useCandleSeries } from "@/hooks/useCandleSeries"
 import {
@@ -25,6 +33,7 @@ import {
   type ChartType,
   type Colors,
   defaultWindow,
+  MIN_VISIBLE,
   type Row,
   type Window,
 } from "./candleOption"
@@ -68,6 +77,12 @@ interface Props {
   /** Device/server UUID. Omitted for the `user` scope (session-keyed). */
   id?: string
   height?: number
+  /** When set, the chart renders inside its own <Panel> with this title/sub and
+   *  hangs the toolbar (Latest / Lines-Bars / timeframe) in the header's
+   *  right slot — so the controls sit on the same line as the title. Omit for a
+   *  bare chart with the toolbar as a row above it (compact/embedded usage). */
+  title?: ReactNode
+  sub?: ReactNode
 }
 
 /**
@@ -83,7 +98,7 @@ interface Props {
  * Wrapped in `memo` so the parent card's per-second live-stats re-renders don't
  * reach the chart.
  */
-function CandleChartImpl({ scope, id, height = 260 }: Props) {
+function CandleChartImpl({ scope, id, height = 260, title, sub }: Props) {
   const [tf, setTf] = useState<Timeframe>("1m")
   // Lines are the default view; switch to candle "Bars" from the toolbar.
   const [chartType, setChartType] = useState<ChartType>("line")
@@ -109,12 +124,14 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
         c.rx_avg,
         c.tx_avg,
       ]),
-    [candles],
+    [candles]
   )
 
   // Live mirrors so the (once-bound) dataZoom listener reads fresh values.
   const stateRef = useRef({ rows, hasMore, isLoadingOlder, loadOlder })
-  stateRef.current = { rows, hasMore, isLoadingOlder, loadOlder }
+  useEffect(() => {
+    stateRef.current = { rows, hasMore, isLoadingOlder, loadOlder }
+  })
 
   const n = rows.length
   const ready = !isError && !(isLoading && n === 0) && n > 0
@@ -166,50 +183,110 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
     }
     chart.on("datazoom", onZoom)
 
-    // Value-axis (bytes) zoom: wheel over the right gutter scales the value
-    // range, anchored at the cursor. Wheel over the plot is left to ECharts'
-    // built-in time-axis zoom. Non-passive + capture so we can pre-empt it.
-    const onWheelY = (e: WheelEvent) => {
+    // All wheel input is handled here (non-passive + capture) so the speed is
+    // tame — ECharts' built-in wheel zoom steps far too coarsely:
+    //  · over the value-axis gutter → scale the bytes range, cursor-anchored
+    //  · over the plot, vertical scroll / pinch → zoom the time window
+    //  · over the plot, horizontal scroll → pan, ~1:1 with the pointer
+    const onWheel = (e: WheelEvent) => {
       const rect = el.getBoundingClientRect()
       const x = e.clientX - rect.left
-      // Only act in the value-axis gutter (right edge); else let ECharts zoom X.
-      if (x < rect.width - 72) return
       e.preventDefault()
       e.stopPropagation()
-      const y = e.clientY - rect.top
-      const conv = (py: number) => {
-        const v = chart.convertFromPixel({ gridIndex: 0 }, [x, py]) as
+      const norm = (d: number) =>
+        e.deltaMode === 1 ? d * 16 : e.deltaMode === 2 ? d * 400 : d
+      if (x >= rect.width - 72) {
+        // Value-axis gutter: rescale the bytes range, anchored at the cursor.
+        const y = e.clientY - rect.top
+        const conv = (py: number) => {
+          const v = chart.convertFromPixel({ gridIndex: 0 }, [x, py]) as
+            | number[]
+            | null
+          return Array.isArray(v) ? v[1] : NaN
+        }
+        const topV = conv(8)
+        const botV = conv(rect.height - 22)
+        const curV = conv(y)
+        const span = topV - botV
+        if (!isFinite(span) || span <= 0 || !isFinite(curV)) return
+        const dy = norm(e.deltaY)
+        // Up (deltaY<0) → factor<1 → smaller range → zoom into finer detail.
+        const factor = Math.min(1.8, Math.max(0.55, Math.exp(dy * 0.0012)))
+        const frac = (curV - botV) / span
+        const newSpan = span * factor
+        let newBot = curV - frac * newSpan
+        let newTop = newBot + newSpan
+        if (newBot < 0) {
+          newTop -= newBot
+          newBot = 0
+        }
+        yZoomRef.current = { startValue: newBot, endValue: newTop }
+        chart.setOption({ yAxis: { min: newBot, max: newTop } })
+        return
+      }
+      // Time axis. Work from the current window + loaded data extent.
+      const w = zoomRef.current
+      const s = stateRef.current
+      const nRows = s.rows.length
+      if (!w || nRows === 0) return
+      const span = w.endValue - w.startValue
+      if (!(span > 0)) return
+      const earliest = s.rows[0][0]
+      const latest = s.rows[nRows - 1][0]
+      const pad = CANDLE_MS[tf]
+      const minSpan = CANDLE_MS[tf] * MIN_VISIBLE
+      const maxSpan = Math.max(latest - earliest + pad * 2, minSpan)
+      const dx = norm(e.deltaX)
+      const dy = norm(e.deltaY)
+      let next: Window
+      if (Math.abs(dx) > Math.abs(dy)) {
+        // Horizontal scroll pans at drag speed: one pixel of scroll moves the
+        // window one pixel's worth of time.
+        const plotW = Math.max(1, rect.width - 70) // grid left + right margins
+        const dt = dx * (span / plotW)
+        next = { startValue: w.startValue + dt, endValue: w.endValue + dt }
+      } else {
+        // Vertical scroll zooms, anchored at the cursor's timestamp. Pinch
+        // (ctrlKey) sends tiny deltas, so it gets a stronger coefficient.
+        const k = e.ctrlKey ? 0.005 : 0.0008
+        const factor = Math.min(1.35, Math.max(0.75, Math.exp(dy * k)))
+        const newSpan = Math.min(maxSpan, Math.max(minSpan, span * factor))
+        const p = chart.convertFromPixel({ gridIndex: 0 }, [x, 10]) as
           | number[]
           | null
-        return Array.isArray(v) ? v[1] : NaN
+        const anchor =
+          Array.isArray(p) && isFinite(p[0]) ? p[0] : w.startValue + span / 2
+        const frac = Math.min(1, Math.max(0, (anchor - w.startValue) / span))
+        const start = anchor - frac * newSpan
+        next = { startValue: start, endValue: start + newSpan }
       }
-      const topV = conv(8)
-      const botV = conv(rect.height - 22)
-      const curV = conv(y)
-      const span = topV - botV
-      if (!isFinite(span) || span <= 0 || !isFinite(curV)) return
-      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY
-      // Up (deltaY<0) → factor<1 → smaller range → zoom into finer detail.
-      const factor = Math.min(1.8, Math.max(0.55, Math.exp(dy * 0.0012)))
-      const frac = (curV - botV) / span
-      const newSpan = span * factor
-      let newBot = curV - frac * newSpan
-      let newTop = newBot + newSpan
-      if (newBot < 0) {
-        newTop -= newBot
-        newBot = 0
+      // Keep the window inside the loaded data (one candle of pad each side);
+      // reaching the left edge triggers the datazoom handler's lazy history
+      // load, which extends `earliest` and lets the next tick continue.
+      if (next.endValue > latest + pad) {
+        const d = next.endValue - (latest + pad)
+        next = { startValue: next.startValue - d, endValue: next.endValue - d }
       }
-      yZoomRef.current = { startValue: newBot, endValue: newTop }
-      chart.setOption({ yAxis: { min: newBot, max: newTop } })
+      if (next.startValue < earliest - pad) {
+        const d = earliest - pad - next.startValue
+        next = {
+          startValue: next.startValue + d,
+          endValue: Math.min(next.endValue + d, latest + pad),
+        }
+      }
+      zoomRef.current = next
+      chart.dispatchAction({ type: "dataZoom", dataZoomId: "dzX", ...next })
     }
-    el.addEventListener("wheel", onWheelY, { capture: true, passive: false })
+    el.addEventListener("wheel", onWheel, { capture: true, passive: false })
 
     // Value-axis drag-to-scale (TradingView price-axis style): press on the
     // bytes gutter and drag — up stretches the scale (zoom in), down compresses
     // it (zoom out), anchored at the grab point. Recomputed from the grab state
     // each move so there's no drift.
     const convY = (px: number, py: number) => {
-      const v = chart.convertFromPixel({ gridIndex: 0 }, [px, py]) as number[] | null
+      const v = chart.convertFromPixel({ gridIndex: 0 }, [px, py]) as
+        | number[]
+        | null
       return Array.isArray(v) ? v[1] : NaN
     }
     const drag = { active: false, startY: 0, span0: 0, anchor: 0, frac: 0 }
@@ -258,7 +335,8 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
     const onHover = (e: MouseEvent) => {
       if (drag.active) return
       const rect = el.getBoundingClientRect()
-      el.style.cursor = e.clientX - rect.left >= rect.width - 72 ? "ns-resize" : ""
+      el.style.cursor =
+        e.clientX - rect.left >= rect.width - 72 ? "ns-resize" : ""
     }
     el.addEventListener("mousemove", onHover)
 
@@ -267,7 +345,7 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
 
     return () => {
       ro.disconnect()
-      el.removeEventListener("wheel", onWheelY, { capture: true })
+      el.removeEventListener("wheel", onWheel, { capture: true })
       el.removeEventListener("mousedown", onDown, { capture: true })
       el.removeEventListener("mousemove", onHover)
       window.removeEventListener("mousemove", onDragMove)
@@ -288,12 +366,18 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
     const latest = rows[n - 1][0]
     if (zoomRef.current == null) {
       zoomRef.current = defaultWindow(rows, tf)
-    } else if (lastLatestRef.current != null && latest > lastLatestRef.current) {
+    } else if (
+      lastLatestRef.current != null &&
+      latest > lastLatestRef.current
+    ) {
       // New candle(s) arrived — if the view was pinned to the previous latest,
       // slide the window forward to keep tracking live.
       const w = zoomRef.current
       if (w.endValue >= lastLatestRef.current - CANDLE_MS[tf]) {
-        zoomRef.current = { startValue: w.startValue + (latest - w.endValue), endValue: latest }
+        zoomRef.current = {
+          startValue: w.startValue + (latest - w.endValue),
+          endValue: latest,
+        }
       }
     }
     lastLatestRef.current = latest
@@ -322,7 +406,11 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
     const chart = chartRef.current
     if (chart) {
       if (zoomRef.current) {
-        chart.dispatchAction({ type: "dataZoom", dataZoomId: "dzX", ...zoomRef.current })
+        chart.dispatchAction({
+          type: "dataZoom",
+          dataZoomId: "dzX",
+          ...zoomRef.current,
+        })
       }
       // Refit the value axis to the data (clears any manual scale).
       chart.setOption({ yAxis: { min: 0, max: null } })
@@ -335,7 +423,7 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
       <button
         type="button"
         onClick={onLatest}
-        className="border-border text-muted-foreground hover:text-foreground h-7 border px-2 font-mono text-[11px]"
+        className="h-7 border border-border px-2 font-mono text-[11px] text-muted-foreground hover:text-foreground"
       >
         Latest →
       </button>
@@ -361,7 +449,11 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
         </SelectTrigger>
         <SelectContent>
           {TIMEFRAMES.map((t) => (
-            <SelectItem key={t.value} value={t.value} className="font-mono text-xs">
+            <SelectItem
+              key={t.value}
+              value={t.value}
+              className="font-mono text-xs"
+            >
               {t.label}
             </SelectItem>
           ))}
@@ -376,7 +468,7 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
   } else if (isError) {
     body = (
       <div
-        className="text-destructive border-border flex items-center justify-center border font-mono text-xs"
+        className="flex items-center justify-center border border-border font-mono text-xs text-destructive"
         style={{ height }}
       >
         Failed to load bandwidth candles.
@@ -385,7 +477,7 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
   } else if (n === 0) {
     body = (
       <div
-        className="text-muted-foreground border-border flex items-center justify-center border font-mono text-xs"
+        className="flex items-center justify-center border border-border font-mono text-xs text-muted-foreground"
         style={{ height }}
       >
         No candles yet — bandwidth fills in as the worker rolls up each minute.
@@ -394,12 +486,12 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
   } else {
     body = (
       <div
-        className="border-border relative cursor-grab touch-none select-none border active:cursor-grabbing"
+        className="relative cursor-grab touch-none border border-border select-none active:cursor-grabbing"
         style={{ height, background: "var(--card)" }}
       >
         <div ref={elRef} className="h-full w-full" />
         {isLoadingOlder && (
-          <span className="text-muted-foreground absolute left-2 top-1 z-10 font-mono text-[10px]">
+          <span className="absolute top-1 left-2 z-10 font-mono text-[10px] text-muted-foreground">
             loading history…
           </span>
         )}
@@ -407,6 +499,16 @@ function CandleChartImpl({ scope, id, height = 260 }: Props) {
     )
   }
 
+  // With a title, own the panel and hang the toolbar in the header's right
+  // slot so the controls sit on the same line as the title. Without one, fall
+  // back to a bare toolbar row above the chart (compact/embedded usage).
+  if (title != null || sub != null) {
+    return (
+      <Panel title={title} sub={sub} right={toolbar}>
+        {body}
+      </Panel>
+    )
+  }
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-end">{toolbar}</div>

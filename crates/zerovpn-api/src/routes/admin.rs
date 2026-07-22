@@ -257,11 +257,11 @@ pub async fn list_users_csv(
         for u in rows {
             // Enum serde already lowercases ("admin"/"user", "active"/...);
             // unwrap to the inner string to avoid the Debug-format trick.
-            let role_s = serde_json::to_value(&u.role)
+            let role_s = serde_json::to_value(u.role)
                 .ok()
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_default();
-            let status_s = serde_json::to_value(&u.status)
+            let status_s = serde_json::to_value(u.status)
                 .ok()
                 .and_then(|v| v.as_str().map(String::from))
                 .unwrap_or_default();
@@ -836,11 +836,10 @@ pub async fn admin_set_email_route(
         // No-op: same email after normalisation. Don't write or audit.
         return Ok(Json(json!({ "status": "ok" })));
     }
-    if let Some(other) = users::find_by_email(&state.pool, &new_email).await? {
-        if other.id != target_id {
+    if let Some(other) = users::find_by_email(&state.pool, &new_email).await?
+        && other.id != target_id {
             return Err(ApiError::Validation("email already in use".into()));
         }
-    }
     let n = users::admin_set_email(&state.pool, target.id, &new_email).await?;
     if n == 0 {
         return Err(ApiError::NotFound);
@@ -906,11 +905,10 @@ pub async fn delete_user(
     // still exist. Best-effort: failures log but don't block the deletion.
     if let Ok(user_devices) = devices::list_for_user(&state.pool, target.id).await {
         for d in user_devices {
-            if d.status == zerovpn_core::models::DeviceStatus::Active {
-                if let Err(e) = state.wg.remove_peer(&d.public_key).await {
+            if d.status == zerovpn_core::models::DeviceStatus::Active
+                && let Err(e) = state.wg.remove_peer(&d.public_key).await {
                     warn!(?e, device_id = %d.id, "delete_user: wg remove_peer failed");
                 }
-            }
             if let Some(alloc) = state.allocators.get(d.server_id) {
                 let _ = alloc.release(d.allocated_ip.ip());
             }
@@ -1004,13 +1002,12 @@ pub async fn create_user(
     if !email.contains('@') {
         return Err(ApiError::Validation("email is required and must contain @".into()));
     }
-    if let Some(p) = body.password.as_deref() {
-        if p.len() < 12 {
+    if let Some(p) = body.password.as_deref()
+        && p.len() < 12 {
             return Err(ApiError::Validation(
                 "password must be at least 12 characters".into(),
             ));
         }
-    }
     if users::find_by_email(&state.pool, &email).await?.is_some() {
         return Err(ApiError::Validation("email already in use".into()));
     }
@@ -1523,6 +1520,145 @@ pub async fn set_device_quota(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+// ── Admin device lifecycle ──────────────────────────────────────────────
+// Pause / resume / revoke any device without impersonating (or suspending)
+// its owner — the moderation path for an abusive or compromised peer. The
+// WG/DNS side effects are the same shared cores the owner's handlers use,
+// so the tunnel and resolver stay correct either way; only the audit actor
+// and action names differ.
+
+#[utoipa::path(
+    post,
+    path = "/admin/devices/{id}/pause",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Device UUID")),
+    responses(
+        (status = 200, description = "Device paused; WG peer removed from the interface"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "No such device"),
+        (status = 409, description = "Device is revoked"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_pause_device(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    admin_set_device_pause(&state, &actor, device_id, zerovpn_core::models::DeviceStatus::Paused)
+        .await?;
+    Ok(Json(json!({ "status": "paused" })))
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/devices/{id}/unpause",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Device UUID")),
+    responses(
+        (status = 200, description = "Device resumed; WG peer re-added to the interface"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "No such device"),
+        (status = 409, description = "Device is revoked"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_unpause_device(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    admin_set_device_pause(&state, &actor, device_id, zerovpn_core::models::DeviceStatus::Active)
+        .await?;
+    Ok(Json(json!({ "status": "active" })))
+}
+
+async fn admin_set_device_pause(
+    state: &AppState,
+    actor: &zerovpn_core::models::User,
+    device_id: Uuid,
+    target: zerovpn_core::models::DeviceStatus,
+) -> ApiResult<()> {
+    use zerovpn_core::models::DeviceStatus;
+    let device = devices::get_by_id(&state.pool, device_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    crate::routes::devices::apply_pause_state(state, &device, target).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: match target {
+                DeviceStatus::Paused => "admin.device_paused",
+                _ => "admin.device_unpaused",
+            },
+            target_type: Some("device"),
+            target_id: Some(device_id),
+            metadata: json!({ "owner_user_id": device.user_id, "to": target }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, %device_id, ?target, "admin changed device pause state");
+    crate::routes::devices::notify_device(
+        state,
+        device.user_id,
+        Some(device_id),
+        match target {
+            DeviceStatus::Paused => ChangeAction::Paused,
+            _ => ChangeAction::Unpaused,
+        },
+    );
+    Ok(())
+}
+
+#[utoipa::path(
+    delete,
+    path = "/admin/devices/{id}",
+    tag = "Admin",
+    params(("id" = Uuid, Path, description = "Device UUID")),
+    responses(
+        (status = 200, description = "Device revoked; IP released, WG peer + DNS names removed"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "No such device"),
+        (status = 409, description = "Device already revoked"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn admin_revoke_device(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(device_id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let device = devices::get_by_id(&state.pool, device_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    if device.status == zerovpn_core::models::DeviceStatus::Revoked {
+        return Err(ApiError::Conflict("device already revoked".into()));
+    }
+    crate::routes::devices::teardown_device(&state, &device).await?;
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.device_revoked",
+            target_type: Some("device"),
+            target_id: Some(device_id),
+            metadata: json!({ "owner_user_id": device.user_id }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, %device_id, owner = %device.user_id, "admin revoked device");
+    crate::routes::devices::notify_device(
+        &state,
+        device.user_id,
+        Some(device_id),
+        ChangeAction::Deleted,
+    );
+    Ok(Json(json!({ "status": "ok" })))
+}
+
 #[utoipa::path(
     get,
     path = "/admin/failed-logins",
@@ -1844,23 +1980,20 @@ pub async fn patch_server(
     Path(id): Path<Uuid>,
     Json(body): Json<PatchServerBody>,
 ) -> ApiResult<impl IntoResponse> {
-    if let Some(port) = body.endpoint_port {
-        if !(1..=65535).contains(&port) {
+    if let Some(port) = body.endpoint_port
+        && !(1..=65535).contains(&port) {
             return Err(ApiError::Validation("endpoint_port must be 1..=65535".into()));
         }
-    }
-    if let Some(mtu) = body.mtu {
-        if !(576..=9000).contains(&mtu) {
+    if let Some(mtu) = body.mtu
+        && !(576..=9000).contains(&mtu) {
             return Err(ApiError::Validation("mtu must be 576..=9000".into()));
         }
-    }
-    if let Some(ka) = body.persistent_keepalive {
-        if !(0..=3600).contains(&ka) {
+    if let Some(ka) = body.persistent_keepalive
+        && !(0..=3600).contains(&ka) {
             return Err(ApiError::Validation(
                 "persistent_keepalive must be 0..=3600 (0 disables)".into(),
             ));
         }
-    }
     let dns_parsed: Option<Vec<IpNetwork>> = match body.dns_servers.as_ref() {
         Some(list) => {
             let mut out = Vec::with_capacity(list.len());
@@ -2640,6 +2773,9 @@ pub struct FinderUserMatch {
 pub struct FinderDeviceMatch {
     pub id: Uuid,
     pub user_id: Uuid,
+    /// Owner's email so the finder can say who a matched device belongs
+    /// to without a second lookup — the UI groups device matches by owner.
+    pub user_email: String,
     pub name: String,
     pub allocated_ip: String,
     pub last_peer_endpoint: Option<String>,
@@ -3069,20 +3205,29 @@ ip: crate::routes::auth::client_ip(&headers),
         _ => {}
     }
 
-    // Devices — same tuple-style shape: (id, user_id, name, allocated_ip, last_peer_endpoint).
+    // Devices — same tuple-style shape:
+    // (id, user_id, user_email, name, allocated_ip, last_peer_endpoint).
     {
-        type DeviceTuple = (Uuid, Uuid, String, ipnetwork::IpNetwork, Option<String>);
+        type DeviceTuple = (
+            Uuid,
+            Uuid,
+            String,
+            String,
+            ipnetwork::IpNetwork,
+            Option<String>,
+        );
         let rows: Vec<DeviceTuple> = match kind {
             "ip" => {
                 // allocated_ip exact match OR last_peer_endpoint starts
                 // with `ip:`. Union both axes.
                 sqlx::query_as(
-                    r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
-                         FROM devices
-                        WHERE status <> 'revoked'
-                          AND (allocated_ip = $1
-                               OR last_peer_endpoint LIKE $2)
-                        ORDER BY created_at DESC
+                    r#"SELECT d.id, d.user_id, u.email::TEXT, d.name, d.allocated_ip, d.last_peer_endpoint
+                         FROM devices d
+                         JOIN users u ON u.id = d.user_id
+                        WHERE d.status <> 'revoked'
+                          AND (d.allocated_ip = $1
+                               OR d.last_peer_endpoint LIKE $2)
+                        ORDER BY d.created_at DESC
                         LIMIT 10"#,
                 )
                 .bind(inet_q)
@@ -3091,31 +3236,34 @@ ip: crate::routes::auth::client_ip(&headers),
                 .await?
             }
             "endpoint" => sqlx::query_as(
-                r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
-                     FROM devices
-                    WHERE status <> 'revoked' AND last_peer_endpoint = $1
-                    ORDER BY created_at DESC
+                r#"SELECT d.id, d.user_id, u.email::TEXT, d.name, d.allocated_ip, d.last_peer_endpoint
+                     FROM devices d
+                     JOIN users u ON u.id = d.user_id
+                    WHERE d.status <> 'revoked' AND d.last_peer_endpoint = $1
+                    ORDER BY d.created_at DESC
                     LIMIT 10"#,
             )
             .bind(&q_trim)
             .fetch_all(pool)
             .await?,
             "regex" => sqlx::query_as(
-                r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
-                     FROM devices
-                    WHERE status <> 'revoked'
-                      AND (name ~* $1 OR last_peer_endpoint ~* $1)
-                    ORDER BY created_at DESC
+                r#"SELECT d.id, d.user_id, u.email::TEXT, d.name, d.allocated_ip, d.last_peer_endpoint
+                     FROM devices d
+                     JOIN users u ON u.id = d.user_id
+                    WHERE d.status <> 'revoked'
+                      AND (d.name ~* $1 OR d.last_peer_endpoint ~* $1)
+                    ORDER BY d.created_at DESC
                     LIMIT 10"#,
             )
             .bind(regex_pat.as_deref().unwrap_or(""))
             .fetch_all(pool)
             .await?,
             _ => sqlx::query_as(
-                r#"SELECT id, user_id, name, allocated_ip, last_peer_endpoint
-                     FROM devices
-                    WHERE status <> 'revoked' AND name ILIKE $1
-                    ORDER BY created_at DESC
+                r#"SELECT d.id, d.user_id, u.email::TEXT, d.name, d.allocated_ip, d.last_peer_endpoint
+                     FROM devices d
+                     JOIN users u ON u.id = d.user_id
+                    WHERE d.status <> 'revoked' AND d.name ILIKE $1
+                    ORDER BY d.created_at DESC
                     LIMIT 10"#,
             )
             .bind(&like_pat)
@@ -3124,7 +3272,7 @@ ip: crate::routes::auth::client_ip(&headers),
         };
         let bare_ip = q_trim.clone();
         let regex_body = regex_pat.clone();
-        for (id, user_id, name, allocated_ip, last_peer_endpoint) in rows {
+        for (id, user_id, user_email, name, allocated_ip, last_peer_endpoint) in rows {
             let matched_on: &'static str = match kind {
                 "endpoint" => "last_peer_endpoint",
                 "ip" => {
@@ -3156,6 +3304,7 @@ ip: crate::routes::auth::client_ip(&headers),
             devices.push(FinderDeviceMatch {
                 id,
                 user_id,
+                user_email,
                 name,
                 allocated_ip: allocated_ip.ip().to_string(),
                 last_peer_endpoint,
@@ -3187,6 +3336,9 @@ pub struct AdminStatsResponse {
     pub suspended: i64,
     pub pending_verification: i64,
     pub devices_total: i64,
+    /// Devices online right now (active + handshake within 180s) — matches
+    /// the user dashboard's definition, DB-backed so it's correct on load.
+    pub online_now: i64,
 }
 
 /// Deployment-wide user + device counts. Powers the admin overview KPI
@@ -3213,6 +3365,7 @@ pub async fn stats(
         suspended: s.suspended,
         pending_verification: s.pending_verification,
         devices_total: s.devices_total,
+        online_now: s.online_now,
     }))
 }
 
@@ -3415,8 +3568,8 @@ pub async fn stop_impersonation(
     // Phase 2 / Stage B — record under the impersonated user (mirrors
     // the impersonation_start attribution). The metadata carries the
     // admin who's stepping out.
-    if let Some(target) = impersonated_user_id {
-        if let Err(e) = session_events::record(
+    if let Some(target) = impersonated_user_id
+        && let Err(e) = session_events::record(
             &state.pool,
             target,
             session_events::SessionEvent::ImpersonationEnd,
@@ -3428,7 +3581,6 @@ pub async fn stop_impersonation(
         {
             warn!(?e, target = %target, "session_events impersonation_end record failed");
         }
-    }
     info!(admin = %real_user_id, "admin stopped impersonation");
 
     Ok(Json(json!({ "status": "ok" })))

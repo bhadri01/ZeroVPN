@@ -164,6 +164,11 @@ services:
       ZEROVPN_EVENTS__PUBLISHER_BIND: tcp://0.0.0.0:5555
       ZEROVPN_WG__BACKEND: shell
       ZEROVPN_WG__INTERFACE: wg0
+      # Container whose `docker stats` feed the sidebar server panel
+      # (CPU/MEM/Net I/O) — the api container owns wg0. Deterministic
+      # because the compose project is pinned (`name: zerovpn`). Without
+      # this the worker falls back to sysinfo and Net I/O reads 0.
+      ZEROVPN_WORKER__VPN_HOST_CONTAINER: zerovpn-api-1
     network_mode: "service:api"
     depends_on:
       db:
@@ -177,6 +182,9 @@ services:
       # Read boringtun's WireGuard UAPI socket (shared with the api) so
       # `wg show wg0` works for the stats poller.
       - wg_run:/run/wireguard
+      # Docker Engine API for the server_health emitter's per-container
+      # stats sampling (same wiring the dev overlay uses).
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     cap_drop: [ALL]
     cap_add: [NET_ADMIN]
     mem_limit: 192m

@@ -12,15 +12,15 @@
 //!      redirect URL (a SPA route under the frontend dev server),
 //!      `POST /auth/google/callback` is called by the SPA with the
 //!      `{code, state}` query params it just received. The server:
-//!         a. consumes the state row (one-shot — replay can't reuse it),
-//!         b. exchanges the code at Google's token endpoint using the
-//!            stored PKCE verifier,
-//!         c. fetches userinfo, refuses if `email_verified == false`,
-//!         d. looks up the user by google_id, then by email (auto-link),
-//!            or creates a fresh row (auto-provision),
-//!         e. mints a session exactly like `/auth/login` and returns the
-//!            `LoginResponse` shape so the SPA's auth store hydrates the
-//!            same way.
+//!      - consumes the state row (one-shot — replay can't reuse it),
+//!      - exchanges the code at Google's token endpoint using the stored
+//!        PKCE verifier,
+//!      - fetches userinfo, refuses if `email_verified == false`,
+//!      - looks up the user by google_id, then by email (auto-link), or
+//!        creates a fresh row (auto-provision),
+//!      - mints a session exactly like `/auth/login` and returns the
+//!        `LoginResponse` shape so the SPA's auth store hydrates the
+//!        same way.
 //!
 //! TOTP is intentionally NOT re-prompted: the Google sign-in is treated as
 //! a complete authentication on its own (standard SSO behavior). A user
@@ -43,12 +43,17 @@ use tracing::{info, warn};
 use url::Url;
 use utoipa::ToSchema;
 use zerovpn_core::models::{UserRole, UserStatus};
-use zerovpn_db::repos::{audit, oauth_states, session_events, users};
+use zerovpn_db::repos::{audit, failed_logins, oauth_states, session_events, users};
 
 use crate::{
     error::{ApiError, ApiResult},
-    extractors::auth::{SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_USER_ID},
-    routes::auth::{LoginResponse, PublicUser, client_ip, client_user_agent, load_user_policy},
+    extractors::auth::{
+        SESSION_KEY_PENDING_TOTP_USER, SESSION_KEY_PW_CHANGED_AT, SESSION_KEY_USER_ID,
+    },
+    routes::auth::{
+        LoginResponse, PublicUser, client_ip, client_user_agent, load_user_policy,
+        verify_totp_or_recovery,
+    },
     state::AppState,
 };
 
@@ -222,6 +227,35 @@ pub async fn google_callback(
         return Err(ApiError::Forbidden);
     }
 
+    let user_policy = load_user_policy(&state.pool).await;
+
+    // 2FA gate. Google sign-in verifies the *Google* identity, but if the
+    // ZeroVPN account has its own TOTP enabled we still require it — the
+    // Google path must not be a way to skip 2FA. Hold a half-authenticated
+    // "pending TOTP" session (NOT the real one) and make the client finish
+    // the challenge via `/auth/google/verify-totp`, mirroring `/auth/login`.
+    if user.totp_enabled {
+        session
+            .insert(SESSION_KEY_PENDING_TOTP_USER, user.id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        info!(user_id = %user.id, "google login: awaiting 2fa");
+        return Ok(Json(LoginResponse {
+            user: PublicUser {
+                id: user.id,
+                email: user.email,
+                role: user.role,
+                totp_enabled: true,
+                is_impersonated: false,
+                impersonator_email: None,
+                user_policy,
+            },
+            must_change_password: user.must_change_password,
+            totp_required: true,
+        }));
+    }
+
+    // No 2FA on the account — mint the real session directly.
     session
         .insert(SESSION_KEY_USER_ID, user.id)
         .await
@@ -249,24 +283,133 @@ pub async fn google_callback(
         warn!(?e, user_id = %user.id, "session_events google login record failed");
     }
 
-    let user_policy = load_user_policy(&state.pool).await;
-    let totp_enabled = user.totp_enabled;
-    let must_change = user.must_change_password;
-    info!(user_id = %user.id, role = ?user.role, totp = totp_enabled, "google login");
+    info!(user_id = %user.id, role = ?user.role, "google login");
 
     Ok(Json(LoginResponse {
         user: PublicUser {
             id: user.id,
             email: user.email,
             role: user.role,
-            totp_enabled,
+            totp_enabled: false,
             is_impersonated: false,
             impersonator_email: None,
             user_policy,
         },
-        must_change_password: must_change,
-        // Google SSO bypasses the TOTP prompt by design (the Google sign-in
-        // itself is the second authentication path).
+        must_change_password: user.must_change_password,
+        totp_required: false,
+    }))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct GoogleTotpBody {
+    pub totp_code: String,
+}
+
+/// Second leg of a Google sign-in for a 2FA-enabled account. The callback
+/// left a `pending_totp` marker in the session (no real session yet); this
+/// verifies the supplied TOTP or recovery code and, on success, upgrades the
+/// session to a fully-authenticated one. Same `LoginResponse` shape as the
+/// callback so the SPA hydrates identically.
+#[utoipa::path(
+    post,
+    path = "/auth/google/verify-totp",
+    tag = "Auth",
+    responses(
+        (status = 200, description = "2FA verified; session established", body = LoginResponse),
+        (status = 401, description = "No pending Google 2FA challenge, or wrong code"),
+        (status = 403, description = "Account suspended"),
+    ),
+)]
+pub async fn google_verify_totp(
+    State(state): State<AppState>,
+    session: tower_sessions::Session,
+    headers: HeaderMap,
+    Json(body): Json<GoogleTotpBody>,
+) -> ApiResult<impl IntoResponse> {
+    // A request without the pending marker has no challenge to answer — treat
+    // as unauthorized rather than leaking whether a challenge exists.
+    let user_id: uuid::Uuid = session
+        .get(SESSION_KEY_PENDING_TOTP_USER)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or(ApiError::Unauthorized)?;
+
+    let req_ip = client_ip(&headers);
+    let req_ua = client_user_agent(&headers);
+
+    let code = body.totp_code.trim();
+    let ok = if code.is_empty() {
+        false
+    } else {
+        verify_totp_or_recovery(&state, user_id, code).await?
+    };
+    if !ok {
+        let email = users::find_by_id(&state.pool, user_id)
+            .await?
+            .map(|u| u.email);
+        let _ = failed_logins::record(
+            &state.pool,
+            email.as_deref(),
+            req_ip,
+            req_ua.as_deref(),
+            failed_logins::FailedLoginReason::TotpFailed,
+        )
+        .await;
+        return Err(ApiError::Unauthorized);
+    }
+
+    // Re-load + re-check status, then swap the pending marker for a real
+    // session (drop the pending key so it can't be replayed).
+    let user = users::find_by_id(&state.pool, user_id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("pending user vanished".to_string()))?;
+    if user.status == UserStatus::Suspended {
+        return Err(ApiError::Forbidden);
+    }
+
+    session
+        .remove::<uuid::Uuid>(SESSION_KEY_PENDING_TOTP_USER)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    session
+        .insert(SESSION_KEY_USER_ID, user.id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    session
+        .insert(
+            SESSION_KEY_PW_CHANGED_AT,
+            user.password_changed_at.unix_timestamp(),
+        )
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    users::touch_last_login(&state.pool, user.id).await?;
+    if let Err(e) = session_events::record(
+        &state.pool,
+        user.id,
+        session_events::SessionEvent::Login,
+        req_ip,
+        req_ua.as_deref(),
+        json!({ "via": "google+totp" }),
+    )
+    .await
+    {
+        warn!(?e, user_id = %user.id, "session_events google+totp login record failed");
+    }
+    info!(user_id = %user.id, role = ?user.role, "google login (2fa verified)");
+
+    let user_policy = load_user_policy(&state.pool).await;
+    Ok(Json(LoginResponse {
+        user: PublicUser {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            totp_enabled: user.totp_enabled,
+            is_impersonated: false,
+            impersonator_email: None,
+            user_policy,
+        },
+        must_change_password: user.must_change_password,
         totp_required: false,
     }))
 }

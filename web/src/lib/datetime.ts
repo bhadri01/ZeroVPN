@@ -19,7 +19,10 @@ function toDate(v: Date | string | number): Date {
   return v instanceof Date ? v : new Date(v)
 }
 
-export function formatDateWith(v: Date | string | number, fmt: DateFormatPref): string {
+export function formatDateWith(
+  v: Date | string | number,
+  fmt: DateFormatPref
+): string {
   const d = toDate(v)
   if (Number.isNaN(d.getTime())) return "—"
   const y = d.getFullYear()
@@ -30,7 +33,10 @@ export function formatDateWith(v: Date | string | number, fmt: DateFormatPref): 
   return `${y}-${mo}-${da}` // iso
 }
 
-export function formatTimeWith(v: Date | string | number, fmt: TimeFormatPref): string {
+export function formatTimeWith(
+  v: Date | string | number,
+  fmt: TimeFormatPref
+): string {
   const d = toDate(v)
   if (Number.isNaN(d.getTime())) return "—"
   const m = String(d.getMinutes()).padStart(2, "0")
@@ -43,16 +49,18 @@ export function formatTimeWith(v: Date | string | number, fmt: TimeFormatPref): 
   return `${String(d.getHours()).padStart(2, "0")}:${m}`
 }
 
-export function formatDateTimeWith(
+function formatDateTimeWith(
   v: Date | string | number,
   df: DateFormatPref,
-  tf: TimeFormatPref,
+  tf: TimeFormatPref
 ): string {
   return `${formatDateWith(v, df)} ${formatTimeWith(v, tf)}`
 }
 
-export const formatDate = (v: Date | string | number) => formatDateWith(v, dateFmt)
-export const formatTime = (v: Date | string | number) => formatTimeWith(v, timeFmt)
+export const formatDate = (v: Date | string | number) =>
+  formatDateWith(v, dateFmt)
+export const formatTime = (v: Date | string | number) =>
+  formatTimeWith(v, timeFmt)
 export const formatDateTime = (v: Date | string | number) =>
   formatDateTimeWith(v, dateFmt, timeFmt)
 
@@ -69,10 +77,11 @@ export const formatDateTime = (v: Date | string | number) =>
 export function formatAgo(
   value: Date | string | number | null | undefined,
   nowMs: number,
-  fallback = "—",
+  fallback = "—"
 ): string {
   if (value == null) return fallback
-  const then = value instanceof Date ? value.getTime() : new Date(value).getTime()
+  const then =
+    value instanceof Date ? value.getTime() : new Date(value).getTime()
   if (Number.isNaN(then)) return fallback
   const totalSec = Math.max(0, Math.round((nowMs - then) / 1000))
   if (totalSec < 1) return "now"

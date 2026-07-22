@@ -10,7 +10,12 @@ import { formatBps } from "@/lib/units"
 
 export type ChartType = "bar" | "line"
 
-export const DEFAULT_VISIBLE = 60
+const DEFAULT_VISIBLE = 60
+
+/** Zoom-in floor: never show fewer than this many candles. One candle is the
+ *  finest data we have (per-second rates rolled into one timeframe window), so
+ *  zooming past it only reveals empty space. */
+export const MIN_VISIBLE = 5
 
 /** Wall-clock duration of one candle for each timeframe (ms). */
 export const CANDLE_MS: Record<Timeframe, number> = {
@@ -26,8 +31,7 @@ export const CANDLE_MS: Record<Timeframe, number> = {
 }
 
 /** Day-or-longer timeframes label the axis by date; intraday by clock time. */
-export const isDaily = (tf: Timeframe) =>
-  tf === "1d" || tf === "7d" || tf === "1mo"
+const isDaily = (tf: Timeframe) => tf === "1d" || tf === "7d" || tf === "1mo"
 
 /** One row of the chart: [ts, rxLow, rxHigh, txLow, txHigh, rxAvg, txAvg]. */
 export type Row = [number, number, number, number, number, number, number]
@@ -68,14 +72,14 @@ export function buildCandleOption(
     /** Manual value-axis range (set by scaling over the right gutter). When
      *  null the axis auto-fits the visible data (`min: 0` .. `dataMax`). */
     yWindow?: Window | null
-  },
+  }
 ) {
   const { tf, chartType, colors, yWindow } = opts
   const daily = isDaily(tf)
 
   const rangeRenderItem = (
     _params: CustomSeriesRenderItemParams,
-    api: CustomSeriesRenderItemAPI,
+    api: CustomSeriesRenderItemAPI
   ): CustomSeriesRenderItemReturn => {
     const ts = api.value(0) as number
     const x = api.coord([ts, 0])[0]
@@ -166,8 +170,18 @@ export function buildCandleOption(
       // axis and a time readout on the x axis (TradingView-style).
       axisPointer: {
         type: "cross" as const,
-        lineStyle: { color: colors.axis, width: 1, opacity: 0.5, type: "dashed" as const },
-        crossStyle: { color: colors.axis, width: 1, opacity: 0.5, type: "dashed" as const },
+        lineStyle: {
+          color: colors.axis,
+          width: 1,
+          opacity: 0.5,
+          type: "dashed" as const,
+        },
+        crossStyle: {
+          color: colors.axis,
+          width: 1,
+          opacity: 0.5,
+          type: "dashed" as const,
+        },
         label: {
           backgroundColor: colors.muted,
           color: colors.axis,
@@ -191,7 +205,7 @@ export function buildCandleOption(
           color: string,
           lo: number,
           hi: number,
-          avg: number,
+          avg: number
         ) =>
           `<div style="color:${color}">${label}&nbsp;&nbsp;H ${formatBps(hi)} · L ${formatBps(lo)} · avg ${formatBps(avg)}</div>`
         return (
@@ -203,6 +217,10 @@ export function buildCandleOption(
     },
     xAxis: {
       type: "time" as const,
+      // Never place ticks denser than one candle — the label format is
+      // minute/date-granular, so sub-candle ticks render as duplicates
+      // ("11:53 11:53 11:53").
+      minInterval: CANDLE_MS[tf],
       axisLine: { show: false },
       axisTick: { show: false },
       axisLabel: {
@@ -245,22 +263,30 @@ export function buildCandleOption(
         },
       },
       splitLine: {
-        lineStyle: { color: colors.border, type: "dashed" as const, opacity: 0.6 },
+        lineStyle: {
+          color: colors.border,
+          type: "dashed" as const,
+          opacity: 0.6,
+        },
       },
     },
     dataZoom: [
       {
-        // Time axis: wheel zooms, drag pans (over the plot area). The value
-        // axis has no dataZoom — it's scaled by setting yAxis.min/max directly
-        // (see the wheel/drag handlers in CandleChart) so zoom-out isn't capped
-        // at the data extent the way a dataZoom would cap it.
+        // Time axis: drag pans; the wheel is handled by CandleChart's own
+        // listener (gentler steps than ECharts' built-in wheel zoom, with a
+        // pan/zoom split for trackpads), which dispatches dataZoom actions
+        // here. The value axis has no dataZoom — it's scaled by setting
+        // yAxis.min/max directly (see the wheel/drag handlers in CandleChart)
+        // so zoom-out isn't capped at the data extent the way a dataZoom
+        // would cap it.
         id: "dzX",
         type: "inside" as const,
         xAxisIndex: 0,
         filterMode: "filter" as const,
-        zoomOnMouseWheel: true,
+        zoomOnMouseWheel: false,
         moveOnMouseMove: true,
         moveOnMouseWheel: false,
+        minValueSpan: CANDLE_MS[tf] * MIN_VISIBLE,
         throttle: 30,
       },
     ],

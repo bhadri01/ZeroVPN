@@ -12,7 +12,7 @@
  *
  * Wire it into a Radix Root's `onOpenChange` via {@link withBodyPointerEvents}.
  */
-export function clearStuckBodyPointerEvents() {
+function clearStuckBodyPointerEvents() {
   // Run after Radix's synchronous close cleanup. A double rAF survives a
   // re-lock that a sibling layer's own cleanup might apply on the next frame.
   requestAnimationFrame(() => {
@@ -29,7 +29,7 @@ export function clearStuckBodyPointerEvents() {
  * whenever the overlay closes, then the original handler still runs.
  */
 export function withBodyPointerEvents(
-  onOpenChange?: (open: boolean) => void,
+  onOpenChange?: (open: boolean) => void
 ): (open: boolean) => void {
   return (open: boolean) => {
     onOpenChange?.(open)

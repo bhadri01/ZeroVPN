@@ -11,7 +11,7 @@ This file is the reference that lives with the code.
         │ TCP 80/443           │ UDP 51820           │
         ▼                      ▼                     │
    ┌─────────┐           ┌─────────┐    ┌─────────┐  │
-   │ traefik │           │   wg    │───▶│ dnsmasq │  │
+   │ traefik │           │   wg    │───▶│ CoreDNS │  │
    │ (proxy) │           │(host-net│    │ (peer   │  │
    └────┬────┘           │ NET_ADM)│    │  DNS)   │  │
         │                └────┬────┘    └─────────┘  │
@@ -22,38 +22,39 @@ This file is the reference that lives with the code.
    │ (Axum)  │  tcp://worker:5555                    │
    │  + WS   │                ▼                      │
    └────┬────┘          ┌──────────┐                 │
-        │               │  worker  │ poller (30s)    │
-        │               │ (apalis  │ rollups         │
+        │               │  worker  │ poller (1s)     │
+        │               │ (tokio   │ rollups         │
         │               │ + ZMQ    │ retention       │
-        │               │   PUB)   │ email           │
+        │               │   PUB)   │ health          │
         │               └────┬─────┘                 │
         ▼                    │                       │
-   ┌──────────┐         ┌────▼─────┐  ┌─────────┐    │
-   │ frontend │         │    db    │  │  redis  │    │
-   │ (nginx)  │         │(Postgres)│  │ (cache, │    │
-   │  React   │         └──────────┘  │  rate-  │    │
-   └──────────┘                       │  limit) │    │
-                                      └─────────┘    │
+   ┌──────────┐         ┌────▼─────┐                 │
+   │ frontend │         │    db    │                 │
+   │ (nginx)  │         │(Postgres)│                 │
+   │  React   │         └──────────┘                 │
+   └──────────┘                                      │
 ```
 
-> Diagram is illustrative and predates recent changes: there is no `redis`
-> (removed — Postgres backs sessions/jobs), and `wg` is not a separate box — the
-> **api** is the WireGuard host (see *WireGuard runtime* below). The reverse
-> proxy is Traefik.
+> `wg` is not a separate box — the **api** is the WireGuard host (see
+> *WireGuard runtime* below). Sessions and background jobs are backed by
+> Postgres; there is no `redis` and no external job queue — periodic work runs
+> on plain `tokio` intervals. The peer resolver is CoreDNS (the compose service
+> is still named `dnsmasq` for legacy reasons and reads a dnsmasq-format hosts
+> file the api writes). The reverse proxy is Traefik.
 
 ## Process model
 
-- **api** (binary `zerovpn-api`): HTTP + WebSocket, Axum 0.8. Reads/writes the DB, subscribes to ZMQ for live data, fans out to connected WS clients. Serves OpenAPI spec.
-- **worker** (binary `zerovpn-worker`): runs the WG poller (30 s), bandwidth aggregator (apalis cron), retention purger, email sender, and binds the ZMQ PUB socket on `tcp://0.0.0.0:5555`.
+- **api** (binary `zerovpn-api`): HTTP + WebSocket, Axum 0.8. Reads/writes the DB, subscribes to ZMQ for live data, fans out to connected WS clients, brings up the WireGuard interface in its own container/netns (userspace boringtun via `wg-quick`, not linked into the binary), sends transactional email (verify/reset) via `zerovpn-mail`, and serves the OpenAPI spec.
+- **worker** (binary `zerovpn-worker`): runs the WG poller (~1 s by default, env-tunable), bandwidth aggregator (a plain `tokio::time::interval`, not a cron/queue), per-server health sampler, and retention purger, and binds the ZMQ PUB socket on `tcp://0.0.0.0:5555`. It does not send email.
 - **cli** (binary `zerovpn-cli`): admin tool — migrate DB, bootstrap admin, rotate keys.
 
 ## Data flow: live stats → browser
 
-1. Worker's `wg show dump` poll computes per-peer RX/TX deltas every 30 s.
+1. Worker's `wg show dump` poll computes per-peer RX/TX deltas every ~1 s (env-tunable).
 2. Each delta is encoded as MessagePack (`zerovpn-wire::Event::StatsDelta`) and published on ZMQ topic `stats.peer.<uuid>`.
 3. The api process subscribes (`stats.*`, `events.*`) and converts received events into `tokio::sync::broadcast` messages keyed by user.
 4. WebSocket handlers (one per browser tab) filter the broadcast to events relevant to the authenticated user, encode them into MessagePack frames, and send them over the WS connection.
-5. The browser deserializes via `@msgpack/msgpack` (or, on hot paths, the `zerovpn-wire` WASM module — same Rust types, same wire format, decoded ~3× faster).
+5. The browser deserializes via `@msgpack/msgpack` (JS). A WASM decoder sharing the `zerovpn-wire` Rust types is a planned optimization, not yet shipped.
 6. The topology graph and live-rate widgets consume those decoded events.
 
 ## Persistence
