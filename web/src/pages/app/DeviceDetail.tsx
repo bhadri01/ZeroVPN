@@ -114,21 +114,30 @@ const ACTIVITY_PAGE_SIZE = 30
 // `\.vpn\.local$` portion of `validate_hostname` in zerovpn-dns.
 const DNS_SUFFIX = ".vpn.local"
 // Same character class the server enforces — keep in sync with
-// HOSTNAME_RE in crates/zerovpn-dns/src/lib.rs.
-const DNS_PREFIX_RE = /^[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$/
+// HOSTNAME_RE in crates/zerovpn-dns/src/lib.rs. The prefix is one or more
+// dot-separated labels (e.g. `mac.bhadri`); each label is 1–30 chars,
+// [a-z0-9] at both ends, hyphens allowed inside. Mirrors isValidDnsPrefix
+// in AddDeviceDialog so creating a peer and adding a name later accept the
+// same set of hostnames (multi-label + dots).
+const DNS_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$/
 
 function isValidDnsPrefix(s: string): boolean {
-  return DNS_PREFIX_RE.test(s.trim().toLowerCase())
+  const v = s.trim().toLowerCase()
+  if (!v) return false
+  return v.split(".").every((label) => DNS_LABEL_RE.test(label))
 }
 
 function dnsPrefixError(s: string): string {
   const v = s.trim()
   if (!v) return "required"
-  if (v.length > 30) return "too long (max 30 chars)"
   if (v !== v.toLowerCase()) return "lowercase only"
-  if (/^-/.test(v)) return "can't start with a hyphen"
-  if (/-$/.test(v)) return "can't end with a hyphen"
-  if (/[^a-z0-9-]/i.test(v)) return "letters, digits and hyphens only"
+  if (/[^a-z0-9.-]/i.test(v)) return "letters, digits, hyphens and dots only"
+  for (const label of v.split(".")) {
+    if (!label) return "no leading, trailing or double dots"
+    if (label.length > 30) return "each label is max 30 chars"
+    if (/^-/.test(label)) return "labels can't start with a hyphen"
+    if (/-$/.test(label)) return "labels can't end with a hyphen"
+  }
   return "invalid hostname"
 }
 
@@ -654,8 +663,9 @@ export function DeviceDetailPage() {
               }}
             />
             <p className="text-muted-foreground font-mono text-[11px]">
-              1–30 chars · lowercase letters, digits, hyphens · cannot
-              start or end with a hyphen.
+              lowercase letters, digits, hyphens · use dots for sub-labels
+              (e.g. mac.bhadri) · each label ≤30 chars, no leading/trailing
+              hyphen.
               {dnsInput.length > 0 && !isValidDnsPrefix(dnsInput) && (
                 <span className="text-destructive ml-2">
                   {dnsPrefixError(dnsInput)}
@@ -1046,12 +1056,12 @@ function DnsHostnameInput({
             onSubmit()
           }
         }}
-        placeholder="laptop"
+        placeholder="laptop or mac.bhadri"
         autoFocus
         spellCheck={false}
         autoCapitalize="off"
         autoCorrect="off"
-        maxLength={30}
+        maxLength={200}
         aria-invalid={invalid}
         className="text-foreground placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent px-2.5 py-1 font-mono text-sm outline-none"
       />
