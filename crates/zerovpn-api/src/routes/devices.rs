@@ -26,7 +26,8 @@ use crate::{
     state::AppState,
 };
 
-const MAX_DEVICES_PER_USER: usize = 5;
+// Per-user active-device cap now lives in the DB (`users.device_limit`,
+// admin-settable, default 5) — see `users::device_limit`.
 pub const PERSISTENT_KEEPALIVE: u16 = 30;
 
 /// A peer is considered "online" while its last handshake is within this
@@ -377,11 +378,12 @@ pub async fn create(
 ) -> ApiResult<impl IntoResponse> {
     body.validate().map_err(|e| ApiError::Validation(e.to_string()))?;
 
-    // Enforce per-user device cap.
+    // Enforce the per-user device cap (admin-settable; defaults to 5).
+    let limit = users::device_limit(&state.pool, user.id).await? as usize;
     let existing = devices::list_for_user(&state.pool, user.id).await?;
-    if existing.len() >= MAX_DEVICES_PER_USER {
+    if existing.len() >= limit {
         return Err(ApiError::Conflict(format!(
-            "max {MAX_DEVICES_PER_USER} active devices per user"
+            "device limit reached ({limit} active devices per user)"
         )));
     }
 
@@ -1243,10 +1245,11 @@ pub async fn connect(
     }
 
     // ── Provision: register a new device, server-generated keys ────────────
+    let limit = users::device_limit(&state.pool, user.id).await? as usize;
     let existing = devices::list_for_user(&state.pool, user.id).await?;
-    if existing.len() >= MAX_DEVICES_PER_USER {
+    if existing.len() >= limit {
         return Err(ApiError::Conflict(format!(
-            "max {MAX_DEVICES_PER_USER} active devices per user"
+            "device limit reached ({limit} active devices per user)"
         )));
     }
 

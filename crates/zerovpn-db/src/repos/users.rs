@@ -533,6 +533,8 @@ pub struct AdminUserDetailRow {
     pub monthly_byte_cap: Option<i64>,
     pub quota_resets_at: Option<OffsetDateTime>,
     pub device_count: i64,
+    /// Max active (non-revoked) devices this user may create. Admin-settable.
+    pub device_limit: i32,
 }
 
 /// Fetch a single user with everything the admin detail page needs.
@@ -546,7 +548,7 @@ pub async fn admin_user_detail(
                   u.must_change_password, u.created_at, u.last_login_at,
                   u.email_verified_at, u.password_changed_at,
                   COALESCE(u.current_month_bytes, 0)::BIGINT AS current_month_bytes,
-                  u.monthly_byte_cap, u.quota_resets_at,
+                  u.monthly_byte_cap, u.quota_resets_at, u.device_limit,
                   (SELECT COUNT(*) FROM devices d
                     WHERE d.user_id = u.id AND d.status <> 'revoked') AS device_count
              FROM users u
@@ -555,6 +557,29 @@ pub async fn admin_user_detail(
     .bind(user_id)
     .fetch_optional(pool)
     .await
+}
+
+/// The user's active-device cap (defaults to 5 in the schema). Read on device
+/// create to enforce the per-user limit. Falls back to 5 if the user is gone.
+pub async fn device_limit(pool: &PgPool, user_id: Uuid) -> sqlx::Result<i32> {
+    let limit: Option<i32> =
+        sqlx::query_scalar("SELECT device_limit FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(limit.unwrap_or(5))
+}
+
+/// Admin: set a user's active-device cap. Returns rows affected (0 = no such
+/// non-deleted user). The caller is responsible for clamping `limit` to a sane
+/// range before calling.
+pub async fn set_device_limit(pool: &PgPool, user_id: Uuid, limit: i32) -> sqlx::Result<u64> {
+    let res = sqlx::query("UPDATE users SET device_limit = $2 WHERE id = $1 AND deleted_at IS NULL")
+        .bind(user_id)
+        .bind(limit)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
 }
 
 /// Filter knobs for the admin user list. All optional — `None` on a field

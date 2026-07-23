@@ -437,6 +437,10 @@ async fn main() -> Result<()> {
                     "/admin/users/{id}/quota",
                     axum::routing::put(routes::admin::set_user_quota),
                 )
+                .route(
+                    "/admin/users/{id}/device-limit",
+                    axum::routing::put(routes::admin::set_user_device_limit),
+                )
                 .route("/admin/devices", get(routes::admin::list_devices))
                 .route(
                     "/admin/devices/{id}",

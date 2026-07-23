@@ -70,6 +70,7 @@ import {
   adminUnpauseDevice,
   adminSendPasswordReset,
   adminSetDeviceQuota,
+  adminSetUserDeviceLimit,
   adminSetUserEmail,
   adminSetUserQuota,
   adminSetUserRole,
@@ -108,6 +109,7 @@ export function UserDetailPage() {
   const [suspendOpen, setSuspendOpen] = useState(false)
   const [impersonateOpen, setImpersonateOpen] = useState(false)
   const [quotaOpen, setQuotaOpen] = useState(false)
+  const [deviceLimitOpen, setDeviceLimitOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [disable2faOpen, setDisable2faOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -448,7 +450,18 @@ export function UserDetailPage() {
         <>
           <StaggerItem>
             <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2">
-              <Panel title="Account">
+              <Panel
+                title="Account"
+                right={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setDeviceLimitOpen(true)}
+                  >
+                    Device limit
+                  </Button>
+                }
+              >
                 <KvList
                   items={[
                     [
@@ -495,7 +508,7 @@ export function UserDetailPage() {
                         fallback="—"
                       />,
                     ],
-                    ["Devices", `${u.device_count}`],
+                    ["Devices", `${u.device_count} / ${u.device_limit}`],
                   ]}
                 />
               </Panel>
@@ -893,6 +906,17 @@ export function UserDetailPage() {
         />
       )}
 
+      {u && (
+        <DeviceLimitDialog
+          open={deviceLimitOpen}
+          onOpenChange={setDeviceLimitOpen}
+          userId={u.id}
+          currentLimit={u.device_limit}
+          deviceCount={u.device_count}
+          onSaved={invalidateUser}
+        />
+      )}
+
       <DeviceQuotaDialog
         device={quotaDevice}
         onOpenChange={(open) => {
@@ -1100,6 +1124,126 @@ function QuotaCapForm({
           Cancel
         </Button>
         <Button disabled={!canSave} onClick={submit}>
+          {m.isPending ? "Saving…" : "Save"}
+        </Button>
+      </DialogFooter>
+    </>
+  )
+}
+
+/** Admin control for a user's active-device (peer) cap. Mirrors
+ *  [`QuotaDialog`] — mounts the form per open so it seeds from `currentLimit`. */
+function DeviceLimitDialog({
+  open,
+  onOpenChange,
+  userId,
+  currentLimit,
+  deviceCount,
+  onSaved,
+}: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  userId: string
+  currentLimit: number
+  deviceCount: number
+  onSaved: () => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        {open && (
+          <DeviceLimitForm
+            userId={userId}
+            currentLimit={currentLimit}
+            deviceCount={deviceCount}
+            onClose={() => onOpenChange(false)}
+            onSaved={onSaved}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function DeviceLimitForm({
+  userId,
+  currentLimit,
+  deviceCount,
+  onClose,
+  onSaved,
+}: {
+  userId: string
+  currentLimit: number
+  deviceCount: number
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [limitStr, setLimitStr] = useState(String(currentLimit))
+
+  const m = useMutation({
+    mutationFn: (limit: number) => adminSetUserDeviceLimit(userId, limit),
+    onSuccess: () => {
+      toast.success("Device limit updated")
+      onSaved()
+      onClose()
+    },
+    onError: (e: unknown) => {
+      if (e instanceof ApiError) toast.error(e.message)
+    },
+  })
+
+  const limit = Number(limitStr.trim())
+  const valid =
+    limitStr.trim().length > 0 &&
+    Number.isInteger(limit) &&
+    limit >= 1 &&
+    limit <= 1000
+  // Not an error — lowering below the current count is allowed; they just
+  // can't add more until back under the cap.
+  const belowCount = valid && limit < deviceCount
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Edit device limit</DialogTitle>
+        <DialogDescription>
+          Maximum active peers this user can create (1–1000). New peers are
+          blocked once they reach it; existing peers are never removed.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="device-limit">Max devices</Label>
+        <Input
+          id="device-limit"
+          type="number"
+          inputMode="numeric"
+          step="1"
+          min="1"
+          max="1000"
+          value={limitStr}
+          onChange={(e) => setLimitStr(e.target.value)}
+          placeholder="e.g. 10"
+        />
+        <p className="text-xs text-muted-foreground">
+          Currently using {deviceCount}.
+          {!valid && (
+            <span className="ml-1 text-destructive">
+              Enter a whole number from 1 to 1000.
+            </span>
+          )}
+          {belowCount && (
+            <span className="ml-1 text-amber-600 dark:text-amber-400">
+              Below the {deviceCount} they already have — those stay, but they
+              can't add more until under the new limit.
+            </span>
+          )}
+        </p>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button disabled={m.isPending || !valid} onClick={() => m.mutate(limit)}>
           {m.isPending ? "Saving…" : "Save"}
         </Button>
       </DialogFooter>

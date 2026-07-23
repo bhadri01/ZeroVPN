@@ -96,6 +96,7 @@ use super::{
         admin::list_audit,
         admin::list_audit_csv,
         admin::set_user_quota,
+        admin::set_user_device_limit,
         admin::list_failed_logins,
         admin::get_maintenance,
         admin::set_maintenance,

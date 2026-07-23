@@ -320,6 +320,8 @@ pub struct AdminUserDetail {
     #[serde(with = "time::serde::rfc3339::option")]
     pub quota_resets_at: Option<OffsetDateTime>,
     pub device_count: i64,
+    /// Max active (non-revoked) devices this user may create (admin-settable).
+    pub device_limit: i32,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -518,6 +520,7 @@ pub async fn user_detail(
             monthly_byte_cap: row.monthly_byte_cap,
             quota_resets_at: row.quota_resets_at,
             device_count: row.device_count,
+            device_limit: row.device_limit,
         },
         devices,
         activity,
@@ -1471,6 +1474,67 @@ pub async fn set_user_quota(
     )
     .await?;
     info!(actor = %actor.id, target = %target_id, ?cap, "admin set user quota");
+    notify_user(&state, target_id, ChangeAction::Updated);
+    Ok(Json(json!({ "status": "ok" })))
+}
+
+/// Bounds for the per-user active-device cap. Min 1 (0 would block all
+/// devices — use suspend for that); max keeps a single user from exhausting
+/// the shared /22 IP pool.
+const DEVICE_LIMIT_MIN: i32 = 1;
+const DEVICE_LIMIT_MAX: i32 = 1000;
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeviceLimitBody {
+    /// Max active (non-revoked) devices the user may create (1–1000).
+    pub device_limit: i32,
+}
+
+#[utoipa::path(
+    put,
+    path = "/admin/users/{id}/device-limit",
+    tag = "Admin",
+    params(
+        ("id" = Uuid, Path, description = "Target user UUID"),
+    ),
+    request_body = DeviceLimitBody,
+    responses(
+        (status = 200, description = "Device limit updated", body = StatusAck),
+        (status = 400, description = "device_limit out of range (1–1000)"),
+        (status = 403, description = "Not an admin"),
+        (status = 404, description = "No such user"),
+    ),
+    security(("session_cookie" = [])),
+)]
+pub async fn set_user_device_limit(
+    State(state): State<AppState>,
+    RequireAdmin(actor): RequireAdmin,
+    Path(target_id): Path<Uuid>,
+    Json(body): Json<DeviceLimitBody>,
+) -> ApiResult<impl IntoResponse> {
+    let limit = body.device_limit;
+    if !(DEVICE_LIMIT_MIN..=DEVICE_LIMIT_MAX).contains(&limit) {
+        return Err(ApiError::Validation(format!(
+            "device_limit must be between {DEVICE_LIMIT_MIN} and {DEVICE_LIMIT_MAX}"
+        )));
+    }
+    let affected = zerovpn_db::repos::users::set_device_limit(&state.pool, target_id, limit).await?;
+    if affected == 0 {
+        return Err(ApiError::NotFound);
+    }
+    audit::record(
+        &state.pool,
+        audit::AuditEntry {
+            actor_user_id: Some(actor.id),
+            action: "admin.user_device_limit_set",
+            target_type: Some("user"),
+            target_id: Some(target_id),
+            metadata: json!({ "device_limit": limit }),
+            ip: None,
+        },
+    )
+    .await?;
+    info!(actor = %actor.id, target = %target_id, limit, "admin set user device limit");
     notify_user(&state, target_id, ChangeAction::Updated);
     Ok(Json(json!({ "status": "ok" })))
 }

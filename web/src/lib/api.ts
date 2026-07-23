@@ -804,6 +804,8 @@ interface AdminUserDetail {
   monthly_byte_cap: number | null
   quota_resets_at: string | null
   device_count: number
+  /** Max active (non-revoked) devices this user may create (admin-settable). */
+  device_limit: number
 }
 
 interface AdminUserDevice {
@@ -1073,6 +1075,13 @@ export const adminSetUserQuota = (
   apiFetch<{ status: string }>(`/admin/users/${id}/quota`, {
     method: "PUT",
     body: JSON.stringify({ monthly_byte_cap }),
+  })
+
+/** Set a user's active-device cap (1–1000). */
+export const adminSetUserDeviceLimit = (id: string, device_limit: number) =>
+  apiFetch<{ status: string }>(`/admin/users/${id}/device-limit`, {
+    method: "PUT",
+    body: JSON.stringify({ device_limit }),
   })
 
 /** Set (or clear, with null) a single device's monthly byte cap. */
